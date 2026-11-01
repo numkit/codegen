@@ -1,8 +1,9 @@
 // codegen/src/aot.cpp — see aot.hpp.
 
 #include <numkit/codegen/aot.hpp>
-
 #include <numkit/codegen/aot_config.hpp>
+#include <numkit/sys/toolchain.hpp>
+#include <numkit/sys/env.hpp>
 
 #include <cstdlib>
 #include <cstdio>
@@ -46,31 +47,74 @@ bool fileExists(const std::string &path)
     return static_cast<bool>(is);
 }
 
-// The C++ compiler used at runtime. An env override (NUMKIT_CXX) wins over the
-// build-time-captured compiler (NUMKIT_CODEGEN_AOT_CXX): a user (or the IDE)
-// can `setenv('NUMKIT_CXX', ...)` to redirect AOT compilation to a different
-// toolchain without reconfiguring CMake. An env-overridden compiler is treated
-// as self-sufficient (no vcvars shell) — the build-time MSVC+vcvars path only
-// applies when the build-time compiler is in use. Returns empty when neither
-// is set, in which case compileImpl reports Unavailable (as before).
-std::string resolveCxx()
+// Quote a compiler specification that may carry a trailing subcommand such as
+// `zig c++` or `C:\Users\...\.numkit\toolchain\zig\zig.exe c++`.
+std::string quoteCompilerCmd(const std::string &cxx, bool winQuote)
 {
-    if (const char *env = std::getenv("NUMKIT_CXX"))
-        if (env[0] != '\0')
-            return env;
-    return NUMKIT_CODEGEN_AOT_CXX;
+    std::string exe = cxx;
+    std::string subcmd;
+    if (exe.size() > 4 && exe.compare(exe.size() - 4, 4, " c++") == 0) {
+        subcmd = " c++";
+        exe.resize(exe.size() - 4);
+    } else if (exe.size() > 3 && exe.compare(exe.size() - 3, 3, " cc") == 0) {
+        subcmd = " cc";
+        exe.resize(exe.size() - 3);
+    }
+    if (winQuote) {
+        return "\"" + toNative(exe) + "\"" + subcmd;
+    }
+    if (!subcmd.empty()) {
+        return "'" + exe + "'" + subcmd;
+    }
+    return exe;
 }
 
-// True when the build-time compiler is MSVC AND the user did not override it
-// (an env-overridden compiler is always driven directly, never via vcvars).
+// The C++ compiler used at runtime:
+//   1. NUMKIT_CXX env override (highest priority)
+//   2. NUMKIT_USE_ZIG=1 -> portable/system `zig c++` via numkit::sys::findZig()
+//   3. Build-time compiler (NUMKIT_CODEGEN_AOT_CXX) when still available on disk
+//   4. Runtime toolchain discovery (`~/.numkit/toolchain/zig`, clang++, g++)
+std::string resolveCxx()
+{
+    std::string env = sys::envGet("NUMKIT_CXX");
+    if (!env.empty())
+        return env;
+
+    if (sys::envGet("NUMKIT_USE_ZIG") == "1") {
+        auto zig = sys::findZig();
+        if (zig.found)
+            return zig.path + " c++";
+    }
+
+    if (NUMKIT_CODEGEN_AOT_AVAILABLE != 0) {
+        if (NUMKIT_CODEGEN_AOT_IS_MSVC != 0) {
+            if (fileExists(NUMKIT_CODEGEN_AOT_VCVARS))
+                return NUMKIT_CODEGEN_AOT_CXX;
+        } else if (std::string(NUMKIT_CODEGEN_AOT_CXX).size() > 0) {
+            return NUMKIT_CODEGEN_AOT_CXX;
+        }
+    }
+
+    auto discovered = sys::findCxxCompiler();
+    if (discovered.found && discovered.name != "msvc") {
+        if (!discovered.extraArgs.empty())
+            return discovered.path + " " + discovered.extraArgs;
+        return discovered.path;
+    }
+    return {};
+}
+
+// True when the build-time compiler is MSVC AND we are using that exact compiler.
 bool useMsvcVcvars(const std::string &cxx)
 {
-    return NUMKIT_CODEGEN_AOT_IS_MSVC != 0 && cxx == NUMKIT_CODEGEN_AOT_CXX;
+    return NUMKIT_CODEGEN_AOT_IS_MSVC != 0
+        && cxx == NUMKIT_CODEGEN_AOT_CXX
+        && fileExists(NUMKIT_CODEGEN_AOT_VCVARS);
 }
 
 } // namespace
 
-bool available() { return NUMKIT_CODEGEN_AOT_AVAILABLE != 0; }
+bool available() { return !resolveCxx().empty(); }
 
 namespace {
 
@@ -82,7 +126,7 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
 {
     CompileResult r;
     const std::string cxx = resolveCxx();
-    if (cxx.empty() || !available()) {
+    if (cxx.empty()) {
         r.status = CompileStatus::Unavailable;
         return r;
     }
@@ -118,7 +162,7 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
         for (const auto &d : opts.includeDirs) inc += " -I\"" + toNative(d) + "\"";
         for (const auto &d : opts.defines) def += " -D" + d;
         for (const auto &l : opts.linkLibs) libs += " \"" + toNative(l) + "\"";
-        b += "\"" + toNative(cxx) + "\" -O2 -std=c++17 "
+        b += quoteCompilerCmd(cxx, /*winQuote=*/true) + " -O2 -std=c++17 "
              + (sharedLib ? "-shared -fPIC " : "") + inc + def + " \"" + toNative(src) + "\" -o \""
              + toNative(outPath) + "\"" + libs + "\r\n";
     }
@@ -138,7 +182,7 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
     for (const auto &d : opts.includeDirs) inc += " -I'" + d + "'";
     for (const auto &d : opts.defines) def += " -D" + d;
     for (const auto &l : opts.linkLibs) libs += " '" + l + "'";
-    cmd = cxx + " -O2 -std=c++17 "
+    cmd = quoteCompilerCmd(cxx, /*winQuote=*/false) + " -O2 -std=c++17 "
           + (sharedLib ? "-shared -fPIC " : "") + inc + def + " '" + src + "' -o '" + outPath
           + "'" + libs + " > '" + log + "' 2>&1";
 #endif

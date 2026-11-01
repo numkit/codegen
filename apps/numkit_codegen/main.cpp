@@ -24,6 +24,8 @@
 
 #include <numkit/codegen/aot.hpp>
 #include <numkit/codegen/driver.hpp>
+#include <numkit/sys/env.hpp>
+#include <numkit/sys/toolchain.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -114,6 +116,10 @@ int main(int argc, char **argv)
         // and the binary don't collide. v1 requires a nullary entry returning a
         // scalar / complex / void — buildHarnessMain throws otherwise.
         if (runFlag) {
+            if (!bridge && numkit::sys::envGet("NUMKIT_CXX").empty() &&
+                numkit::sys::findZig().found) {
+                numkit::sys::envSet("NUMKIT_USE_ZIG", "1");
+            }
             if (!cg::aot::available())
                 throw std::runtime_error(
                     "no C++ compiler configured — set NUMKIT_CXX or rebuild with a "
