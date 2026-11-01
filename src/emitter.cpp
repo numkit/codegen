@@ -784,6 +784,7 @@ private:
     // Non-empty inside an elementwise-array fill loop: the 0-based size_t
     // index, so a bare whole-array `x` emits the element `x[<idx>]`.
     std::string                                 elementCtx_;
+    std::unordered_map<std::string, std::string> elementIdxMap_;
     // The function's RETURN ABI (set by emitOneFunction before the body is
     // emitted), so an early `return` lowers to the SAME form as the
     // end-of-function return: a value output (`return name;`, or `.take()` if
@@ -888,6 +889,8 @@ std::string Emitter::emitExpr(const ASTNode &e)
         if (isArrayVar(e.strValue)) {
             // Inside an elementwise-array fill loop a whole array means its
             // current element; in any other (scalar) context it is an error.
+            if (auto it = elementIdxMap_.find(e.strValue); it != elementIdxMap_.end())
+                return arrays_.at(e.strValue).dataExpr + "[" + it->second + "]";
             if (!elementCtx_.empty())
                 return arrays_.at(e.strValue).dataExpr + "[" + elementCtx_ + "]";
             unsupported("bare array identifier '" + e.strValue + "' in scalar context");
@@ -1456,6 +1459,10 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
                                  : "((" + x + ") * (180.0 / 3.14159265358979323846))";
     }
 
+    if (!elementCtx_.empty() && nargs >= 1 && (name == "zeros" || name == "ones")) {
+        return name == "zeros" ? "0.0" : "1.0";
+    }
+
     // sign(x): MATLAB's signum for a REAL operand -> 1 / -1 / 0, with sign(0)=0 and
     // sign(NaN)=NaN. Not a std:: fn; inline via a single-eval IIFE. realOnlyMathUnary-
     // Transfer types sign for real DOUBLE/SINGLE only (complex -> Dynamic -> bridged), so
@@ -1480,12 +1487,15 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
         if (pureEw && srcArrays.size() == 1 && !arrays_.at(*srcArrays.begin()).is2D
             && !arrays_.at(*srcArrays.begin()).isND
             && inferExpr(call, types_, reg_, classes_).type.shape.isScalar()) {
-            const ArrayInfo  &ba    = arrays_.at(*srcArrays.begin());
-            const bool        isAny = name == "any";
-            const std::string saved = elementCtx_;
-            elementCtx_              = "_numkit_aa_i";  // whole array in the arg -> arr[_numkit_aa_i]
+            const ArrayInfo  &ba       = arrays_.at(*srcArrays.begin());
+            const bool        isAny    = name == "any";
+            const std::string saved    = elementCtx_;
+            const auto        savedMap = elementIdxMap_;
+            elementIdxMap_.clear();
+            elementCtx_                = "_numkit_aa_i";  // whole array in the arg -> arr[_numkit_aa_i]
             const std::string maskExpr = emitExpr(*call.children[1]);
             elementCtx_                = saved;
+            elementIdxMap_             = savedMap;
             return "([&]() -> bool { for (std::size_t _numkit_aa_i = 0; _numkit_aa_i < (" + ba.lenVar
                    + "); ++_numkit_aa_i) if ((" + maskExpr + ") "
                    + (isAny ? "!= 0) return true; return false; }())"
@@ -1508,18 +1518,50 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
             && !arrays_.at(*srcArrays.begin()).isND
             && arrays_.at(*srcArrays.begin()).dtype == ValueType::DOUBLE
             && inferExpr(call, types_, reg_, classes_).type.shape.isScalar()) {
-            const ArrayInfo  &ba    = arrays_.at(*srcArrays.begin());
-            const std::string cmp   = name == "max" ? ">" : "<";
-            const std::string saved = elementCtx_;
-            elementCtx_              = "0";  // seed: expr at element 0
-            const std::string seed  = emitExpr(*call.children[1]);
-            elementCtx_              = "_numkit_aa_i";  // body: expr at the loop index
-            const std::string bodyE = emitExpr(*call.children[1]);
-            elementCtx_             = saved;
+            const ArrayInfo  &ba       = arrays_.at(*srcArrays.begin());
+            const std::string cmp      = name == "max" ? ">" : "<";
+            const std::string saved    = elementCtx_;
+            const auto        savedMap = elementIdxMap_;
+            elementIdxMap_.clear();
+            elementCtx_                = "0";  // seed: expr at element 0
+            const std::string seed     = emitExpr(*call.children[1]);
+            elementCtx_                = "_numkit_aa_i";  // body: expr at the loop index
+            const std::string bodyE    = emitExpr(*call.children[1]);
+            elementCtx_                = saved;
+            elementIdxMap_             = savedMap;
             return "([&]() -> double { double _numkit_acc = (" + seed
                    + "); for (std::size_t _numkit_aa_i = 1; _numkit_aa_i < (" + ba.lenVar
                    + "); ++_numkit_aa_i) { double _numkit_v = (" + bodyE + "); if (_numkit_v " + cmp
                    + " _numkit_acc || _numkit_acc != _numkit_acc) _numkit_acc = _numkit_v; } return _numkit_acc; }())";
+        }
+    }
+
+    if (!bridge_ && nargs == 1 && (name == "sum" || name == "prod" || name == "mean")) {
+        std::set<std::string> srcArrays;
+        const bool            pureEw = collectElementwise(*call.children[1], srcArrays);
+        if (pureEw && srcArrays.size() == 1 && !arrays_.at(*srcArrays.begin()).is2D
+            && !arrays_.at(*srcArrays.begin()).isND
+            && arrays_.at(*srcArrays.begin()).dtype == ValueType::DOUBLE
+            && inferExpr(call, types_, reg_, classes_).type.shape.isScalar()) {
+            const ArrayInfo  &ba       = arrays_.at(*srcArrays.begin());
+            const bool        isProd   = name == "prod";
+            const bool        isMean   = name == "mean";
+            const std::string saved    = elementCtx_;
+            const auto        savedMap = elementIdxMap_;
+            elementIdxMap_.clear();
+            elementCtx_                = "_numkit_aa_i";
+            const std::string bodyE    = emitExpr(*call.children[1]);
+            elementCtx_                = saved;
+            elementIdxMap_             = savedMap;
+            const std::string init   = isProd ? "1.0" : "0.0";
+            const std::string op     = isProd ? "*=" : "+=";
+            const std::string ret    = isMean
+                                           ? ("_numkit_acc / static_cast<double>(" + ba.lenVar + ")")
+                                           : std::string("_numkit_acc");
+            return "([&]() -> double { double _numkit_acc = " + init
+                   + "; for (std::size_t _numkit_aa_i = 0; _numkit_aa_i < (" + ba.lenVar
+                   + "); ++_numkit_aa_i) { _numkit_acc " + op + " (" + bodyE
+                   + "); } return " + ret + "; }())";
         }
     }
 
@@ -1734,8 +1776,11 @@ std::string Emitter::emitIndexRead(const std::string &base, const ASTNode &call)
                         + std::to_string(ai.ndDims.size()) + " subscripts)");
         std::string dims, subs;
         for (std::size_t k = 0; k < ai.ndDims.size(); ++k) dims += (k ? ", " : "") + ai.ndDims[k];
-        for (std::size_t i = 1; i < call.children.size(); ++i)
+        for (std::size_t i = 1; i < call.children.size(); ++i) {
+            endStack_.push_back(ai.ndDims[i - 1]);
             subs += (i > 1 ? ", " : "") + emitExpr(*call.children[i]);
+            endStack_.pop_back();
+        }
         return "numkit_rt::indexN(" + ptr + ", {" + dims + "}, {" + subs + "})";
     }
 
@@ -1746,8 +1791,14 @@ std::string Emitter::emitIndexRead(const std::string &base, const ASTNode &call)
     const IndexPlan plan = planIndexRead(arrayValue(base), idx);
     if (plan.form == IndexForm::Subscript2D) {
         if (!ai.is2D) unsupported("A(i,j) on a non-matrix '" + base + "'");
+        endStack_.push_back(ai.rowsVar);
+        const std::string sub1 = emitExpr(*call.children[1]);
+        endStack_.pop_back();
+        endStack_.push_back(ai.colsVar);
+        const std::string sub2 = emitExpr(*call.children[2]);
+        endStack_.pop_back();
         return "numkit_rt::index2(" + ptr + ", " + ai.rowsVar + ", " + ai.colsVar + ", "
-               + emitExpr(*call.children[1]) + ", " + emitExpr(*call.children[2]) + ")";
+               + sub1 + ", " + sub2 + ")";
     }
     if (plan.form != IndexForm::LinearScalar || ai.is2D)
         unsupported("index read form for '" + base
@@ -1866,6 +1917,67 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         }
     }
 
+    // Helper: extract a 1-D vector of scalar ASTNodes from a MATRIX_LITERAL
+    // (`[a, b, c]` or `[a; b; c]`), or a 2-D grid of scalar ASTNodes in
+    // column-major order (`[a b; c d]`).
+    auto extractScalarVecLiteral = [&](const ASTNode &lit,
+                                       std::vector<const ASTNode *> &out) -> bool {
+        out.clear();
+        if (lit.type != NodeType::MATRIX_LITERAL || lit.children.empty()) return false;
+        if (lit.children.size() == 1 && lit.children[0] && !lit.children[0]->children.empty()) {
+            for (const auto &el : lit.children[0]->children) {
+                if (!el) return false;
+                const AbstractValue ev = inferExpr(*el, types_, reg_, classes_);
+                if (!ev.type.isConcrete() || !ev.type.shape.isScalar()) return false;
+                out.push_back(el.get());
+            }
+            return !out.empty();
+        }
+        if (lit.children.size() > 1) {
+            for (const auto &rowN : lit.children) {
+                if (!rowN || rowN->children.size() != 1 || !rowN->children[0]) return false;
+                const AbstractValue ev = inferExpr(*rowN->children[0], types_, reg_, classes_);
+                if (!ev.type.isConcrete() || !ev.type.shape.isScalar()) return false;
+                out.push_back(rowN->children[0].get());
+            }
+            return !out.empty();
+        }
+        return false;
+    };
+    auto extractScalarGridLiteral = [&](const ASTNode &lit, std::size_t &rowsOut,
+                                        std::size_t &colsOut,
+                                        std::vector<const ASTNode *> &colMajorOut) -> bool {
+        colMajorOut.clear();
+        rowsOut = 0;
+        colsOut = 0;
+        if (lit.type != NodeType::MATRIX_LITERAL || lit.children.empty() || !lit.children[0]
+            || lit.children[0]->children.empty())
+            return false;
+        const std::size_t R = lit.children.size();
+        const std::size_t C = lit.children[0]->children.size();
+        for (const auto &rowN : lit.children) {
+            if (!rowN || rowN->children.size() != C) return false;
+            for (const auto &el : rowN->children) {
+                if (!el) return false;
+                const AbstractValue ev = inferExpr(*el, types_, reg_, classes_);
+                if (!ev.type.isConcrete() || !ev.type.shape.isScalar()) return false;
+            }
+        }
+        rowsOut = R;
+        colsOut = C;
+        colMajorOut.reserve(R * C);
+        for (std::size_t c = 0; c < C; ++c)
+            for (std::size_t r = 0; r < R; ++r)
+                colMajorOut.push_back(lit.children[r]->children[c].get());
+        return true;
+    };
+    std::vector<const ASTNode *> rhsVecLit;
+    const bool                   hasRhsVecLit = extractScalarVecLiteral(rhs, rhsVecLit);
+    std::size_t                  rhsGridRows = 0, rhsGridCols = 0;
+    std::vector<const ASTNode *> rhsGridLit;
+    const bool                   hasRhsGridLit =
+        extractScalarGridLiteral(rhs, rhsGridRows, rhsGridCols, rhsGridLit);
+
     // 2-D COLUMN slice write: A(:, j) = col -> overwrite column j (1-based) of a 2-D
     // matrix with the 1-D vector col (length = rows). Works for a KnownDims 2-D OR a
     // runtime-dim 2-D (dims via the rank-agnostic dimExpr). Column-major: column j is
@@ -1873,34 +1985,47 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
     // checked j, length-checked col; A must be writable (local/output). Placed before
     // the N-D write branch so it intercepts a runtime-dim 2-D target (whose other
     // colon writes that branch refuses). v1: A 2-D DOUBLE, col a distinct 1-D DOUBLE
-    // array var, j scalar. (A(i,:)=row strided write is the sibling branch below.)
+    // array var or inline scalar vector literal, j scalar.
     if (lhsCall.children.size() == 3
         && (ai.is2D || (ai.isND && ai.ndDims.size() == 2)) && ai.dtype == ValueType::DOUBLE
         && lhsCall.children[1]->type == NodeType::COLON_EXPR
         && lhsCall.children[1]->children.empty()
         && lhsCall.children[2]->type != NodeType::COLON_EXPR
-        && rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue)
-        && rhs.strValue != base && !arrays_.at(rhs.strValue).is2D
-        && !arrays_.at(rhs.strValue).isND
-        && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE
+        && ((rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue)
+             && rhs.strValue != base && !arrays_.at(rhs.strValue).is2D
+             && !arrays_.at(rhs.strValue).isND
+             && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE)
+            || hasRhsVecLit)
         && inferExpr(*lhsCall.children[2], types_, reg_, classes_).type.shape.isScalar()) {
         if (!ai.isLocal && !ai.isOutput)
             unsupported("column-slice write to a read-only matrix parameter '" + base + "'");
         const std::string Arows = dimExpr(ai, 0), Acols = dimExpr(ai, 1);
-        const ArrayInfo  &col   = arrays_.at(rhs.strValue);
         endStack_.push_back(Acols);  // `end` in the column index = cols
         const std::string j = emitExpr(*lhsCall.children[2]);
         endStack_.pop_back();
         line("{");
         ++indent_;
+        std::string colData, colLen;
+        if (hasRhsVecLit) {
+            std::string elems;
+            for (std::size_t k = 0; k < rhsVecLit.size(); ++k)
+                elems += (k ? ", " : "") + emitExpr(*rhsVecLit[k]);
+            line("const double _numkit_lit[] = { " + elems + " };");
+            colData = "_numkit_lit";
+            colLen  = std::to_string(rhsVecLit.size());
+        } else {
+            const ArrayInfo &col = arrays_.at(rhs.strValue);
+            colData = col.dataExpr;
+            colLen  = col.lenVar;
+        }
         line("const std::ptrdiff_t _numkit_j = static_cast<std::ptrdiff_t>(" + j + ");");
         line("if (_numkit_j < 1 || _numkit_j > static_cast<std::ptrdiff_t>(" + Acols + "))");
         line("    throw std::out_of_range(\"numkit: column index out of bounds\");");
-        line("if (" + col.lenVar + " != " + Arows + ")");
+        line("if (" + colLen + " != " + Arows + ")");
         line("    throw std::out_of_range(\"numkit: column assignment length mismatch\");");
         line("const std::size_t _numkit_off = static_cast<std::size_t>(_numkit_j - 1) * " + Arows + ";");
         open("for (std::size_t _numkit_i = 0; _numkit_i < " + Arows + "; ++_numkit_i)");
-        line(ptr + "[_numkit_off + _numkit_i] = " + col.dataExpr + "[_numkit_i];");
+        line(ptr + "[_numkit_off + _numkit_i] = " + colData + "[_numkit_i];");
         close();
         --indent_;
         line("}");
@@ -1912,34 +2037,47 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
     // column-major storage row i is STRIDED: A[(i-1) + j*rows] = row[j] for j in
     // [0, cols). Works for a KnownDims 2-D OR a runtime-dim 2-D (dims via dimExpr).
     // Bounds-checked i, length-checked row; A must be writable. v1: A 2-D DOUBLE, row a
-    // distinct 1-D DOUBLE array var, i scalar.
+    // distinct 1-D DOUBLE array var or inline scalar vector literal, i scalar.
     if (lhsCall.children.size() == 3
         && (ai.is2D || (ai.isND && ai.ndDims.size() == 2)) && ai.dtype == ValueType::DOUBLE
         && lhsCall.children[1]->type != NodeType::COLON_EXPR
         && lhsCall.children[2]->type == NodeType::COLON_EXPR
         && lhsCall.children[2]->children.empty()
-        && rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue)
-        && rhs.strValue != base && !arrays_.at(rhs.strValue).is2D
-        && !arrays_.at(rhs.strValue).isND
-        && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE
+        && ((rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue)
+             && rhs.strValue != base && !arrays_.at(rhs.strValue).is2D
+             && !arrays_.at(rhs.strValue).isND
+             && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE)
+            || hasRhsVecLit)
         && inferExpr(*lhsCall.children[1], types_, reg_, classes_).type.shape.isScalar()) {
         if (!ai.isLocal && !ai.isOutput)
             unsupported("row-slice write to a read-only matrix parameter '" + base + "'");
         const std::string Arows = dimExpr(ai, 0), Acols = dimExpr(ai, 1);
-        const ArrayInfo  &row   = arrays_.at(rhs.strValue);
         endStack_.push_back(Arows);  // `end` in the row index = rows
         const std::string i = emitExpr(*lhsCall.children[1]);
         endStack_.pop_back();
         line("{");
         ++indent_;
+        std::string rowData, rowLen;
+        if (hasRhsVecLit) {
+            std::string elems;
+            for (std::size_t k = 0; k < rhsVecLit.size(); ++k)
+                elems += (k ? ", " : "") + emitExpr(*rhsVecLit[k]);
+            line("const double _numkit_lit[] = { " + elems + " };");
+            rowData = "_numkit_lit";
+            rowLen  = std::to_string(rhsVecLit.size());
+        } else {
+            const ArrayInfo &row = arrays_.at(rhs.strValue);
+            rowData = row.dataExpr;
+            rowLen  = row.lenVar;
+        }
         line("const std::ptrdiff_t _numkit_i0 = static_cast<std::ptrdiff_t>(" + i + ") - 1;");
         line("if (_numkit_i0 < 0 || _numkit_i0 >= static_cast<std::ptrdiff_t>(" + Arows + "))");
         line("    throw std::out_of_range(\"numkit: row index out of bounds\");");
-        line("if (" + row.lenVar + " != " + Acols + ")");
+        line("if (" + rowLen + " != " + Acols + ")");
         line("    throw std::out_of_range(\"numkit: row assignment length mismatch\");");
         open("for (std::size_t _numkit_j = 0; _numkit_j < " + Acols + "; ++_numkit_j)");
         line(ptr + "[static_cast<std::size_t>(_numkit_i0) + _numkit_j * " + Arows + "] = "
-             + row.dataExpr + "[_numkit_j];");
+             + rowData + "[_numkit_j];");
         close();
         --indent_;
         line("}");
@@ -2058,18 +2196,18 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
     // columns j1..j2 are the CONTIGUOUS block A[(j1-1)*rows .. j2*rows] -> a straight copy from B.
     // A writable; bounds-checked range (end = cols); a numel guard on B (rows*(j2-j1+1)). v1: 2-D
     // DOUBLE A (KnownDims or runtime), a leading bare colon + a step-1 range j1:j2, rhs a distinct
-    // 2-D DOUBLE array var. Placed before the rank-3+ trailing-range write.
+    // 2-D DOUBLE array var or inline scalar matrix literal. Placed before the rank-3+ trailing-range write.
     if ((ai.is2D || (ai.isND && ai.ndDims.size() == 2)) && ai.dtype == ValueType::DOUBLE
         && lhsCall.children.size() == 3
         && lhsCall.children[1]->type == NodeType::COLON_EXPR && lhsCall.children[1]->children.empty()
         && lhsCall.children[2]->type == NodeType::COLON_EXPR && lhsCall.children[2]->children.size() == 2
-        && rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue) && rhs.strValue != base
-        && (arrays_.at(rhs.strValue).is2D
-            || (arrays_.at(rhs.strValue).isND && arrays_.at(rhs.strValue).ndDims.size() == 2))
-        && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE) {
+        && ((rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue) && rhs.strValue != base
+             && (arrays_.at(rhs.strValue).is2D
+                 || (arrays_.at(rhs.strValue).isND && arrays_.at(rhs.strValue).ndDims.size() == 2))
+             && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE)
+            || hasRhsGridLit)) {
         if (!ai.isLocal && !ai.isOutput)
             unsupported("column-range write to a read-only matrix parameter '" + base + "'");
-        const ArrayInfo  &B    = arrays_.at(rhs.strValue);  // value source
         const std::string rows = dimExpr(ai, 0), cols = dimExpr(ai, 1);
         const ASTNode    &rng  = *lhsCall.children[2];  // j1:j2
         endStack_.push_back(cols);                      // `end` in the column index = cols
@@ -2078,6 +2216,19 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         endStack_.pop_back();
         line("{");
         ++indent_;
+        std::string bData, bNumel;
+        if (hasRhsGridLit) {
+            std::string elems;
+            for (std::size_t k = 0; k < rhsGridLit.size(); ++k)
+                elems += (k ? ", " : "") + emitExpr(*rhsGridLit[k]);
+            line("const double _numkit_lit[] = { " + elems + " };");
+            bData  = "_numkit_lit";
+            bNumel = std::to_string(rhsGridLit.size());
+        } else {
+            const ArrayInfo &B = arrays_.at(rhs.strValue);
+            bData  = B.dataExpr;
+            bNumel = "(" + dimExpr(B, 0) + " * " + dimExpr(B, 1) + ")";
+        }
         line("const std::size_t _numkit_rows = " + rows + ";");
         line("const std::ptrdiff_t _numkit_j1 = static_cast<std::ptrdiff_t>(" + j1 + ");");
         line("const std::ptrdiff_t _numkit_j2 = static_cast<std::ptrdiff_t>(" + j2 + ");");
@@ -2085,11 +2236,11 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
              + ") || _numkit_j2 < _numkit_j1)");
         line("    throw std::out_of_range(\"numkit: column range out of bounds\");");
         line("const std::size_t _numkit_nc = static_cast<std::size_t>(_numkit_j2 - _numkit_j1 + 1);");
-        line("if ((" + dimExpr(B, 0) + " * " + dimExpr(B, 1) + ") != _numkit_rows * _numkit_nc)");
+        line("if (" + bNumel + " != _numkit_rows * _numkit_nc)");
         line("    throw std::out_of_range(\"numkit: column-range assignment size mismatch\");");
         line("const std::size_t _numkit_off = static_cast<std::size_t>(_numkit_j1 - 1) * _numkit_rows;");
         open("for (std::size_t _numkit_i = 0; _numkit_i < _numkit_rows * _numkit_nc; ++_numkit_i)");
-        line(ptr + "[_numkit_off + _numkit_i] = " + B.dataExpr + "[_numkit_i];");
+        line(ptr + "[_numkit_off + _numkit_i] = " + bData + "[_numkit_i];");
         close();
         --indent_;
         line("}");
@@ -2101,18 +2252,18 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
     // not contiguous in column-major): for each column j write the run A[(i1-1)+j*rows .. i2+j*rows)
     // from B's column j. A writable; bounds-checked range (end = rows); a numel guard on B
     // ((i2-i1+1)*cols). v1: 2-D DOUBLE A, a leading step-1 range i1:i2 + a trailing bare colon, rhs
-    // a distinct 2-D DOUBLE array var. Placed before the rank-3+ trailing-range write.
+    // a distinct 2-D DOUBLE array var or inline scalar matrix literal. Placed before the rank-3+ trailing-range write.
     if ((ai.is2D || (ai.isND && ai.ndDims.size() == 2)) && ai.dtype == ValueType::DOUBLE
         && lhsCall.children.size() == 3
         && lhsCall.children[1]->type == NodeType::COLON_EXPR && lhsCall.children[1]->children.size() == 2
         && lhsCall.children[2]->type == NodeType::COLON_EXPR && lhsCall.children[2]->children.empty()
-        && rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue) && rhs.strValue != base
-        && (arrays_.at(rhs.strValue).is2D
-            || (arrays_.at(rhs.strValue).isND && arrays_.at(rhs.strValue).ndDims.size() == 2))
-        && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE) {
+        && ((rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue) && rhs.strValue != base
+             && (arrays_.at(rhs.strValue).is2D
+                 || (arrays_.at(rhs.strValue).isND && arrays_.at(rhs.strValue).ndDims.size() == 2))
+             && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE)
+            || hasRhsGridLit)) {
         if (!ai.isLocal && !ai.isOutput)
             unsupported("row-range write to a read-only matrix parameter '" + base + "'");
-        const ArrayInfo  &B    = arrays_.at(rhs.strValue);  // value source
         const std::string rows = dimExpr(ai, 0), cols = dimExpr(ai, 1);
         const ASTNode    &rng  = *lhsCall.children[1];  // i1:i2
         endStack_.push_back(rows);                      // `end` in the row index = rows
@@ -2121,6 +2272,19 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         endStack_.pop_back();
         line("{");
         ++indent_;
+        std::string bData, bNumel;
+        if (hasRhsGridLit) {
+            std::string elems;
+            for (std::size_t k = 0; k < rhsGridLit.size(); ++k)
+                elems += (k ? ", " : "") + emitExpr(*rhsGridLit[k]);
+            line("const double _numkit_lit[] = { " + elems + " };");
+            bData  = "_numkit_lit";
+            bNumel = std::to_string(rhsGridLit.size());
+        } else {
+            const ArrayInfo &B = arrays_.at(rhs.strValue);
+            bData  = B.dataExpr;
+            bNumel = "(" + dimExpr(B, 0) + " * " + dimExpr(B, 1) + ")";
+        }
         line("const std::size_t _numkit_rows = " + rows + ";");
         line("const std::size_t _numkit_cols = " + cols + ";");
         line("const std::ptrdiff_t _numkit_i1 = static_cast<std::ptrdiff_t>(" + i1 + ");");
@@ -2128,12 +2292,12 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         line("if (_numkit_i1 < 1 || _numkit_i2 > static_cast<std::ptrdiff_t>(_numkit_rows) || _numkit_i2 < _numkit_i1)");
         line("    throw std::out_of_range(\"numkit: row range out of bounds\");");
         line("const std::size_t _numkit_nr = static_cast<std::size_t>(_numkit_i2 - _numkit_i1 + 1);");
-        line("if ((" + dimExpr(B, 0) + " * " + dimExpr(B, 1) + ") != _numkit_nr * _numkit_cols)");
+        line("if (" + bNumel + " != _numkit_nr * _numkit_cols)");
         line("    throw std::out_of_range(\"numkit: row-range assignment size mismatch\");");
         line("const std::size_t _numkit_r0 = static_cast<std::size_t>(_numkit_i1 - 1);");
         open("for (std::size_t _numkit_j = 0; _numkit_j < _numkit_cols; ++_numkit_j)");
         open("for (std::size_t _numkit_r = 0; _numkit_r < _numkit_nr; ++_numkit_r)");
-        line(ptr + "[(_numkit_r0 + _numkit_r) + _numkit_j * _numkit_rows] = " + B.dataExpr
+        line(ptr + "[(_numkit_r0 + _numkit_r) + _numkit_j * _numkit_rows] = " + bData
              + "[_numkit_r + _numkit_j * _numkit_nr];");
         close();
         close();
@@ -2146,18 +2310,18 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
     // sub-block rows i1..i2 x columns j1..j2 of a 2-D A (phase N24, the write sibling of the both-
     // range read). STRIDED: for each kept column cc = j1-1+c, write the row run A[(i1-1)+cc*rows ..
     // i2+cc*rows) from B's column c. A writable; both ranges bounds-checked; a numel guard on B
-    // ((i2-i1+1)*(j2-j1+1)). v1: 2-D DOUBLE A, two step-1 ranges, rhs a distinct 2-D DOUBLE var.
+    // ((i2-i1+1)*(j2-j1+1)). v1: 2-D DOUBLE A, two step-1 ranges, rhs a distinct 2-D DOUBLE var or inline scalar matrix literal.
     if ((ai.is2D || (ai.isND && ai.ndDims.size() == 2)) && ai.dtype == ValueType::DOUBLE
         && lhsCall.children.size() == 3
         && lhsCall.children[1]->type == NodeType::COLON_EXPR && lhsCall.children[1]->children.size() == 2
         && lhsCall.children[2]->type == NodeType::COLON_EXPR && lhsCall.children[2]->children.size() == 2
-        && rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue) && rhs.strValue != base
-        && (arrays_.at(rhs.strValue).is2D
-            || (arrays_.at(rhs.strValue).isND && arrays_.at(rhs.strValue).ndDims.size() == 2))
-        && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE) {
+        && ((rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue) && rhs.strValue != base
+             && (arrays_.at(rhs.strValue).is2D
+                 || (arrays_.at(rhs.strValue).isND && arrays_.at(rhs.strValue).ndDims.size() == 2))
+             && arrays_.at(rhs.strValue).dtype == ValueType::DOUBLE)
+            || hasRhsGridLit)) {
         if (!ai.isLocal && !ai.isOutput)
             unsupported("block-range write to a read-only matrix parameter '" + base + "'");
-        const ArrayInfo  &B    = arrays_.at(rhs.strValue);  // value source
         const std::string rows = dimExpr(ai, 0), cols = dimExpr(ai, 1);
         const ASTNode    &rr   = *lhsCall.children[1];  // i1:i2
         const ASTNode    &cr   = *lhsCall.children[2];  // j1:j2
@@ -2171,6 +2335,19 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         endStack_.pop_back();
         line("{");
         ++indent_;
+        std::string bData, bNumel;
+        if (hasRhsGridLit) {
+            std::string elems;
+            for (std::size_t k = 0; k < rhsGridLit.size(); ++k)
+                elems += (k ? ", " : "") + emitExpr(*rhsGridLit[k]);
+            line("const double _numkit_lit[] = { " + elems + " };");
+            bData  = "_numkit_lit";
+            bNumel = std::to_string(rhsGridLit.size());
+        } else {
+            const ArrayInfo &B = arrays_.at(rhs.strValue);
+            bData  = B.dataExpr;
+            bNumel = "(" + dimExpr(B, 0) + " * " + dimExpr(B, 1) + ")";
+        }
         line("const std::size_t _numkit_rows = " + rows + ";");
         line("const std::size_t _numkit_cols = " + cols + ";");
         line("const std::ptrdiff_t _numkit_i1 = static_cast<std::ptrdiff_t>(" + i1 + ");");
@@ -2183,13 +2360,13 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         line("    throw std::out_of_range(\"numkit: column range out of bounds\");");
         line("const std::size_t _numkit_nr = static_cast<std::size_t>(_numkit_i2 - _numkit_i1 + 1);");
         line("const std::size_t _numkit_nc = static_cast<std::size_t>(_numkit_j2 - _numkit_j1 + 1);");
-        line("if ((" + dimExpr(B, 0) + " * " + dimExpr(B, 1) + ") != _numkit_nr * _numkit_nc)");
+        line("if (" + bNumel + " != _numkit_nr * _numkit_nc)");
         line("    throw std::out_of_range(\"numkit: block-range assignment size mismatch\");");
         line("const std::size_t _numkit_r0 = static_cast<std::size_t>(_numkit_i1 - 1);");
         line("const std::size_t _numkit_c0 = static_cast<std::size_t>(_numkit_j1 - 1);");
         open("for (std::size_t _numkit_c = 0; _numkit_c < _numkit_nc; ++_numkit_c)");
         open("for (std::size_t _numkit_r = 0; _numkit_r < _numkit_nr; ++_numkit_r)");
-        line(ptr + "[(_numkit_r0 + _numkit_r) + (_numkit_c0 + _numkit_c) * _numkit_rows] = " + B.dataExpr
+        line(ptr + "[(_numkit_r0 + _numkit_r) + (_numkit_c0 + _numkit_c) * _numkit_rows] = " + bData
              + "[_numkit_r + _numkit_c * _numkit_nr];");
         close();
         close();
@@ -2372,8 +2549,11 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
                             + "' -- scalar subscripts only (v1)");
         std::string dims, subs;
         for (std::size_t k = 0; k < ai.ndDims.size(); ++k) dims += (k ? ", " : "") + ai.ndDims[k];
-        for (std::size_t i = 1; i < lhsCall.children.size(); ++i)
+        for (std::size_t i = 1; i < lhsCall.children.size(); ++i) {
+            endStack_.push_back(ai.ndDims[i - 1]);
             subs += (i > 1 ? ", " : "") + emitExpr(*lhsCall.children[i]);
+            endStack_.pop_back();
+        }
         line("numkit_rt::indexN_set(" + ptr + ", {" + dims + "}, {" + subs + "}, " + emitExpr(rhs)
              + ");");
         return;
@@ -2578,9 +2758,14 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         if (!ai.is2D) unsupported("A(i,j) on a non-matrix '" + base + "'");
         if (!ai.isLocal && !ai.isOutput)
             unsupported("2-D write to a read-only matrix parameter '" + base + "'");
+        endStack_.push_back(ai.rowsVar);
+        const std::string sub1 = emitExpr(*lhsCall.children[1]);
+        endStack_.pop_back();
+        endStack_.push_back(ai.colsVar);
+        const std::string sub2 = emitExpr(*lhsCall.children[2]);
+        endStack_.pop_back();
         line("numkit_rt::index2_set(" + ptr + ", " + ai.rowsVar + ", " + ai.colsVar + ", "
-             + emitExpr(*lhsCall.children[1]) + ", " + emitExpr(*lhsCall.children[2]) + ", "
-             + emitExpr(rhs) + ");");
+             + sub1 + ", " + sub2 + ", " + emitExpr(rhs) + ");");
         return;
     }
     if (plan.form != IndexForm::LinearScalar || ai.is2D)
@@ -2657,7 +2842,27 @@ bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays
         const std::size_t nargs = e.children.size() - 1;
         const bool isMath = (nargs == 1 && (unaryMathStd(callee) != nullptr || callee == "sign"))
                             || (nargs == 2 && binaryMathStd(callee) != nullptr);
-        if (!isMath) return false;
+        if (!isMath) {
+            if (nargs >= 1 && (callee == "zeros" || callee == "ones")) {
+                for (std::size_t i = 1; i < e.children.size(); ++i)
+                    if (!inferExpr(*e.children[i], types_, reg_, classes_).type.shape.isScalar())
+                        return false;
+                return true;
+            }
+            if (nargs == 1
+                && (callee == "sum" || callee == "prod" || callee == "mean"
+                    || callee == "min" || callee == "max" || callee == "any"
+                    || callee == "all" || callee == "numel" || callee == "length")
+                && inferExpr(e, types_, reg_, classes_).type.shape.isScalar()) {
+                std::set<std::string> innerArrays;
+                if (collectElementwise(*e.children[1], innerArrays) && innerArrays.size() == 1
+                    && !arrays_.at(*innerArrays.begin()).is2D
+                    && !arrays_.at(*innerArrays.begin()).isND) {
+                    return true;
+                }
+            }
+            return false;
+        }
         for (std::size_t i = 1; i < e.children.size(); ++i)
             if (!collectElementwise(*e.children[i], arrays)) return false;
         return true;
@@ -2872,8 +3077,8 @@ void Emitter::emitAssign(const ASTNode &s)
             --indent_;
             line("}");
             const ArrayInfo &ai = arrays_.at(name);
-            if (ai.isND || ai.is2D)
-                types_.set(name, inferExpr(rhs, types_, reg_, classes_));
+            if (!ai.isND && !ai.is2D) arrays_.at(name).orient = VecOrient::Row;
+            types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
         }
         // logspace(a, b [, n]) -> n decade-spaced points 10^a .. 10^b (= 10^linspace).
@@ -2906,8 +3111,8 @@ void Emitter::emitAssign(const ASTNode &s)
             --indent_;
             line("}");
             const ArrayInfo &ai = arrays_.at(name);
-            if (ai.isND || ai.is2D)
-                types_.set(name, inferExpr(rhs, types_, reg_, classes_));
+            if (!ai.isND && !ai.is2D) arrays_.at(name).orient = VecOrient::Row;
+            types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
         }
         // Colon range MATERIALISED to an array: v = a:b (step 1) / v = a:s:b. A
@@ -2939,6 +3144,8 @@ void Emitter::emitAssign(const ASTNode &s)
             close();
             --indent_;
             line("}");
+            arrays_.at(name).orient = VecOrient::Row;
+            types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
         }
         // y = x(:) -> all elements of x as a column vector (column-major order), a
@@ -2964,6 +3171,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     numel = x.lenVar;
                 }
                 line(name + ".assign(" + x.dataExpr + ", " + x.dataExpr + " + (" + numel + "));");
+                arrays_.at(name).orient = VecOrient::Col;
                 types_.set(name, res);
                 return;
             }
@@ -3002,6 +3210,7 @@ void Emitter::emitAssign(const ASTNode &s)
                      + Arows + ");");
                 --indent_;
                 line("}");
+                arrays_.at(name).orient = VecOrient::Col;
                 types_.set(name, res);
                 return;
             }
@@ -3040,6 +3249,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 close();
                 --indent_;
                 line("}");
+                arrays_.at(name).orient = VecOrient::Row;
                 types_.set(name, res);
                 return;
             }
@@ -3718,9 +3928,99 @@ void Emitter::emitAssign(const ASTNode &s)
                 const std::string rd = src.dataExpr + "[_numkit_i]";
                 line(dst.dataExpr + "[_numkit_i] = " + (conj ? ("std::conj(" + rd + ")") : rd) + ";");
                 close();
+                if (src.orient == VecOrient::Row)
+                    arrays_.at(name).orient = VecOrient::Col;
+                else if (src.orient == VecOrient::Col)
+                    arrays_.at(name).orient = VecOrient::Row;
             }
             types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
+        }
+        // Fused elementwise + transpose: `C = (A + B)'`, `C = (2 * A - 1).'`, etc.
+        // Evaluates the pure-elementwise inner expression at source (j, i) and writes to
+        // destination (i, j) (conjugating for `'` on complex) in a single pass with no temp.
+        if (isArrayVar(name) && (arrays_.at(name).isOutput || arrays_.at(name).isLocal)
+            && rhs.type == NodeType::UNARY_OP && (rhs.strValue == "'" || rhs.strValue == ".'")
+            && rhs.children.size() == 1 && rhs.children[0]->type != NodeType::IDENTIFIER) {
+            std::set<std::string> srcArrays;
+            if (collectElementwise(*rhs.children[0], srcArrays) && !srcArrays.empty()
+                && srcArrays.count(name) == 0) {
+                const ArrayInfo    &dst  = arrays_.at(name);
+                const bool          conj = rhs.strValue == "'" && dst.dtype == ValueType::COMPLEX;
+                const AbstractValue res  = inferExpr(rhs, types_, reg_, classes_);
+                bool all2D = true, all1D = true;
+                for (const std::string &an : srcArrays) {
+                    const ArrayInfo &sa = arrays_.at(an);
+                    const bool       m2 = sa.is2D || (sa.isND && sa.ndDims.size() == 2);
+                    if (!m2) all2D = false;
+                    if (sa.is2D || sa.isND) all1D = false;
+                }
+                const bool dstMat = dst.is2D || (dst.isND && dst.ndDims.size() == 2);
+                if (all2D && dstMat && res.type.isConcrete()) {
+                    const ArrayInfo  &ref     = arrays_.at(*srcArrays.begin());
+                    const std::string srcRows = dimExpr(ref, 0), srcCols = dimExpr(ref, 1);
+                    std::string       guard;
+                    for (const std::string &an : srcArrays) {
+                        const ArrayInfo  &sa = arrays_.at(an);
+                        const std::string sr = dimExpr(sa, 0), sc = dimExpr(sa, 1);
+                        if (sr != srcRows || sc != srcCols)
+                            guard += (guard.empty() ? "" : " || ")
+                                     + ("(" + sr + " != " + srcRows + " || " + sc + " != " + srcCols + ")");
+                    }
+                    if (!guard.empty())
+                        line("if (" + guard + ") throw std::out_of_range(\"numkit: array dimensions must match\");");
+                    if (dst.isND && dst.ndRuntimeLocal) {
+                        line(dst.ndDims[0] + " = " + srcCols + ";");
+                        line(dst.ndDims[1] + " = " + srcRows + ";");
+                        line(name + ".assign(" + dst.ndDims[0] + " * " + dst.ndDims[1] + ", "
+                             + zeroLiteral(dst.dtype) + ");");
+                    } else if (dst.isLocal) {
+                        line(name + ".assign(" + dimExpr(dst, 0) + " * " + dimExpr(dst, 1) + ", "
+                             + zeroLiteral(dst.dtype) + ");");
+                    } else {
+                        line("if (" + dimExpr(dst, 0) + " != " + srcCols + " || "
+                             + dimExpr(dst, 1) + " != " + srcRows
+                             + ") throw std::out_of_range(\"numkit: transpose dimensions must agree\");");
+                    }
+                    const std::string dstRows = dimExpr(dst, 0), dstCols = dimExpr(dst, 1);
+                    elementCtx_ = "_numkit_j + _numkit_i * " + srcRows;
+                    const std::string inner = emitExpr(*rhs.children[0]);
+                    elementCtx_.clear();
+                    open("for (std::size_t _numkit_j = 0; _numkit_j < " + dstCols + "; ++_numkit_j)");
+                    open("for (std::size_t _numkit_i = 0; _numkit_i < " + dstRows + "; ++_numkit_i)");
+                    line(dst.dataExpr + "[_numkit_i + _numkit_j * " + dstRows + "] = "
+                         + (conj ? ("std::conj(" + inner + ")") : inner) + ";");
+                    close();
+                    close();
+                    types_.set(name, res);
+                    return;
+                } else if (all1D && !dst.is2D && !dst.isND && res.type.isConcrete()) {
+                    const ArrayInfo  &ref   = arrays_.at(*srcArrays.begin());
+                    const std::string bound = dst.isLocal ? ref.lenVar : dst.lenVar;
+                    std::string       guard;
+                    for (const std::string &an : srcArrays) {
+                        const std::string &alen = arrays_.at(an).lenVar;
+                        if (alen != bound)
+                            guard += (guard.empty() ? "" : " || ") + (alen + " != " + bound);
+                    }
+                    if (!guard.empty())
+                        line("if (" + guard + ") throw std::out_of_range(\"numkit: array dimensions must match\");");
+                    if (dst.isLocal) line(name + ".resize(" + bound + ");");
+                    elementCtx_ = "_numkit_i";
+                    const std::string inner = emitExpr(*rhs.children[0]);
+                    elementCtx_.clear();
+                    open("for (std::size_t _numkit_i = 0; _numkit_i < " + bound + "; ++_numkit_i)");
+                    line(dst.dataExpr + "[_numkit_i] = "
+                         + (conj ? ("std::conj(" + inner + ")") : inner) + ";");
+                    close();
+                    if (ref.orient == VecOrient::Row)
+                        arrays_.at(name).orient = VecOrient::Col;
+                    else if (ref.orient == VecOrient::Col)
+                        arrays_.at(name).orient = VecOrient::Row;
+                    types_.set(name, res);
+                    return;
+                }
+            }
         }
         // Matrix product: C = A * B (both 2-D). C is m x n (A is m x k, B is
         // k x n), C(i,j) = sum_l A(i,l)*B(l,j), column-major. The shared dim
@@ -3858,12 +4158,12 @@ void Emitter::emitAssign(const ASTNode &s)
             return;
         }
         // Outer product: y = c * r (c m x 1, r 1 x n) -> y m x n, column-major
-        // y[i + j*m] = c[i]*r[j]. The dims are the vector lengths (runtime), so y
-        // is a runtime-dim rank-2 array. A LOCAL sets its dim vars from the
-        // operand lengths + sizes its vector; an OUTPUT guards its caller-passed
-        // dims. Complex accumulates in std::complex. Native + self-contained.
+        // y[i + j*m] = c[i]*r[j]. Works for both KnownDims 2-D and runtime-dim rank-2
+        // destinations. A LOCAL sets its dim vars from the operand lengths + sizes its
+        // vector; an OUTPUT guards its caller-passed dims. Complex accumulates in
+        // std::complex. Native + self-contained.
         if (isArrayVar(name) && (arrays_.at(name).isOutput || arrays_.at(name).isLocal)
-            && arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2
+            && (arrays_.at(name).is2D || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
             && rhs.type == NodeType::BINARY_OP && rhs.strValue == "*"
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[0]->strValue)
@@ -3876,11 +4176,13 @@ void Emitter::emitAssign(const ASTNode &s)
                 unsupported("outer product over a non-vector operand");
             if (name == rhs.children[0]->strValue || name == rhs.children[1]->strValue)
                 unsupported("in-place outer product");
-            const std::string &d0 = dst.ndDims[0];  // rows = length(c)
-            const std::string &d1 = dst.ndDims[1];  // cols = length(r)
+            const std::string d0 = dimExpr(dst, 0);  // rows = length(c)
+            const std::string d1 = dimExpr(dst, 1);  // cols = length(r)
             if (dst.ndRuntimeLocal) {
-                line(d0 + " = " + c.lenVar + ";");
-                line(d1 + " = " + r.lenVar + ";");
+                line(dst.ndDims[0] + " = " + c.lenVar + ";");
+                line(dst.ndDims[1] + " = " + r.lenVar + ";");
+                line(name + ".assign(" + d0 + " * " + d1 + ", " + zeroLiteral(dst.dtype) + ");");
+            } else if (dst.isLocal) {
                 line(name + ".assign(" + d0 + " * " + d1 + ", " + zeroLiteral(dst.dtype) + ");");
             } else {  // OUTPUT: caller-allocated + caller-passed dims; guard agreement
                 line("if (" + d0 + " != " + c.lenVar + " || " + d1 + " != " + r.lenVar
@@ -3911,6 +4213,8 @@ void Emitter::emitAssign(const ASTNode &s)
                 const ArrayInfo &R = arrays_.at(rhs.children[1]->strValue);
                 if (L.is2D || R.is2D || L.isND || R.isND)
                     unsupported("inner product over a non-vector operand");
+                line("{");
+                ++indent_;
                 line("if (" + L.lenVar + " != " + R.lenVar + ") throw std::out_of_range(\""
                      "numkit: inner matrix dimensions must agree\");");
                 line(cppScalarType(res.type.dtype) + " _numkit_acc = "
@@ -3919,6 +4223,8 @@ void Emitter::emitAssign(const ASTNode &s)
                 line("_numkit_acc += " + L.dataExpr + "[_numkit_l] * " + R.dataExpr + "[_numkit_l];");
                 close();
                 line(name + " = _numkit_acc;");
+                --indent_;
+                line("}");
                 types_.set(name, res);
                 return;
             }
@@ -4754,6 +5060,78 @@ void Emitter::emitAssign(const ASTNode &s)
                 close();
                 line(name + "[_numkit_j] = _numkit_acc;");
                 close();
+                --indent_;
+                line("}");
+                types_.set(name, res);
+                return;
+            }
+        }
+        // Native sum(A[, dim]) / prod(A[, dim]) / mean(A[, dim]) on a 2-D MATRIX:
+        // - dim = 1 (or 1-arg default): column-wise reduction -> 1 x n row vector.
+        // - dim = 2: row-wise reduction -> m x 1 column vector.
+        if (isArrayVar(name) && (arrays_.at(name).isLocal || arrays_.at(name).isOutput)
+            && !arrays_.at(name).is2D && !arrays_.at(name).isND
+            && rhs.type == NodeType::CALL && (rhs.children.size() == 2 || rhs.children.size() == 3)
+            && rhs.children[0]->type == NodeType::IDENTIFIER
+            && (rhs.children[0]->strValue == "sum" || rhs.children[0]->strValue == "prod"
+                || rhs.children[0]->strValue == "mean")
+            && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
+            && (arrays_.at(rhs.children[1]->strValue).is2D
+                || (arrays_.at(rhs.children[1]->strValue).isND
+                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && (rhs.children.size() == 2
+                || (rhs.children[2]->type == NodeType::NUMBER_LITERAL
+                    && (rhs.children[2]->numValue == 1.0 || rhs.children[2]->numValue == 2.0)))) {
+            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo    &dst = arrays_.at(name);
+            const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
+            if (res.type.isConcrete() && !res.type.shape.isScalar()) {
+                const std::string &fn   = rhs.children[0]->strValue;
+                const int          dim  = rhs.children.size() == 3
+                                              ? static_cast<int>(rhs.children[2]->numValue)
+                                              : 1;
+                const std::string  init = fn == "prod" ? "1.0" : "0.0";
+                const std::string  op   = fn == "prod" ? "*=" : "+=";
+                line("{");
+                ++indent_;
+                line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
+                line("const std::size_t _numkit_n = " + dimExpr(A, 1) + ";");
+                if (dim == 1) {
+                    if (dst.isLocal)
+                        line(name + ".assign(_numkit_n, 0.0);");
+                    else
+                        line("if (" + dst.lenVar + " != _numkit_n) throw std::out_of_range(\""
+                             "numkit: reduction output length mismatch\");");
+                    open("for (std::size_t _numkit_j = 0; _numkit_j < _numkit_n; ++_numkit_j)");
+                    line("double _numkit_acc = " + init + ";");
+                    open("for (std::size_t _numkit_i = 0; _numkit_i < _numkit_m; ++_numkit_i)");
+                    line("_numkit_acc " + op + " " + A.dataExpr + "[_numkit_i + _numkit_j * _numkit_m];");
+                    close();
+                    if (fn == "mean")
+                        line(dst.dataExpr + "[_numkit_j] = _numkit_acc / static_cast<double>(_numkit_m);");
+                    else
+                        line(dst.dataExpr + "[_numkit_j] = _numkit_acc;");
+                    close();
+                    arrays_.at(name).orient = VecOrient::Row;
+                } else {
+                    if (dst.isLocal)
+                        line(name + ".assign(_numkit_m, 0.0);");
+                    else
+                        line("if (" + dst.lenVar + " != _numkit_m) throw std::out_of_range(\""
+                             "numkit: reduction output length mismatch\");");
+                    open("for (std::size_t _numkit_i = 0; _numkit_i < _numkit_m; ++_numkit_i)");
+                    line("double _numkit_acc = " + init + ";");
+                    open("for (std::size_t _numkit_j = 0; _numkit_j < _numkit_n; ++_numkit_j)");
+                    line("_numkit_acc " + op + " " + A.dataExpr + "[_numkit_i + _numkit_j * _numkit_m];");
+                    close();
+                    if (fn == "mean")
+                        line(dst.dataExpr + "[_numkit_i] = _numkit_acc / static_cast<double>(_numkit_n);");
+                    else
+                        line(dst.dataExpr + "[_numkit_i] = _numkit_acc;");
+                    close();
+                    arrays_.at(name).orient = VecOrient::Col;
+                }
                 --indent_;
                 line("}");
                 types_.set(name, res);
@@ -7146,13 +7524,22 @@ void Emitter::emitAssign(const ASTNode &s)
                     if (i > 1) boxed += ", ";
                     if (arg.type == NodeType::IDENTIFIER && isArrayVar(arg.strValue)) {
                         const ArrayInfo &aai = arrays_.at(arg.strValue);
-                        if (aai.is2D || aai.isND)
-                            unsupported("bridged call: 2-D/N-D array argument (v1)");
-                        // a complex array boxes via the interleaved-re,im C ABI
-                        boxed += aai.dtype == ValueType::COMPLEX
-                                     ? ("numkit_box_complex_array(reinterpret_cast<const double*>("
-                                        + aai.dataExpr + "), " + aai.lenVar + ")")
-                                     : ("numkit_box_array(" + aai.dataExpr + ", " + aai.lenVar + ")");
+                        if (aai.is2D || (aai.isND && aai.ndDims.size() == 2)) {
+                            const std::string ar = dimExpr(aai, 0), ac = dimExpr(aai, 1);
+                            boxed += aai.dtype == ValueType::COMPLEX
+                                         ? ("numkit_box_complex_matrix(reinterpret_cast<const double*>("
+                                            + aai.dataExpr + "), " + ar + ", " + ac + ")")
+                                         : ("numkit_box_matrix(" + aai.dataExpr + ", " + ar + ", "
+                                            + ac + ")");
+                        } else if (aai.isND) {
+                            unsupported("bridged call: N-D array argument (v1)");
+                        } else {
+                            // a complex array boxes via the interleaved-re,im C ABI
+                            boxed += aai.dtype == ValueType::COMPLEX
+                                         ? ("numkit_box_complex_array(reinterpret_cast<const double*>("
+                                            + aai.dataExpr + "), " + aai.lenVar + ")")
+                                         : ("numkit_box_array(" + aai.dataExpr + ", " + aai.lenVar + ")");
+                        }
                     } else if (arg.type == NodeType::STRING_LITERAL) {
                         // a CHAR LITERAL arg (e.g. a sprintf format) boxes as a CHAR row.
                         bool              ok  = false;
@@ -7339,6 +7726,98 @@ void Emitter::emitAssign(const ASTNode &s)
                         types_.set(name, {InferredType::concrete(ai.dtype, Shape::rowVector()),
                                           ConstVal::unknown()});
                     return;
+                }
+                // 2-D + 1-D Implicit Expansion (Broadcasting): e.g. `B = A - mean(A)`,
+                // `C = A + col_vec`, `C = (A - mu) ./ sigma`.
+                // When dst is a 2-D matrix (`dst2D` or rank-2 `dstND`) and `srcArrays`
+                // mixes at least one 2-D matrix with 1-D vectors (and no rank >= 3 N-D):
+                const bool dstMat = dst2D || (dstND && arrays_.at(name).ndDims.size() == 2);
+                if (rankMismatch && dstMat && res.type.isConcrete()
+                    && !res.type.shape.isScalar()
+                    && (res.type.dtype == ValueType::DOUBLE
+                        || res.type.dtype == ValueType::COMPLEX
+                        || res.type.dtype == ValueType::LOGICAL)) {
+                    const ArrayInfo *refMat = nullptr;
+                    bool             validMix = true;
+                    for (const std::string &an : srcArrays) {
+                        const ArrayInfo &sa = arrays_.at(an);
+                        const bool       m2 = sa.is2D || (sa.isND && sa.ndDims.size() == 2);
+                        const bool       v1 = !sa.is2D && !sa.isND;
+                        if (m2) {
+                            if (!refMat) refMat = &sa;
+                        } else if (!v1) {
+                            validMix = false;
+                            break;
+                        }
+                    }
+                    if (validMix && refMat) {
+                        const ArrayInfo  &ai      = arrays_.at(name);
+                        const std::string refRows = dimExpr(*refMat, 0);
+                        const std::string refCols = dimExpr(*refMat, 1);
+                        std::string       guard;
+                        for (const std::string &an : srcArrays) {
+                            const ArrayInfo &sa = arrays_.at(an);
+                            const bool       m2 = sa.is2D || (sa.isND && sa.ndDims.size() == 2);
+                            if (m2) {
+                                const std::string sr = dimExpr(sa, 0), sc = dimExpr(sa, 1);
+                                if (sr != refRows || sc != refCols)
+                                    guard += (guard.empty() ? "" : " || ")
+                                             + ("(" + sr + " != " + refRows + " || " + sc + " != " + refCols + ")");
+                            } else if (sa.orient == VecOrient::Row) {
+                                if (sa.lenVar != refCols)
+                                    guard += (guard.empty() ? "" : " || ") + ("(" + sa.lenVar + " != " + refCols + ")");
+                            } else if (sa.orient == VecOrient::Col) {
+                                if (sa.lenVar != refRows)
+                                    guard += (guard.empty() ? "" : " || ") + ("(" + sa.lenVar + " != " + refRows + ")");
+                            } else {
+                                guard += (guard.empty() ? "" : " || ")
+                                         + ("(" + sa.lenVar + " != " + refCols + " && "
+                                            + sa.lenVar + " != " + refRows + ")");
+                            }
+                        }
+                        if (!ai.isLocal) {
+                            const std::string dr = dimExpr(ai, 0), dc = dimExpr(ai, 1);
+                            if (dr != refRows || dc != refCols)
+                                guard += (guard.empty() ? "" : " || ")
+                                         + ("(" + dr + " != " + refRows + " || " + dc + " != " + refCols + ")");
+                        }
+                        if (!guard.empty())
+                            line("if (" + guard
+                                 + ") throw std::out_of_range(\"numkit: broadcast dimensions must agree\");");
+                        if (ai.isLocal) {
+                            line(name + ".resize(" + refRows + " * " + refCols + ");");
+                            if (ai.ndRuntimeLocal) {
+                                line(ai.ndDims[0] + " = " + refRows + ";");
+                                line(ai.ndDims[1] + " = " + refCols + ";");
+                            }
+                        }
+                        elementIdxMap_.clear();
+                        for (const std::string &an : srcArrays) {
+                            const ArrayInfo &sa = arrays_.at(an);
+                            const bool       m2 = sa.is2D || (sa.isND && sa.ndDims.size() == 2);
+                            if (m2) {
+                                elementIdxMap_[an] = "_numkit_i + _numkit_j * " + refRows;
+                            } else if (sa.orient == VecOrient::Row) {
+                                elementIdxMap_[an] = "_numkit_j";
+                            } else if (sa.orient == VecOrient::Col) {
+                                elementIdxMap_[an] = "_numkit_i";
+                            } else {
+                                elementIdxMap_[an] = "(" + sa.lenVar + " == " + refCols
+                                                     + " ? _numkit_j : _numkit_i)";
+                            }
+                        }
+                        elementCtx_               = "_numkit_i + _numkit_j * " + refRows;
+                        const std::string rhsExpr = emitExpr(rhs);
+                        elementCtx_.clear();
+                        elementIdxMap_.clear();
+                        open("for (std::size_t _numkit_j = 0; _numkit_j < " + refCols + "; ++_numkit_j)");
+                        open("for (std::size_t _numkit_i = 0; _numkit_i < " + refRows + "; ++_numkit_i)");
+                        line(ai.dataExpr + "[_numkit_i + _numkit_j * " + refRows + "] = " + rhsExpr + ";");
+                        close();
+                        close();
+                        types_.set(name, res);
+                        return;
+                    }
                 }
             }
         }
@@ -7551,6 +8030,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 }
                 --indent_;
                 line("}");
+                arrays_.at(name).orient = VecOrient::Row;
                 types_.set(name, rv);
                 return;
             }
@@ -7681,6 +8161,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     line(name + ".push_back(" + emitExpr(*rowN->children[0]) + ");");
                 --indent_;
                 line("}");
+                arrays_.at(name).orient = VecOrient::Col;
                 types_.set(name, rv);
                 return;
             }

@@ -157,3 +157,23 @@ TEST(Driver, TranspileBridgedScriptWithMatrixAndRuntimeCalls)
     EXPECT_NE(em.source.find("numkit_rt::disp_mat"), std::string::npos);
     EXPECT_NE(em.source.find("numkit_rt::call_void(\"disp\""), std::string::npos);
 }
+
+TEST(Driver, TranspilePure2DMatrixSlicesBroadcastAndOpsKernels)
+{
+    OpsKernelOptions ops;
+    ops.enabled = true;
+    const EmittedFunction em = driver::transpileSource(
+        "A = [1 2 3; 4 5 6];\n"
+        "A(end, end) = 10;\n"
+        "A(:, 2) = [20; 50];\n"
+        "mu = mean(A);\n"
+        "B = A - mu;\n"
+        "C = B';\n"
+        "D = A * C;\n"
+        "disp(D(1, 1));\n",
+        "", {}, BridgeOptions{}, ops);
+    EXPECT_EQ(em.name, "numkit_0script_0main_1v");
+    EXPECT_EQ(em.source.find("numkit_codegen_rt.h"), std::string::npos);
+    EXPECT_NE(em.source.find("numkit::ops::matmulDouble"), std::string::npos);
+}
+

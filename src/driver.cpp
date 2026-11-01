@@ -149,13 +149,14 @@ auto withPrepared(const std::string &source, const std::string &entry,
 
 EmittedFunction transpileSource(const std::string &source, const std::string &entry,
                                 const std::vector<InferredType> &paramTypes,
-                                const BridgeOptions &bridge)
+                                const BridgeOptions &bridge,
+                                const OpsKernelOptions &opsKernels)
 {
     return withPrepared(source, entry, paramTypes,
                         [&](const ASTNode &fn, const std::vector<ParamSpec> &params,
                             const TransferRegistry &reg, const FunctionTable &table,
                             const ClassRegistry *classes) {
-                            return emitProgram(fn, params, table, reg, classes, bridge);
+                            return emitProgram(fn, params, table, reg, classes, bridge, opsKernels);
                         });
 }
 

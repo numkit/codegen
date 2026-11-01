@@ -420,12 +420,51 @@ InferredType permuteTransfer(const std::vector<ArgInfo> &args)
 InferredType vectorReductionTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
-    switch (args[0].type.shape.kind) {
+    const Shape &s = args[0].type.shape;
+    switch (s.kind) {
     case ShapeKind::Scalar:
     case ShapeKind::RowVector:
-    case ShapeKind::ColVector: return InferredType::scalar(args[0].type.dtype);
-    default:                   return InferredType::dynamic();
+    case ShapeKind::ColVector:
+    case ShapeKind::Unknown:
+        return InferredType::scalar(args[0].type.dtype);
+    case ShapeKind::KnownDims:
+        if ((s.rows == 1 && s.cols >= 1) || (s.cols == 1 && s.rows >= 1))
+            return InferredType::scalar(args[0].type.dtype);
+        return InferredType::dynamic();
+    default: return InferredType::dynamic();
     }
+}
+
+// sum / prod / mean: 1-arg over a vector -> scalar; 1-arg over a 2-D matrix -> 1-D vector
+// (column-wise); 2-arg sum(A, dim) with a 2-D matrix and literal dim 1|2 -> 1-D vector.
+InferredType sumProdMeanTransfer(const std::vector<ArgInfo> &args)
+{
+    if (args.empty() || !args[0].type.isConcrete()) return InferredType::dynamic();
+    const Shape &s    = args[0].type.shape;
+    const bool   is2D = (s.kind == ShapeKind::KnownDims && s.rows > 1 && s.cols > 1)
+                      || (s.kind == ShapeKind::NDims && s.nd.size() == 2);
+    if (args.size() == 1) {
+        switch (s.kind) {
+        case ShapeKind::Scalar:
+        case ShapeKind::RowVector:
+        case ShapeKind::ColVector:
+        case ShapeKind::Unknown:
+            return InferredType::scalar(args[0].type.dtype);
+        case ShapeKind::KnownDims:
+            if ((s.rows == 1 && s.cols >= 1) || (s.cols == 1 && s.rows >= 1))
+                return InferredType::scalar(args[0].type.dtype);
+            if (is2D) return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            return InferredType::dynamic();
+        case ShapeKind::NDims:
+            if (is2D) return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            return InferredType::dynamic();
+        default: return InferredType::dynamic();
+        }
+    }
+    std::size_t dim = 0;
+    if (args.size() == 2 && is2D && args[1].constant.asDim(dim) && (dim == 1 || dim == 2))
+        return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+    return InferredType::dynamic();
 }
 
 // max / min: BOTH the 1-arg vector reduction (-> scalar, as vectorReductionTransfer) AND the
@@ -443,8 +482,13 @@ InferredType maxMinTransfer(const std::vector<ArgInfo> &args)
         switch (args[0].type.shape.kind) {
         case ShapeKind::Scalar:
         case ShapeKind::RowVector:
-        case ShapeKind::ColVector: return InferredType::scalar(args[0].type.dtype);  // -> scalar
+        case ShapeKind::ColVector:
+        case ShapeKind::Unknown:
+            return InferredType::scalar(args[0].type.dtype);  // -> scalar
         case ShapeKind::KnownDims:
+            if ((args[0].type.shape.rows == 1 && args[0].type.shape.cols >= 1)
+                || (args[0].type.shape.cols == 1 && args[0].type.shape.rows >= 1))
+                return InferredType::scalar(args[0].type.dtype);
             // a true 2-D matrix max(A) is column-wise -> a 1 x n ROW vector (runtime length).
             if (args[0].type.shape.rows > 1 && args[0].type.shape.cols > 1)
                 return InferredType::concrete(args[0].type.dtype, Shape::unknown());
@@ -502,8 +546,13 @@ InferredType anyAllTransfer(const std::vector<ArgInfo> &args)
         switch (s.kind) {
         case ShapeKind::Scalar:
         case ShapeKind::RowVector:
-        case ShapeKind::ColVector: return InferredType::scalar(ValueType::LOGICAL);  // -> scalar
+        case ShapeKind::ColVector:
+        case ShapeKind::Unknown:
+            return InferredType::scalar(ValueType::LOGICAL);  // -> scalar
         default:
+            if ((s.kind == ShapeKind::KnownDims)
+                && ((s.rows == 1 && s.cols >= 1) || (s.cols == 1 && s.rows >= 1)))
+                return InferredType::scalar(ValueType::LOGICAL);
             if (is2D) return InferredType::concrete(ValueType::LOGICAL, Shape::unknown());  // col-wise
             return InferredType::dynamic();
         }
@@ -848,7 +897,9 @@ void registerShapeTransfers(TransferRegistry &reg)
     reg.add("cat", catTransfer);               // cat(dim,A,B) literal dim -> vert/horz concat
     reg.add("permute", permuteTransfer);        // permute(A,perm) -> A's dims reordered (same rank)
     // Vector reductions -> scalar (bridged; the emitter boxes the array arg).
-    for (const char *n : {"sum", "prod", "mean", "norm", "std", "var", "trapz"})
+    for (const char *n : {"sum", "prod", "mean"})
+        reg.add(n, sumProdMeanTransfer);
+    for (const char *n : {"norm", "std", "var", "trapz"})
         reg.add(n, vectorReductionTransfer);
     // vector -> scalar; 2-D matrix -> column-wise row vector (both native, sort-based).
     reg.add("median", statColumnReduceTransfer);

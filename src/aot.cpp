@@ -180,6 +180,22 @@ CompileOptions defaultBridgeCompileOptions()
         }
     }
 
+    // 1b. Locate ops kernels header directory (numkit/ops/kernels.hpp)
+    const fs::path opsCandidates[] = {
+#ifdef NUMKIT_CODEGEN_BRIDGE_DIR
+        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR).parent_path().parent_path() / "ops" / "include",
+        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR).parent_path().parent_path() / "numkit" / "build" / "_deps" / "numkit_ops-src" / "include",
+#endif
+        prefix / "src" / "ops" / "include",
+        prefix / "src" / "numkit" / "build" / "_deps" / "numkit_ops-src" / "include"
+    };
+    for (const auto &o : opsCandidates) {
+        if (!o.empty() && fs::exists(o / "numkit" / "ops" / "kernels.hpp", ec)) {
+            opts.includeDirs.push_back(o.string());
+            break;
+        }
+    }
+
     // 2. Locate static runtime libraries
     std::vector<fs::path> searchRoots;
 #ifdef NUMKIT_CODEGEN_BUILD_DIR

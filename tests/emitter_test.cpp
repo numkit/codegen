@@ -784,10 +784,12 @@ TEST(EmitterFn, Elementwise2DScalarBroadcast)
         EXPECT_TRUE(contains(s, "_numkit_A_rows != _numkit_B_rows"));   // operand A checked vs dest
         EXPECT_TRUE(contains(s, "_numkit_C_cols != _numkit_B_cols"));   // operand C checked vs dest
     }
-    {  // mixed rank (matrix + vector) is refused — no implicit broadcast
+    {  // mixed rank (2-D matrix + 1-D row vector) -> 2-D + 1-D implicit expansion
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A, v)\n  B = A + v;\nend\n", root);
-        EXPECT_THROW(emitFunction(*fn, {{"A", mat}, {"v", kDoubleRow}}, reg), std::runtime_error);
+        const std::string      s  = emitFunction(*fn, {{"A", mat}, {"v", kDoubleRow}}, reg).source;
+        EXPECT_TRUE(contains(s, "B[_numkit_i + _numkit_j * _numkit_A_rows] = (A[_numkit_i + _numkit_j * _numkit_A_rows] + v[_numkit_j]);"));
+        EXPECT_TRUE(contains(s, "_numkit_v_len != _numkit_A_cols"));
     }
 }
 
@@ -1573,4 +1575,71 @@ TEST(EmitterFn, DynamicOutputRefused)
         findFunc("function y = h(x)\n  y = eval(x);\nend\n", root);
     ASSERT_NE(fn, nullptr);
     EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), std::runtime_error);
+}
+
+TEST(EmitterFn, Advanced2DIndexingAndInlineSliceWrite)
+{
+    const auto reg = stdReg();
+    numkit::ASTNodePtr root;
+    const numkit::ASTNode *fn = findFunc(
+        "function s = f()\n"
+        "  A = zeros(3, 4);\n"
+        "  A(end, end-1) = 42;\n"
+        "  A(:, 2) = [10; 20; 30];\n"
+        "  A(1, :) = [1, 2, 3, 4];\n"
+        "  A(2:3, 3:4) = [11 12; 21 22];\n"
+        "  s = A(end, end-1) + A(2, 2) + A(1, 4) + A(3, 4);\n"
+        "end\n",
+        root);
+    ASSERT_NE(fn, nullptr);
+    const std::string s = emitFunction(*fn, {}, reg).source;
+    EXPECT_TRUE(contains(s, "numkit_rt::index2_set(A.data(), 3, 4, static_cast<double>(3), (static_cast<double>(4) - 1.0), 42.0);"));
+    EXPECT_TRUE(contains(s, "const double _numkit_lit[] = { 10.0, 20.0, 30.0 };"));
+    EXPECT_TRUE(contains(s, "const double _numkit_lit[] = { 1.0, 2.0, 3.0, 4.0 };"));
+    EXPECT_TRUE(contains(s, "const double _numkit_lit[] = { 11.0, 21.0, 12.0, 22.0 };"));
+    EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));
+}
+
+TEST(EmitterFn, FusedTransposeAndMatrixReductions)
+{
+    const auto reg = stdReg();
+    numkit::ASTNodePtr root;
+    const numkit::ASTNode *fn = findFunc(
+        "function s = f()\n"
+        "  A = [1 2 3; 4 5 6];\n"
+        "  B = ones(2, 3);\n"
+        "  C = (A + 2 * B)';\n"
+        "  col_s = sum(A);\n"
+        "  row_m = mean(A, 2);\n"
+        "  row_p = prod(A, 2);\n"
+        "  v = linspace(1, 4, 4);\n"
+        "  vn = v / sum(v);\n"
+        "  s = C(3, 2) + col_s(3) + row_m(2) + row_p(1) + sum(vn.^2);\n"
+        "end\n",
+        root);
+    ASSERT_NE(fn, nullptr);
+    const std::string s = emitFunction(*fn, {}, reg).source;
+    EXPECT_TRUE(contains(s, "C.data()[_numkit_i + _numkit_j * 3] = (A.data()[_numkit_j + _numkit_i * 2] + (2.0 * B.data()[_numkit_j + _numkit_i * 2]));"));
+    EXPECT_TRUE(contains(s, "col_s.assign(_numkit_n, 0.0);"));
+    EXPECT_TRUE(contains(s, "row_m.data()[_numkit_i] = _numkit_acc / static_cast<double>(_numkit_n);"));
+    EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));
+}
+
+TEST(EmitterFn, ImplicitExpansion2D1D)
+{
+    const auto reg = stdReg();
+    numkit::ASTNodePtr root;
+    const numkit::ASTNode *fn = findFunc(
+        "function s = f()\n"
+        "  A = [1 2 3; 4 5 6];\n"
+        "  mu = mean(A);\n"
+        "  rsum = sum(A, 2);\n"
+        "  B = (A - mu) + rsum;\n"
+        "  s = B(1, 1) + B(2, 3);\n"
+        "end\n",
+        root);
+    ASSERT_NE(fn, nullptr);
+    const std::string s = emitFunction(*fn, {}, reg).source;
+    EXPECT_TRUE(contains(s, "B.data()[_numkit_i + _numkit_j * 2] = ((A.data()[_numkit_i + _numkit_j * 2] - mu.data()[_numkit_j]) + rsum.data()[_numkit_i]);"));
+    EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));
 }

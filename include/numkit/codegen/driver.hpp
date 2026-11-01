@@ -32,7 +32,8 @@ std::vector<InferredType> parseTypeSpec(const std::string &spec);
 // std::runtime_error on parse / arity / unsupported-construct errors.
 EmittedFunction transpileSource(const std::string &source, const std::string &entry,
                                 const std::vector<InferredType> &paramTypes,
-                                const BridgeOptions &bridge = {});
+                                const BridgeOptions &bridge = {},
+                                const OpsKernelOptions &opsKernels = {});
 
 // Transpile the entry as a loadable nk PLUGIN translation unit
 // (codegen-as-plugin / tiered acceleration, DESIGN.md §6b): the compiled

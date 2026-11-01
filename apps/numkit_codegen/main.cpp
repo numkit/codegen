@@ -40,7 +40,7 @@ namespace {
 {
     std::cerr << "error: " << err << "\n\n"
               << "usage: " << argv0 << " <file.m> [--args \"<spec>\"] [--entry <name>]"
-              << " [--bridge | --plugin <name>] [--build] [--run] [-o <file>]\n";
+              << " [--bridge | --plugin <name>] [--ops-kernels] [--build] [--run] [-o <file>]\n";
     std::exit(2);
 }
 
@@ -68,7 +68,7 @@ bool hasBinaryExtension(const std::string &p)
 int main(int argc, char **argv)
 {
     std::string file, argsSpec, entry, outPath, pluginExport;
-    bool        bridge = false, runFlag = false, buildFlag = false;
+    bool        bridge = false, opsKernels = false, runFlag = false, buildFlag = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -80,6 +80,7 @@ int main(int argc, char **argv)
         else if (a == "--entry") entry = next("--entry");
         else if (a == "-o") outPath = next("-o");
         else if (a == "--bridge") bridge = true;
+        else if (a == "--ops-kernels") opsKernels = true;
         else if (a == "--plugin") pluginExport = next("--plugin");
         else if (a == "--build") buildFlag = true;
         else if (a == "--run") runFlag = true;
@@ -118,13 +119,15 @@ int main(int argc, char **argv)
             cg::BridgeOptions bridgeOpts;
             bridgeOpts.enabled       = bridge;
             bridgeOpts.runtimeHeader = "numkit_codegen_rt.h";
+            cg::OpsKernelOptions opsOpts;
+            opsOpts.enabled = opsKernels;
             try {
-                emittedFn = cg::driver::transpileSource(source, entry, paramTypes, bridgeOpts);
+                emittedFn = cg::driver::transpileSource(source, entry, paramTypes, bridgeOpts, opsOpts);
             } catch (const std::runtime_error &) {
                 if ((buildFlag || runFlag) && !bridge) {
                     bridgeOpts.enabled = true;
                     usedBridge         = true;
-                    emittedFn = cg::driver::transpileSource(source, entry, paramTypes, bridgeOpts);
+                    emittedFn = cg::driver::transpileSource(source, entry, paramTypes, bridgeOpts, opsOpts);
                 } else {
                     throw;
                 }
@@ -136,7 +139,7 @@ int main(int argc, char **argv)
         // --build / --run: wrap the emitted TU in a main() harness, AOT-compile
         // it, and optionally execute it.
         if (buildFlag || runFlag) {
-            if (!usedBridge && numkit::sys::envGet("NUMKIT_CXX").empty() &&
+            if (!usedBridge && !opsKernels && numkit::sys::envGet("NUMKIT_CXX").empty() &&
                 numkit::sys::findZig().found) {
                 numkit::sys::envSet("NUMKIT_USE_ZIG", "1");
             }
@@ -175,8 +178,9 @@ int main(int argc, char **argv)
                 exe += ".exe";
 #endif
             }
-            const auto compileOpts = usedBridge ? cg::aot::defaultBridgeCompileOptions()
-                                                : cg::aot::CompileOptions{};
+            const auto compileOpts = (usedBridge || opsKernels)
+                                         ? cg::aot::defaultBridgeCompileOptions()
+                                         : cg::aot::CompileOptions{};
             const auto cr = cg::aot::compileToExecutable(program, exe, compileOpts);
             std::error_code ec;
             fs::remove(exe + ".cpp", ec);

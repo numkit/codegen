@@ -51,13 +51,39 @@ bool mixedDistinctIntegers(ValueType a, ValueType b)
 }
 
 // Shape broadcast: equal shapes pass through, a scalar takes the other
-// operand's shape; any unproven mismatch collapses to Unknown (full
-// singleton-dim expansion is a deferred refinement).
+// operand's shape, and a 2-D matrix paired with a compatible 1-D vector
+// (implicit expansion) takes the 2-D matrix's shape; any incompatible
+// mismatch collapses to Unknown.
 Shape broadcastShape(const Shape &a, const Shape &b)
 {
     if (a == b) return a;
     if (a.isScalar()) return b;
     if (b.isScalar()) return a;
+    auto canBroadcast2DVec = [](const Shape &m, const Shape &v) -> bool {
+        if (m.kind == ShapeKind::KnownDims && m.rows > 1 && m.cols > 1) {
+            if (v.kind == ShapeKind::RowVector || v.kind == ShapeKind::ColVector
+                || v.kind == ShapeKind::Unknown)
+                return true;
+            if (v.kind == ShapeKind::KnownDims) {
+                if (v.rows == 1 && v.cols == m.cols) return true;
+                if (v.cols == 1 && v.rows == m.rows) return true;
+            }
+            return false;
+        }
+        if (m.kind == ShapeKind::NDims && m.nd.size() == 2) {
+            if (v.kind == ShapeKind::RowVector || v.kind == ShapeKind::ColVector
+                || v.kind == ShapeKind::Unknown)
+                return true;
+            if (v.kind == ShapeKind::KnownDims) {
+                if (v.rows == 1 && (m.nd[1] == 0 || v.cols == m.nd[1])) return true;
+                if (v.cols == 1 && (m.nd[0] == 0 || v.rows == m.nd[0])) return true;
+            }
+            return false;
+        }
+        return false;
+    };
+    if (canBroadcast2DVec(a, b)) return a;
+    if (canBroadcast2DVec(b, a)) return b;
     return Shape::unknown();
 }
 
@@ -103,7 +129,7 @@ InferredType mtimesTransfer(const std::vector<ArgInfo> &args)
     // product fall to their own cases below.
     {
         auto rank2 = [](const Shape &s) {
-            return s.kind == ShapeKind::KnownDims
+            return (s.kind == ShapeKind::KnownDims && s.rows > 1 && s.cols > 1)
                    || (s.kind == ShapeKind::NDims && s.nd.size() == 2);
         };
         auto rowsOf = [](const Shape &s) {
@@ -116,24 +142,25 @@ InferredType mtimesTransfer(const std::vector<ArgInfo> &args)
             return InferredType::concrete(
                 dt, Shape::ndShape({rowsOf(a.shape), colsOf(b.shape)}));
     }
-    // matrix * column vector -> column vector (A is m x k, x is k x 1 -> m x 1). The
-    // matrix operand may be KnownDims OR a runtime-dim 2-D (an NDims rank-2 matrix).
-    if ((a.shape.kind == ShapeKind::KnownDims
-         || (a.shape.kind == ShapeKind::NDims && a.shape.nd.size() == 2))
-        && b.shape.kind == ShapeKind::ColVector)
+    auto isTrueMat = [](const Shape &s) {
+        return (s.kind == ShapeKind::KnownDims && s.rows > 1 && s.cols > 1)
+               || (s.kind == ShapeKind::NDims && s.nd.size() == 2);
+    };
+    auto isColVec = [](const Shape &s) {
+        return s.kind == ShapeKind::ColVector
+               || (s.kind == ShapeKind::KnownDims && s.cols == 1 && s.rows > 1);
+    };
+    auto isRowVec = [](const Shape &s) {
+        return s.kind == ShapeKind::RowVector
+               || (s.kind == ShapeKind::KnownDims && s.rows == 1 && s.cols > 1);
+    };
+    if (isTrueMat(a.shape) && isColVec(b.shape))
         return InferredType::concrete(dt, Shape::colVector());
-    // row vector * matrix -> row vector (r is 1 x k, A is k x n -> 1 x n). Same: the
-    // matrix may be KnownDims OR a runtime-dim 2-D.
-    if (a.shape.kind == ShapeKind::RowVector
-        && (b.shape.kind == ShapeKind::KnownDims
-            || (b.shape.kind == ShapeKind::NDims && b.shape.nd.size() == 2)))
+    if (isRowVec(a.shape) && isTrueMat(b.shape))
         return InferredType::concrete(dt, Shape::rowVector());
-    // row vector * column vector -> scalar (inner / dot product)
-    if (a.shape.kind == ShapeKind::RowVector && b.shape.kind == ShapeKind::ColVector)
+    if (isRowVec(a.shape) && isColVec(b.shape))
         return InferredType::scalar(dt);
-    // column vector * row vector -> matrix (outer product, m x n). The dims are
-    // the vector lengths (runtime), so it's a runtime-dim rank-2 NDims shape.
-    if (a.shape.kind == ShapeKind::ColVector && b.shape.kind == ShapeKind::RowVector)
+    if (isColVec(a.shape) && isRowVec(b.shape))
         return InferredType::concrete(dt, Shape::ndShape({0, 0}));
     return InferredType::concrete(dt, Shape::unknown());
 }
