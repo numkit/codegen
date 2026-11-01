@@ -255,7 +255,7 @@ TEST(CodegenE2E, CheckedIndexPathRunsCorrectly)
 
 // SOUNDNESS e2e: the loop bound is reassigned (`n = numel(x); n = 3;`) so
 // the loop must run 3 times, NOT numel(x)=8. The output buffer is sized 3.
-// If the stale numel fact wrongly promoted the loop to `k < _nk_x_len` (=8) it
+// If the stale numel fact wrongly promoted the loop to `k < _numkit_x_len` (=8) it
 // would write y[0..7] out of bounds. Correct emission runs k=1..3 only.
 TEST(CodegenE2E, ReassignedBoundComputesCorrectly)
 {
@@ -291,7 +291,7 @@ TEST(CodegenE2E, ReassignedBoundComputesCorrectly)
         "int main() {\n"
         "  double x[8]; double y[3];\n"
         "  for (std::size_t i = 0; i < 8; ++i) x[i] = std::sin(0.01 * double(i + 1));\n"
-        "  f(x, 8, y, 3);\n"  // _nk_x_len=8, _nk_y_len=3; loop must run 3 (n), not 8
+        "  f(x, 8, y, 3);\n"  // _numkit_x_len=8, _numkit_y_len=3; loop must run 3 (n), not 8
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (std::size_t i = 0; i < 3; ++i) std::fprintf(g, \"%.17g\\n\", y[i]);\n"
@@ -496,7 +496,7 @@ TEST(CodegenE2E, Matrix2DRead)
     const EmittedFunction emitted = emitProgram(
         *ft.find("tr"), {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 3))}},
         ft, reg);
-    ASSERT_TRUE(emitted.source.find("std::size_t _nk_A_rows, std::size_t _nk_A_cols")
+    ASSERT_TRUE(emitted.source.find("std::size_t _numkit_A_rows, std::size_t _numkit_A_cols")
                 != std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -601,7 +601,7 @@ TEST(CodegenE2E, InterprocArrayReturnIntoOutput)
 
     const EmittedFunction emitted =
         emitProgram(*ft.find("f"), {{"n", InferredType::scalar(ValueType::DOUBLE)}}, ft, reg);
-    ASSERT_NE(emitted.source.find("_nk_ret"), std::string::npos)
+    ASSERT_NE(emitted.source.find("_numkit_ret"), std::string::npos)
         << "expected the interproc-result -> output-buffer copy path";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -884,7 +884,7 @@ TEST(CodegenE2E, SwitchStatement)
         "  end\n"
         "end\n",
         {{"k", InferredType::scalar(ValueType::DOUBLE)}});
-    EXPECT_NE(emitted.source.find("_nk_switch0"), std::string::npos);
+    EXPECT_NE(emitted.source.find("_numkit_switch0"), std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
     std::filesystem::create_directories(base);
@@ -998,7 +998,7 @@ TEST(CodegenE2E, LogicalIndexingWrite)
         "  y(m) = 0;\n"       // clamp masked elements to 0
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("] = _nk_c;"), std::string::npos)
+    EXPECT_NE(emitted.source.find("] = _numkit_c;"), std::string::npos)
         << "logical-indexing write must scatter the scalar into the masked positions";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1039,7 +1039,7 @@ TEST(CodegenE2E, NativeAnyAllReductions)
         "  s = a * 10 + b;\n"  // 1*10 + 0 = 10
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_acc"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_acc"), std::string::npos)
         << "any/all must lower to an inline reduction loop (no bridge)";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1075,7 +1075,7 @@ TEST(CodegenE2E, NativeMinMaxReductions)
         "  s = a - b;\n"    // 4
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_acc != _nk_acc"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_acc != _numkit_acc"), std::string::npos)
         << "native min/max must NaN-skip (acc != acc) for a float dtype";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1110,7 +1110,7 @@ TEST(CodegenE2E, NativeSumReduction)
         "  s = sum(x);\n"
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_acc += "), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_acc += "), std::string::npos)
         << "native sum must lower to an inline accumulation loop (no bridge)";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1146,7 +1146,7 @@ TEST(CodegenE2E, NativeProdMeanReductions)
         "  s = p + m;\n"     // 26.5
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_acc *= "), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_acc *= "), std::string::npos)
         << "native prod must lower to an inline product loop";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1182,7 +1182,7 @@ TEST(CodegenE2E, FindReturnsPositions)
         "  s = idx(1) + idx(2);\n"  // 3 + 4 = 7
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_i + 1"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_i + 1"), std::string::npos)
         << "find must push 1-based positions";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1217,7 +1217,7 @@ TEST(CodegenE2E, NativeDiffReduction)
         "  s = d(1) + d(2) + d(3);\n"  // 3+5+7 = 15
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("[_nk_i] - "), std::string::npos)
+    EXPECT_NE(emitted.source.find("[_numkit_i] - "), std::string::npos)
         << "diff must lower to a consecutive-difference loop";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1253,7 +1253,7 @@ TEST(CodegenE2E, NativeCumsumCumprod)
         "  s = c(4) + p(4);\n"      // 10 + 24 = 34
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find(".push_back(_nk_acc)"), std::string::npos)
+    EXPECT_NE(emitted.source.find(".push_back(_numkit_acc)"), std::string::npos)
         << "cumsum/cumprod must push the running accumulator";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1288,7 +1288,7 @@ TEST(CodegenE2E, NativeDotProduct)
         "end\n",
         {{"a", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())},
          {"b", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_acc += "), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_acc += "), std::string::npos)
         << "dot must lower to an accumulation loop";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1438,7 +1438,7 @@ TEST(CodegenE2E, NativeStrcmp)
         "  r = e1 * 10 + e2;\n"    // 10
         "end\n",
         {});
-    EXPECT_NE(emitted.source.find("_nk_eq"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_eq"), std::string::npos)
         << "strcmp must lower to a length + elementwise equality check";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1460,7 +1460,7 @@ TEST(CodegenE2E, NativeStrcmp)
 }
 
 // Plain struct via field-flattening (P3, first struct brick): `s.a = ...` becomes
-// a synthesized scalar field-local (_nk_fld_s_a); static field reads/writes work
+// a synthesized scalar field-local (_numkit_fld_s_a); static field reads/writes work
 // without any struct type. v1: scalar fields, a plain-identifier base.
 TEST(CodegenE2E, StructScalarFields)
 {
@@ -1474,7 +1474,7 @@ TEST(CodegenE2E, StructScalarFields)
         "  r = s.a * 10 + s.b;\n"  // 2*10 + 3 = 23
         "end\n",
         {});
-    EXPECT_NE(emitted.source.find("_nk_fld_s_a"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_s_a"), std::string::npos)
         << "a plain-struct field must flatten to a synthesized scalar local";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1662,7 +1662,7 @@ TEST(CodegenE2E, StructArrayField)
         "  r = numel(w) + w(2);\n"   // len(3) + w(2)(20) = 23
         "end\n",
         {{"a", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_fld_s_v.assign("), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_s_v.assign("), std::string::npos)
         << "an array struct field must copy via the field-local vector";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1697,7 +1697,7 @@ TEST(CodegenE2E, StructFieldIndex)
         "  r = s.v(2) * 10;\n"   // a(2) * 10
         "end\n",
         {{"a", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_fld_s_v.size()"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_s_v.size()"), std::string::npos)
         << "s.v(k) must index the field-local array";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -1960,7 +1960,7 @@ TEST(CodegenE2E, ColonRangeMaterialise)
         "  r = v(1) + v(5)*10 + numel(v)*100 + w(2)*1000 + w(5)*10000 + numel(w)*100000;\n"
         "end\n",
         {});
-    EXPECT_NE(emitted.source.find("_nk_cnt"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_cnt"), std::string::npos)
         << "a colon range must materialise via a native count+fill, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2031,7 +2031,7 @@ TEST(CodegenE2E, SliceRead)
         "  r = y(1) + y(3)*10 + numel(y)*100 + z(4)*1000 + numel(z)*10000;\n"
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_s0"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_s0"), std::string::npos)
         << "a range index must materialise a slice copy, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2069,7 +2069,7 @@ TEST(CodegenE2E, SliceWrite)
         "  r = x(1) + x(2)*10 + x(3)*100 + x(4)*1000 + x(5)*10000;\n"
         "end\n",
         {{"w", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_v"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_v"), std::string::npos)
         << "a scalar slice write must broadcast natively, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2107,7 +2107,7 @@ TEST(CodegenE2E, ArrayReversal)
         "  r = a(1) + b(1)*10 + c(1)*100 + a(numel(a))*1000;\n"
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("- 1 - _nk_i"), std::string::npos)
+    EXPECT_NE(emitted.source.find("- 1 - _numkit_i"), std::string::npos)
         << "flip must lower to a native reverse copy, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2180,7 +2180,7 @@ TEST(CodegenE2E, StatsReductions)
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())},
          {"y", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_ss"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_ss"), std::string::npos)
         << "norm/var/std must lower to native accumulation, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2218,7 +2218,7 @@ TEST(CodegenE2E, Median)
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())},
          {"y", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_t"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_t"), std::string::npos)
         << "median must lower to a native sort+middle, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2327,7 +2327,7 @@ TEST(CodegenE2E, CircShift)
         "  r = a(1) + a(3)*10 + b(1)*100 + b(5)*1000;\n"
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("% _nk_n"), std::string::npos)
+    EXPECT_NE(emitted.source.find("% _numkit_n"), std::string::npos)
         << "circshift must lower to a native modular-index copy, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2363,7 +2363,7 @@ TEST(CodegenE2E, ArgMaxMin)
         "  r = m + mi*10 + n*100 + ni*1000;\n"
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_idx"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_idx"), std::string::npos)
         << "[m,i]=max must track the 1-based index natively, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2432,7 +2432,7 @@ TEST(CodegenE2E, Unique)
         "  r = y(1) + y(2)*10 + y(3)*100 + y(4)*1000 + numel(y)*10000;\n"
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("push_back(_nk_t"), std::string::npos)
+    EXPECT_NE(emitted.source.find("push_back(_numkit_t"), std::string::npos)
         << "unique must lower to a native sort+dedup, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2502,7 +2502,7 @@ TEST(CodegenE2E, Polyval)
         "end\n",
         {{"p", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())},
          {"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_acc * "), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_acc * "), std::string::npos)
         << "polyval must lower to a native Horner loop, not refuse";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -2706,7 +2706,7 @@ TEST(CodegenE2E, NestedStruct)
         "  r = s.a.b * 10 + s.a.c;\n"
         "end\n",
         {});
-    EXPECT_NE(emitted.source.find("_nk_fld_s_a_b"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_s_a_b"), std::string::npos)
         << "a nested field must flatten to a chained field-local";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -5131,7 +5131,7 @@ TEST(CodegenE2E, Integration2DCapstone)
         "  out = c(1) + rrow(3)*10 + d(3)*100 + t*1000 + L(3,1)*10000 + I(2,2)*100000;\n"
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    EXPECT_NE(emitted.source.find("_nk_off"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_off"), std::string::npos)
         << "the 2-D capstone must exercise a native column slice";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -5179,7 +5179,7 @@ TEST(CodegenE2E, IntegrationCapstone)
         "end\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())},
          {"thr", InferredType::scalar(ValueType::DOUBLE)}});
-    EXPECT_NE(emitted.source.find("_nk_fld_rec_data"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_rec_data"), std::string::npos)
         << "the capstone must exercise a struct array field-local";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -5283,7 +5283,7 @@ TEST(CodegenE2E, BareLhsMultiOutputBindsFirstOutput)
         emitProgram(*ft.find("g"), {{"x", InferredType::scalar(ValueType::DOUBLE)}}, ft, reg);
     EXPECT_EQ(emitted.source.find("numkit_rt::"), std::string::npos)
         << "an all-scalar multi-output call must compile STANDALONE (no bridge)";
-    ASSERT_NE(emitted.source.find("_nk_ignore_1"), std::string::npos)
+    ASSERT_NE(emitted.source.find("_numkit_ignore_1"), std::string::npos)
         << "the unrequested 2nd output must get a throwaway out-param";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -5461,7 +5461,7 @@ TEST(CodegenE2E, MultiOutputIgnoredTarget)
 
     const EmittedFunction emitted =
         emitProgram(*ft.find("run"), {{"x", InferredType::scalar(ValueType::DOUBLE)}}, ft, reg);
-    ASSERT_TRUE(emitted.source.find("_nk_ignore_0") != std::string::npos)
+    ASSERT_TRUE(emitted.source.find("_numkit_ignore_0") != std::string::npos)
         << "expected a throwaway local for the ignored (~) output";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -5905,8 +5905,8 @@ TEST(CodegenE2E, ScalarScalingRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function y = f(v)\n  y = 2 * v + v / 2;\nend\n",
         {{"v", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    ASSERT_NE(emitted.source.find("(2.0 * v[_nk_i])"), std::string::npos);
-    ASSERT_NE(emitted.source.find("(v[_nk_i] / 2.0)"), std::string::npos);
+    ASSERT_NE(emitted.source.find("(2.0 * v[_numkit_i])"), std::string::npos);
+    ASSERT_NE(emitted.source.find("(v[_numkit_i] / 2.0)"), std::string::npos);
     ASSERT_EQ(emitted.source.find("numkit_codegen_rt.h"), std::string::npos);  // self-contained
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -5938,7 +5938,7 @@ TEST(CodegenE2E, Elementwise2DRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function B = f(A)\n  B = 2 * A + 1;\nend\n",
         {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3))}});
-    ASSERT_NE(emitted.source.find("B[_nk_i] = ((2.0 * A[_nk_i]) + 1.0);"), std::string::npos);
+    ASSERT_NE(emitted.source.find("B[_numkit_i] = ((2.0 * A[_numkit_i]) + 1.0);"), std::string::npos);
     ASSERT_EQ(emitted.source.find("numkit_codegen_rt.h"), std::string::npos);  // self-contained
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -5972,8 +5972,8 @@ TEST(CodegenE2E, Elementwise2DTwoMatrixRunsCorrectly)
         "function B = f(A, C)\n  B = A + C;\nend\n",
         {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3))},
          {"C", InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3))}});
-    ASSERT_NE(emitted.source.find("B[_nk_i] = (A[_nk_i] + C[_nk_i]);"), std::string::npos);
-    ASSERT_NE(emitted.source.find("_nk_A_rows != _nk_B_rows"), std::string::npos);  // per-dim guard
+    ASSERT_NE(emitted.source.find("B[_numkit_i] = (A[_numkit_i] + C[_numkit_i]);"), std::string::npos);
+    ASSERT_NE(emitted.source.find("_numkit_A_rows != _numkit_B_rows"), std::string::npos);  // per-dim guard
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
     std::filesystem::create_directories(base);
@@ -6006,7 +6006,7 @@ TEST(CodegenE2E, ElementwiseNDRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function B = f(A)\n  B = 2 * A + 1;\nend\n",
         {{"A", InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::ndShape({2, 3, 4}))}});
-    ASSERT_NE(emitted.source.find("B[_nk_i] = ((2.0 * A[_nk_i]) + 1.0);"), std::string::npos);
+    ASSERT_NE(emitted.source.find("B[_numkit_i] = ((2.0 * A[_numkit_i]) + 1.0);"), std::string::npos);
     ASSERT_EQ(emitted.source.find("numkit_codegen_rt.h"), std::string::npos);  // self-contained
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6039,8 +6039,8 @@ TEST(CodegenE2E, ElementwiseNDMultiOperandRunsCorrectly)
         InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::ndShape({2, 3, 4}));
     const EmittedFunction emitted =
         transpile("function B = f(A, C)\n  B = A + C;\nend\n", {{"A", nd}, {"C", nd}});
-    ASSERT_NE(emitted.source.find("B[_nk_i] = (A[_nk_i] + C[_nk_i]);"), std::string::npos);
-    ASSERT_NE(emitted.source.find("_nk_A_d0 != _nk_B_d0"), std::string::npos);  // per-axis guard
+    ASSERT_NE(emitted.source.find("B[_numkit_i] = (A[_numkit_i] + C[_numkit_i]);"), std::string::npos);
+    ASSERT_NE(emitted.source.find("_numkit_A_d0 != _numkit_B_d0"), std::string::npos);  // per-axis guard
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
     std::filesystem::create_directories(base);
@@ -6132,7 +6132,7 @@ TEST(CodegenE2E, NDParamReadRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function s = f(A)\n  s = A(1,1,1) + A(2,2,2) + size(A,2);\nend\n",
         {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::ndShape({2, 2, 2}))}});
-    ASSERT_NE(emitted.source.find("std::size_t _nk_A_d0, std::size_t _nk_A_d1, std::size_t _nk_A_d2"),
+    ASSERT_NE(emitted.source.find("std::size_t _numkit_A_d0, std::size_t _numkit_A_d1, std::size_t _numkit_A_d2"),
               std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6198,7 +6198,7 @@ TEST(CodegenE2E, NDOutputRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function y = f(a)\n  y = zeros(2, 2, 2);\n  y(1,1,1) = a;\n  y(2,2,2) = a * 2;\nend\n",
         {{"a", InferredType::scalar(ValueType::DOUBLE)}});
-    ASSERT_NE(emitted.source.find("double* __restrict y, std::size_t _nk_y_d0, std::size_t _nk_y_d1, std::size_t _nk_y_d2"),
+    ASSERT_NE(emitted.source.find("double* __restrict y, std::size_t _numkit_y_d0, std::size_t _numkit_y_d1, std::size_t _numkit_y_d2"),
               std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6235,7 +6235,7 @@ TEST(CodegenE2E, Matrix2DOutputRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function M = f(a)\n  M = zeros(2, 3);\n  M(1,1) = a;\n  M(2,3) = a * 2;\nend\n",
         {{"a", InferredType::scalar(ValueType::DOUBLE)}});
-    ASSERT_NE(emitted.source.find("double* __restrict M, std::size_t _nk_M_rows, std::size_t _nk_M_cols"),
+    ASSERT_NE(emitted.source.find("double* __restrict M, std::size_t _numkit_M_rows, std::size_t _numkit_M_cols"),
               std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6272,7 +6272,7 @@ TEST(CodegenE2E, OneDSizeOrientationRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function s = f(x)\n  s = size(x,1)*100 + size(x,2);\nend\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    ASSERT_NE(emitted.source.find("static_cast<double>(_nk_x_len)"), std::string::npos);  // size(.,2)
+    ASSERT_NE(emitted.source.find("static_cast<double>(_numkit_x_len)"), std::string::npos);  // size(.,2)
     ASSERT_NE(emitted.source.find("static_cast<double>(1) * 100.0"), std::string::npos);  // size(.,1)
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6356,7 +6356,7 @@ TEST(CodegenE2E, SizeTwoOutputRunsCorrectly)
     {  // 2-D: r=rows, c=cols (both scalar locals)
         const EmittedFunction emitted =
             transpile(src, {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 4))}});
-        ASSERT_NE(emitted.source.find("r = static_cast<double>(_nk_A_rows);"), std::string::npos);
+        ASSERT_NE(emitted.source.find("r = static_cast<double>(_numkit_A_rows);"), std::string::npos);
         const std::vector<double> got = run(emitted, "size2_e2e", emitted.name + "(A, 3, 4)");
         ASSERT_EQ(got.size(), 1u);
         EXPECT_DOUBLE_EQ(got[0], 3004.0);  // r=3, c=4
@@ -6365,7 +6365,7 @@ TEST(CodegenE2E, SizeTwoOutputRunsCorrectly)
         const EmittedFunction emitted = transpile(
             src, {{"A", InferredType::concrete(ValueType::DOUBLE,
                                                numkit::codegen::Shape::ndShape({2, 3, 4}))}});
-        ASSERT_NE(emitted.source.find("_nk_A_d1 * _nk_A_d2"), std::string::npos);
+        ASSERT_NE(emitted.source.find("_numkit_A_d1 * _numkit_A_d2"), std::string::npos);
         const std::vector<double> got = run(emitted, "size2nd_e2e", emitted.name + "(A, 2, 3, 4)");
         ASSERT_EQ(got.size(), 1u);
         EXPECT_DOUBLE_EQ(got[0], 2012.0);  // r=2, c=3*4=12
@@ -6388,7 +6388,7 @@ TEST(CodegenE2E, NDRuntimeLocalRunsCorrectly)
         {{"m", InferredType::scalar(ValueType::DOUBLE)},
          {"n", InferredType::scalar(ValueType::DOUBLE)},
          {"p", InferredType::scalar(ValueType::DOUBLE)}});
-    ASSERT_NE(emitted.source.find("A.assign(_nk_A_d0 * _nk_A_d1 * _nk_A_d2"), std::string::npos);  // runtime size
+    ASSERT_NE(emitted.source.find("A.assign(_numkit_A_d0 * _numkit_A_d1 * _numkit_A_d2"), std::string::npos);  // runtime size
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
     std::filesystem::create_directories(base);
@@ -6421,7 +6421,7 @@ TEST(CodegenE2E, NDRuntimeOutputRunsCorrectly)
         "function y = f(m, n)\n  y = zeros(m, n, 2);\n  y(1,1,1) = 5;\n  y(m,n,2) = 8;\nend\n",
         {{"m", InferredType::scalar(ValueType::DOUBLE)},
          {"n", InferredType::scalar(ValueType::DOUBLE)}});
-    ASSERT_NE(emitted.source.find("double* __restrict y, std::size_t _nk_y_d0, std::size_t _nk_y_d1, std::size_t _nk_y_d2"),
+    ASSERT_NE(emitted.source.find("double* __restrict y, std::size_t _numkit_y_d0, std::size_t _numkit_y_d1, std::size_t _numkit_y_d2"),
               std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6448,8 +6448,8 @@ TEST(CodegenE2E, NDRuntimeOutputRunsCorrectly)
 
 // Reserved-companion coexistence, end-to-end: a user var named exactly like a
 // synthesised companion now compiles + runs (it once had to be refused). The
-// `_nk_` prefix puts every companion in the underscore namespace MATLAB can't
-// enter, so the param's length companion `_nk_x_len` and the user's `x_len`
+// `_numkit_` prefix puts every companion in the underscore namespace MATLAB can't
+// enter, so the param's length companion `_numkit_x_len` and the user's `x_len`
 // coexist. f(x) returns x(numel(x)) = last element. x=[10..50] -> 50.
 TEST(CodegenE2E, CompanionUserVarCoexistRunsCorrectly)
 {
@@ -6459,7 +6459,7 @@ TEST(CodegenE2E, CompanionUserVarCoexistRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function y = f(x)\n  x_len = numel(x);\n  y = x(x_len);\nend\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    ASSERT_NE(emitted.source.find("std::size_t _nk_x_len"), std::string::npos);  // companion
+    ASSERT_NE(emitted.source.find("std::size_t _numkit_x_len"), std::string::npos);  // companion
     ASSERT_NE(emitted.source.find("double x_len"), std::string::npos);           // user var coexists
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6470,7 +6470,7 @@ TEST(CodegenE2E, CompanionUserVarCoexistRunsCorrectly)
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {10, 20, 30, 40, 50};\n"
-        "  double r = " + emitted.name + "(x, 5);\n"  // _nk_x_len = 5
+        "  double r = " + emitted.name + "(x, 5);\n"  // _numkit_x_len = 5
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -6631,7 +6631,7 @@ TEST(CodegenE2E, RealVectorTransposeRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function y = f(x)\n  y = x.';\nend\n",
         {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    ASSERT_NE(emitted.source.find("y[_nk_i] = x[_nk_i];"), std::string::npos);
+    ASSERT_NE(emitted.source.find("y[_numkit_i] = x[_numkit_i];"), std::string::npos);
     ASSERT_EQ(emitted.source.find("numkit_codegen_rt.h"), std::string::npos);  // self-contained
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6664,7 +6664,7 @@ TEST(CodegenE2E, ComplexConjTransposeRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function y = f(x)\n  y = x';\nend\n",
         {{"x", InferredType::concrete(ValueType::COMPLEX, Shape::rowVector())}});
-    ASSERT_NE(emitted.source.find("y[_nk_i] = std::conj(x[_nk_i]);"), std::string::npos);
+    ASSERT_NE(emitted.source.find("y[_numkit_i] = std::conj(x[_numkit_i]);"), std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
     std::filesystem::create_directories(base);
@@ -6697,7 +6697,7 @@ TEST(CodegenE2E, MatrixTransposeRunsCorrectly)
     const EmittedFunction emitted = transpile(
         "function y = f(A)\n  y = A.';\nend\n",
         {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3))}});
-    ASSERT_NE(emitted.source.find("[_nk_i + _nk_j * _nk_y_rows] = A[_nk_j + _nk_i * _nk_A_rows];"),
+    ASSERT_NE(emitted.source.find("[_numkit_i + _numkit_j * _numkit_y_rows] = A[_numkit_j + _numkit_i * _numkit_A_rows];"),
               std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6733,7 +6733,7 @@ TEST(CodegenE2E, MatrixProductRunsCorrectly)
         "function C = f(A, B)\n  C = A * B;\nend\n",
         {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3))},
          {"B", InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 2))}});
-    ASSERT_NE(emitted.source.find("_nk_acc += "), std::string::npos);
+    ASSERT_NE(emitted.source.find("_numkit_acc += "), std::string::npos);
     ASSERT_EQ(emitted.source.find("numkit_codegen_rt.h"), std::string::npos);  // self-contained
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6768,7 +6768,7 @@ TEST(CodegenE2E, MatrixTimesVectorRunsCorrectly)
         "function y = f(A, x)\n  y = A * x;\nend\n",
         {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3))},
          {"x", InferredType::concrete(ValueType::DOUBLE, Shape::colVector())}});
-    ASSERT_NE(emitted.source.find("_nk_acc += A[_nk_i + _nk_l * _nk_A_rows] * x[_nk_l];"),
+    ASSERT_NE(emitted.source.find("_numkit_acc += A[_numkit_i + _numkit_l * _numkit_A_rows] * x[_numkit_l];"),
               std::string::npos);
     ASSERT_EQ(emitted.source.find("numkit_codegen_rt.h"), std::string::npos);  // self-contained
 
@@ -6803,7 +6803,7 @@ TEST(CodegenE2E, VectorTimesMatrixRunsCorrectly)
         "function y = f(r, A)\n  y = r * A;\nend\n",
         {{"r", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())},
          {"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 2))}});
-    ASSERT_NE(emitted.source.find("_nk_acc += r[_nk_l] * A[_nk_l + _nk_j * _nk_A_rows];"),
+    ASSERT_NE(emitted.source.find("_numkit_acc += r[_numkit_l] * A[_numkit_l + _numkit_j * _numkit_A_rows];"),
               std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6838,7 +6838,7 @@ TEST(CodegenE2E, InnerProductRunsCorrectly)
         "function s = f(r, c)\n  s = r * c;\nend\n",
         {{"r", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())},
          {"c", InferredType::concrete(ValueType::DOUBLE, Shape::colVector())}});
-    ASSERT_NE(emitted.source.find("_nk_acc += r[_nk_l] * c[_nk_l];"), std::string::npos);
+    ASSERT_NE(emitted.source.find("_numkit_acc += r[_numkit_l] * c[_numkit_l];"), std::string::npos);
     ASSERT_EQ(emitted.source.find("numkit_codegen_rt.h"), std::string::npos);  // self-contained
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -6871,7 +6871,7 @@ TEST(CodegenE2E, OuterProductRunsCorrectly)
         "function y = f(c, r)\n  y = c * r;\nend\n",
         {{"c", InferredType::concrete(ValueType::DOUBLE, Shape::colVector())},
          {"r", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}});
-    ASSERT_NE(emitted.source.find("y[_nk_i + _nk_j * _nk_y_d0] = c[_nk_i] * r[_nk_j];"),
+    ASSERT_NE(emitted.source.find("y[_numkit_i + _numkit_j * _numkit_y_d0] = c[_numkit_i] * r[_numkit_j];"),
               std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -8177,7 +8177,7 @@ TEST(CodegenBridge, DynamicArrayArgAndReturnRunsAndMatchesInterpreter)
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
-    ASSERT_NE(emitted.source.find("numkit_rt::val::array(x, _nk_x_len)"), std::string::npos);
+    ASSERT_NE(emitted.source.find("numkit_rt::val::array(x, _numkit_x_len)"), std::string::npos);
     ASSERT_NE(emitted.source.find("numkit_rt::call_dynv(\"mod\""), std::string::npos);
     ASSERT_NE(emitted.source.find("return y.take();"), std::string::npos);
 
@@ -8397,7 +8397,7 @@ TEST(CodegenBridge, DynamicMatrixRunsAndMatchesInterpreter)
     const EmittedFunction emitted = emitFunction(
         *fn, {{"M", InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3))}}, reg, nullptr,
         bridge);
-    ASSERT_NE(emitted.source.find("numkit_rt::val::matrix(M, _nk_M_rows, _nk_M_cols)"),
+    ASSERT_NE(emitted.source.find("numkit_rt::val::matrix(M, _numkit_M_rows, _numkit_M_cols)"),
               std::string::npos);
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -11675,7 +11675,7 @@ TEST(CodegenE2E, PartialNargoutUserCall)
 }
 
 // Struct across the function ABI (G2.3): a plain struct passed to a function explodes into
-// per-field params (_nk_fld_s_a, _nk_fld_s_b); the callee reads them via s.a / s.b. v1: all-
+// per-field params (_numkit_fld_s_a, _numkit_fld_s_b); the callee reads them via s.a / s.b. v1: all-
 // scalar fields. The first cross-ABI struct e2e -- builds a struct in g, passes it to ff,
 // reads its fields. The layout-aware mangle gives ff its own specialization.
 TEST(CodegenE2E, StructParamAcrossABI)
@@ -11702,7 +11702,7 @@ TEST(CodegenE2E, StructParamAcrossABI)
     registerUserFunctions(reg, ft);
 
     const EmittedFunction emitted = emitProgram(*ft.find("g"), {}, ft, reg);
-    EXPECT_NE(emitted.source.find("_nk_fld_s_a"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_s_a"), std::string::npos)
         << "the struct param must explode into per-field params";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -11750,7 +11750,7 @@ TEST(CodegenE2E, StructReturnAcrossABI)
     registerUserFunctions(reg, ft);
 
     const EmittedFunction emitted = emitProgram(*ft.find("g"), {}, ft, reg);
-    EXPECT_NE(emitted.source.find("_nk_fld_t_a"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_t_a"), std::string::npos)
         << "the struct-returning call must bind the caller's per-field locals";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
@@ -11891,7 +11891,7 @@ TEST(CodegenE2E, EmptyInitLoopBuild)
 }
 
 // Struct ARRAY s(i).f via SoA (G2.5): a struct array's fields are parallel GROWABLE arrays --
-// s(i).a maps to the field-array _nk_fld_s_a indexed at i. s(i).a=v grows _nk_fld_s_a (the growth
+// s(i).a maps to the field-array _numkit_fld_s_a indexed at i. s(i).a=v grows _numkit_fld_s_a (the growth
 // tier); s(i).a reads index it. v1: scalar fields, 1-D struct array, single index.
 // NB: built by explicit indexed writes (each unconditional), not a bare loop -- a struct array
 // built ONLY inside a loop is maybe-undef after it (the loop may run 0 times), the same
@@ -11903,14 +11903,14 @@ TEST(CodegenE2E, StructArraySoA)
         GTEST_SKIP() << "no external compiler configured for this build";
 
     const char *body =
-        "  s(1).a = 5;\n"   // _nk_fld_s_a = [5]
+        "  s(1).a = 5;\n"   // _numkit_fld_s_a = [5]
         "  s(2).a = 6;\n"   // grows -> [5 6]
-        "  s(1).b = 70;\n"  // _nk_fld_s_b = [70]
+        "  s(1).b = 70;\n"  // _numkit_fld_s_b = [70]
         "  s(2).b = 80;\n"  // grows -> [70 80]
         "  r = s(1).a + s(2).a * 10 + s(1).b * 100 + s(2).b * 1000;\n";
     const EmittedFunction emitted =
         transpile(std::string("function r = f()\n") + body + "end\n", {});
-    EXPECT_NE(emitted.source.find("_nk_fld_s_a"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_s_a"), std::string::npos)
         << "struct-array fields must flatten to parallel field-arrays";
     EXPECT_NE(emitted.source.find("index_set_grow"), std::string::npos)
         << "an out-of-range struct-array field store must grow the field-array";
@@ -11953,7 +11953,7 @@ TEST(CodegenE2E, ConstDynamicField)
         "  r = x * 10 + y;\n";  // 57
     const EmittedFunction emitted =
         transpile(std::string("function r = f()\n") + body + "end\n", {});
-    EXPECT_NE(emitted.source.find("_nk_fld_s_a"), std::string::npos)
+    EXPECT_NE(emitted.source.find("_numkit_fld_s_a"), std::string::npos)
         << "a constant dynamic field must fold to the static field-local";
 
     auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";

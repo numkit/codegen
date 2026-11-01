@@ -1,6 +1,6 @@
 // codegen/include/numkit/codegen/driver.hpp
 //
-// The `nk build` driver core (DESIGN.md §8 M4): the orchestration that
+// The `numkit build` driver core (DESIGN.md §8 M4): the orchestration that
 // turns a nk source file into a native artifact — parse -> infer/emit
 // (emitProgram) -> AOT-compile. The reusable, testable pieces live here; the
 // CLI (tools/numkit_codegen_main.cpp) is a thin argv wrapper over them.
@@ -26,7 +26,7 @@ namespace numkit::codegen::driver {
 std::vector<InferredType> parseTypeSpec(const std::string &spec);
 
 // Transpile the entry function of `source` to a C++ TU (the emit step of
-// `nk build`). `entry` empty -> the sole top-level function (error if
+// `numkit build`). `entry` empty -> the sole top-level function (error if
 // there is not exactly one). `paramTypes` (from parseTypeSpec) must match the
 // entry's arity. Bridges uncompiled builtins when `bridge.enabled`. Throws
 // std::runtime_error on parse / arity / unsupported-construct errors.

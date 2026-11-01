@@ -37,7 +37,7 @@ ValueType dtypeFromString(const std::string &name)
         {"uint32", ValueType::UINT32},  {"uint64", ValueType::UINT64}};
     const auto it = kMap.find(name);
     if (it == kMap.end())
-        throw std::runtime_error("nk build: unknown argument type '" + name + "'");
+        throw std::runtime_error("numkit build: unknown argument type '" + name + "'");
     return it->second;
 }
 
@@ -56,7 +56,7 @@ std::vector<InferredType> parseTypeSpec(const std::string &spec)
                                                          ? std::string::npos
                                                          : comma - pos));
         if (tok.empty())
-            throw std::runtime_error("nk build: empty argument type in spec");
+            throw std::runtime_error("numkit build: empty argument type in spec");
 
         bool isArray = false;
         if (tok.size() >= 2 && tok.substr(tok.size() - 2) == "[]") {
@@ -87,7 +87,7 @@ auto withPrepared(const std::string &source, const std::string &entry,
     Lexer  lex(source);
     Parser parser(lex.tokenize());
     auto   root = parser.parse();
-    if (!root) throw std::runtime_error("nk build: failed to parse source");
+    if (!root) throw std::runtime_error("numkit build: failed to parse source");
 
     TransferRegistry reg;
     registerStandardTransfers(reg);
@@ -113,7 +113,7 @@ auto withPrepared(const std::string &source, const std::string &entry,
         }
         if (!scriptBody->children.empty()) {
             syntheticScriptFn.type = NodeType::FUNCTION_DEF;
-            syntheticScriptFn.strValue = "nk_script_main";
+            syntheticScriptFn.strValue = "numkit_script_main";
             syntheticScriptFn.children.push_back(std::move(scriptBody));
         }
     }
@@ -121,18 +121,18 @@ auto withPrepared(const std::string &source, const std::string &entry,
     const ASTNode *fn = nullptr;
     if (!entry.empty()) {
         fn = table.find(entry);
-        if (!fn) throw std::runtime_error("nk build: no function named '" + entry + "'");
+        if (!fn) throw std::runtime_error("numkit build: no function named '" + entry + "'");
     } else if (!syntheticScriptFn.children.empty()) {
         fn = &syntheticScriptFn;
     } else if (table.size() == 1) {
         fn = table.entries().begin()->second;
     } else {
-        throw std::runtime_error("nk build: source has " + std::to_string(table.size())
+        throw std::runtime_error("numkit build: source has " + std::to_string(table.size())
                                  + " functions — specify the entry with --entry");
     }
 
     if (paramTypes.size() != fn->paramNames.size())
-        throw std::runtime_error("nk build: entry '" + fn->strValue + "' takes "
+        throw std::runtime_error("numkit build: entry '" + fn->strValue + "' takes "
                                  + std::to_string(fn->paramNames.size())
                                  + " argument(s) but the type spec has "
                                  + std::to_string(paramTypes.size()));
@@ -206,7 +206,7 @@ std::string buildHarnessMain(const EmittedFunction &em)
                "    std::printf(\"%.17g%+.17gi\\n\", _r.real(), _r.imag());\n";
     } else {
         throw std::runtime_error(
-            "nk build: cannot build a run harness for return type '" + retty +
+            "numkit build: cannot build a run harness for return type '" + retty +
             "' (v1 supports only scalar / complex / void returns). Use `coder` / "
             "`-o` to get the C++ and write your own main().");
     }

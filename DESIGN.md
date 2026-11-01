@@ -19,7 +19,7 @@ the output is debuggable, and it produces a real deployable artifact
 
 Target deployment (BOTH are goals — clarified 2026-06):
 - **Standalone AOT** — compile a call tree from an entry point into a
-  native library/binary; no interpreter in that artifact. A `nk build`
+  native library/binary; no interpreter in that artifact. A `numkit build`
   driver is the product shape (§8 M4). Programs that call uncompiled
   library functions compile via the Value-ABI bridge (§6a).
 - **Tiered acceleration** — compile hot functions and load them back into
@@ -543,7 +543,7 @@ inferred field types, a constructor, and methods called **monomorphically**
   end-to-end (biquad), call the runtime for the rest, compile, measure.
 - **M3** — broaden: transfer-function DB for the hot ~50-100, shape
   inference, complex/more dtypes, more control flow.
-- **M4** — product: `nk build` (AOT a project); optionally an
+- **M4** — product: `numkit build` (AOT a project); optionally an
   emscripten→wasm target. ✅ FIRST CUT: `numkit_codegen` CLI
   (apps/numkit_codegen) + a testable driver core (driver.{hpp,cpp}:
   `parseTypeSpec` MATLAB-Coder `-args` style + `transpileSource`). Emits the
@@ -622,16 +622,16 @@ performance-first "minimal validation" stance — the same stance under which an
 out-of-bounds index throws `std::out_of_range` rather than auto-growing (the
 buffer cannot grow):
 - **Synthesised names: conforming and collision-free by construction.** Every
-  emitter-synthesised block-scope name — the fill-loop counter (`_nk_i`), the
-  bridged-call arg temp (`_nk_args`), and the `_len`/`_rows`/`_cols`/`_dN`
+  emitter-synthesised block-scope name — the fill-loop counter (`_numkit_i`), the
+  bridged-call arg temp (`_numkit_args`), and the `_len`/`_rows`/`_cols`/`_dN`
   companions of array params, outputs, and runtime-dim N-D locals — carries the
-  `_nk_` prefix; the monomorphised function symbol is mangled `__`-free (escaped
+  `_numkit_` prefix; the monomorphised function symbol is mangled `__`-free (escaped
   base, `_1` separator, letter-led). Two consequences. (1) **No UB:**
-  `__`-anything and `_`+uppercase are reserved for any use ([lex.name]); `_nk_*`
+  `__`-anything and `_`+uppercase are reserved for any use ([lex.name]); `_numkit_*`
   is `_`+lowercase, reserved only for names in the GLOBAL namespace — and these
   are all block-scope params/locals, so they are conforming; the function symbol
   is letter-led, so conforming at global scope too. (2) **No collision:** a
-  MATLAB identifier can never begin with `_`, so a `_nk_*` name can never equal a
+  MATLAB identifier can never begin with `_`, so a `_numkit_*` name can never equal a
   user variable — the companion-vs-user clash is *structurally impossible*, no
   detection needed. The mangle base is escaped (`_`→`_0`) so even a function
   name like `a__b` mangles `__`-free.
@@ -679,7 +679,7 @@ so a regression into silent mis-emission fails a test.
 | scalar real / int / bool | unboxed C++ scalar (the 97× win) |
 | 1-D / 2-D / N-D real array | `Value` container + hoisted data ptr |
 | complex scalar / array | `std::complex<double>` (+ interleaved-re,im C-ABI box) |
-| struct: scalar, ABI in/out, struct-arrays (SoA), const dynamic field | field-flatten `_nk_fld_*` + width-union STRUCT lattice |
+| struct: scalar, ABI in/out, struct-arrays (SoA), const dynamic field | field-flatten `_numkit_fld_*` + width-union STRUCT lattice |
 | cell: literals 1-D+2-D, read `c{i}`/`c{i,j}`, store `c{i}=v`/`c{i,j}=v` (auto-grow), slice `c(i)` | `numkit_box_cell[_2d]` / `numkit_cell_get[_2d]` / `numkit_cell_set[_2d]`; slice rides `index_dyn` |
 | named function handle `@f` | `numkit_make_handle`; call rides `index_dyn` → handle call |
 | anonymous closure `@(x)expr` -- capture-free OR capturing scalar locals `@(x) a*x+b` | free-var analysis (`collectAnonRefIds`); capture-free -> `make_closure`; captured scalar locals boxed by value -> `make_closure_captured` (the runtime snapshots them) |
@@ -815,12 +815,12 @@ table.
   column-major owned storage + `indexN`/`indexN_set`; `size`/`ndims`/`numel`;
   N-D PARAMS (ptr + one `size_t` companion per dim, read-only) and N-D OUTPUTS
   (caller-allocated out-param + companions); const AND runtime dims
-  (`zeros(m,n,p)` with variables → `_nk_<name>_dN` size_t dim vars).
+  (`zeros(m,n,p)` with variables → `_numkit_<name>_dN` size_t dim vars).
 - **`Value`-ABI bridge (§6):** compiled code calls uncompiled builtins/libs
   (sort/fft/…) and passes scalars + 1-D arrays as `Value` via `numkit_codegen_rt`
   (scalar + array results, owned-vector locals, e2e + tiered-as-plugin). The
   bridged artifact links one import lib; the non-bridged path stays stdlib-only.
-- All synthesised names UB-free + conforming (`_nk_` block-scope prefix, `__`-
+- All synthesised names UB-free + conforming (`_numkit_` block-scope prefix, `__`-
   free letter-led mangle; user `__`-names refused); dim/index conversions guard
   against the negative/out-of-range `double`→`size_t` UB.
 - **2-D matrix OUTPUT** (caller-allocated out-param, rows/cols companions,

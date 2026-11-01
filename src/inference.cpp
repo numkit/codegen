@@ -104,9 +104,9 @@ AbstractValue indexResult(const AbstractValue &var,
 }
 
 // The flattened field-local name for a plain-struct field chain (field-flattening).
-// `s.a.b` (a FIELD_ACCESS) -> "_nk_fld_s_a_b"; "" if the chain is not rooted at a
+// `s.a.b` (a FIELD_ACCESS) -> "_numkit_fld_s_a_b"; "" if the chain is not rooted at a
 // plain identifier (a call/expression base) -> not a flattenable struct field. A
-// single-level `s.a` gives "_nk_fld_s_a" (unchanged), so this generalises the old
+// single-level `s.a` gives "_numkit_fld_s_a" (unchanged), so this generalises the old
 // hardcoded name to nested access. MUST match emitter.cpp's copy.
 std::string structFieldLocal(const ASTNode &fa)
 {
@@ -130,7 +130,7 @@ std::string structFieldLocal(const ASTNode &fa)
         n      = n->children[0].get();
     }
     if (n->type != NodeType::IDENTIFIER) return "";
-    return "_nk_fld_" + n->strValue + suffix;
+    return "_numkit_fld_" + n->strValue + suffix;
 }
 
 } // namespace
@@ -195,13 +195,13 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
     case NodeType::FIELD_ACCESS: {
         // obj.field : strValue = field name, children[0] = object expr.
         if (expr.children.empty()) return AbstractValue::dynamic();
-        // s(i).a : struct-ARRAY field read (SoA, G2.5) -> the field-array _nk_fld_s_a's ELEMENT
+        // s(i).a : struct-ARRAY field read (SoA, G2.5) -> the field-array _numkit_fld_s_a's ELEMENT
         // type. The base is CALL(IDENTIFIER s, idx); s itself is not a value (only field-arrays
         // exist), so this is matched BEFORE inferring the base as a normal expression.
         if (expr.children[0]->type == NodeType::CALL && !expr.children[0]->children.empty()
             && expr.children[0]->children[0]->type == NodeType::IDENTIFIER) {
             const std::string sv  = expr.children[0]->children[0]->strValue;
-            const std::string fld = "_nk_fld_" + sv + "_" + expr.strValue;
+            const std::string fld = "_numkit_fld_" + sv + "_" + expr.strValue;
             if (env.has(fld)) {
                 const InferredType at = env.get(fld).type;  // the field-array (1-D)
                 if (at.isConcrete())
@@ -415,7 +415,7 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
             && callee.children[0]->type == NodeType::IDENTIFIER
             && !inferExpr(*callee.children[0], env, reg, classes).type.isObject()) {
             const std::string fld =
-                "_nk_fld_" + callee.children[0]->strValue + "_" + callee.strValue;
+                "_numkit_fld_" + callee.children[0]->strValue + "_" + callee.strValue;
             return env.has(fld) ? indexResult(env.get(fld), argVals) : AbstractValue::dynamic();
         }
         // Method call `obj.m(args)`: callee is FIELD_ACCESS. Resolve the
@@ -726,11 +726,11 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             env.set(lhs.strValue, rv);
             recordDecl(declOut, lhs.strValue, rv.type);
             // A struct-valued assignment (t = structReturningCall()) also DECLARES the
-            // per-field locals (_nk_fld_t_<f>) so they hoist and t.f reads work, and seeds
+            // per-field locals (_numkit_fld_t_<f>) so they hoist and t.f reads work, and seeds
             // them -- the caller-receipt (G2.4) passes them as the callee's out-param refs.
             if (rv.type.isStruct() && rv.type.structLayout)
                 for (const auto &f : rv.type.structLayout->fields) {
-                    const std::string fld = "_nk_fld_" + lhs.strValue + "_" + f.first;
+                    const std::string fld = "_numkit_fld_" + lhs.strValue + "_" + f.first;
                     env.set(fld, {f.second, ConstVal::unknown()});
                     recordDecl(declOut, fld, f.second);
                 }
@@ -755,7 +755,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                 const std::string fieldName = (lhs.type == NodeType::FIELD_ACCESS)
                                                   ? lhs.strValue
                                                   : lhs.children[1]->strValue;
-                const std::string fld = "_nk_fld_" + base + "_" + fieldName;
+                const std::string fld = "_numkit_fld_" + base + "_" + fieldName;
                 env.set(fld, rhs);
                 recordDecl(declOut, fld, rhs.type);
                 auto layout = std::make_shared<StructLayout>();
@@ -810,12 +810,12 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                    && lhs.children[0]->type == NodeType::CALL
                    && !lhs.children[0]->children.empty()
                    && lhs.children[0]->children[0]->type == NodeType::IDENTIFIER) {
-            // s(i).a = v : struct-ARRAY field write (SoA, G2.5). The field-array _nk_fld_s_a is
+            // s(i).a = v : struct-ARRAY field write (SoA, G2.5). The field-array _numkit_fld_s_a is
             // a 1-D vector of rhs's dtype, GROWABLE via the growth tier (s(i).a=v in a loop
             // builds it). v1: a concrete scalar rhs, a plain-identifier struct-array base s(i).
             if (rhs.type.isConcrete() && rhs.type.shape.isScalar()) {
                 const std::string sv  = lhs.children[0]->children[0]->strValue;
-                const std::string fld = "_nk_fld_" + sv + "_" + lhs.strValue;
+                const std::string fld = "_numkit_fld_" + sv + "_" + lhs.strValue;
                 const InferredType at = InferredType::concrete(rhs.type.dtype, Shape::unknown());
                 env.set(fld, {at, ConstVal::unknown()});
                 recordDecl(declOut, fld, at);

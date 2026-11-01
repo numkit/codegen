@@ -20,15 +20,15 @@ include(FetchContent)
 
 # ── Dependency: numkit (and transitive value / sys / ops) ────────────────
 if(NOT TARGET numkit)
-    set(_nk_prebuilt_dir "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/build")
-    find_library(_nk_lib_numkit NAMES numkit PATHS "${_nk_prebuilt_dir}" "${_nk_prebuilt_dir}/Release" NO_DEFAULT_PATH)
-    find_library(_nk_lib_ops    NAMES numkit_ops PATHS "${_nk_prebuilt_dir}/_deps/numkit_ops" "${_nk_prebuilt_dir}/_deps/numkit_ops/Release" NO_DEFAULT_PATH)
-    find_library(_nk_lib_sys    NAMES numkit_sys PATHS "${_nk_prebuilt_dir}/_deps/numkit_sys" "${_nk_prebuilt_dir}/_deps/numkit_sys/Release" NO_DEFAULT_PATH)
-    find_library(_nk_lib_value  NAMES numkit_value PATHS "${_nk_prebuilt_dir}/_deps/numkit_value" "${_nk_prebuilt_dir}/_deps/numkit_value/Release" NO_DEFAULT_PATH)
-    find_library(_nk_lib_hwy    NAMES hwy PATHS "${_nk_prebuilt_dir}/_deps/highway-build" "${_nk_prebuilt_dir}/_deps/highway-build/Release" NO_DEFAULT_PATH)
-    find_library(_nk_lib_hwy_c  NAMES hwy_contrib PATHS "${_nk_prebuilt_dir}/_deps/highway-build" "${_nk_prebuilt_dir}/_deps/highway-build/Release" NO_DEFAULT_PATH)
-    if(NOT NUMKIT_BUILD_TESTS AND _nk_lib_numkit AND _nk_lib_ops AND _nk_lib_sys AND _nk_lib_value)
-        message(STATUS "Using prebuilt numkit libraries from ${_nk_prebuilt_dir}")
+    set(_numkit_prebuilt_dir "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/build")
+    find_library(_numkit_lib_numkit NAMES numkit PATHS "${_numkit_prebuilt_dir}" "${_numkit_prebuilt_dir}/Release" NO_DEFAULT_PATH)
+    find_library(_numkit_lib_ops    NAMES numkit_ops PATHS "${_numkit_prebuilt_dir}/_deps/numkit_ops" "${_numkit_prebuilt_dir}/_deps/numkit_ops/Release" NO_DEFAULT_PATH)
+    find_library(_numkit_lib_sys    NAMES numkit_sys PATHS "${_numkit_prebuilt_dir}/_deps/numkit_sys" "${_numkit_prebuilt_dir}/_deps/numkit_sys/Release" NO_DEFAULT_PATH)
+    find_library(_numkit_lib_value  NAMES numkit_value PATHS "${_numkit_prebuilt_dir}/_deps/numkit_value" "${_numkit_prebuilt_dir}/_deps/numkit_value/Release" NO_DEFAULT_PATH)
+    find_library(_numkit_lib_hwy    NAMES hwy PATHS "${_numkit_prebuilt_dir}/_deps/highway-build" "${_numkit_prebuilt_dir}/_deps/highway-build/Release" NO_DEFAULT_PATH)
+    find_library(_numkit_lib_hwy_c  NAMES hwy_contrib PATHS "${_numkit_prebuilt_dir}/_deps/highway-build" "${_numkit_prebuilt_dir}/_deps/highway-build/Release" NO_DEFAULT_PATH)
+    if(NOT NUMKIT_BUILD_TESTS AND _numkit_lib_numkit AND _numkit_lib_ops AND _numkit_lib_sys AND _numkit_lib_value)
+        message(STATUS "Using prebuilt numkit libraries from ${_numkit_prebuilt_dir}")
         add_library(numkit INTERFACE)
         add_library(numkit::numkit ALIAS numkit)
         target_include_directories(numkit INTERFACE
@@ -38,13 +38,13 @@ if(NOT TARGET numkit)
             "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/include"
         )
         target_link_libraries(numkit INTERFACE
-            "${_nk_lib_numkit}"
-            "${_nk_lib_ops}"
-            "${_nk_lib_sys}"
-            "${_nk_lib_value}"
+            "${_numkit_lib_numkit}"
+            "${_numkit_lib_ops}"
+            "${_numkit_lib_sys}"
+            "${_numkit_lib_value}"
         )
-        if(_nk_lib_hwy AND _nk_lib_hwy_c)
-            target_link_libraries(numkit INTERFACE "${_nk_lib_hwy}" "${_nk_lib_hwy_c}")
+        if(_numkit_lib_hwy AND _numkit_lib_hwy_c)
+            target_link_libraries(numkit INTERFACE "${_numkit_lib_hwy}" "${_numkit_lib_hwy_c}")
         endif()
         find_package(Threads REQUIRED)
         target_link_libraries(numkit INTERFACE Threads::Threads)
@@ -67,11 +67,11 @@ set(NUMKIT_CODEGEN_AOT_IS_MSVC 0)
 set(NUMKIT_CODEGEN_AOT_VCVARS "")
 set(NUMKIT_CODEGEN_AOT_CXX "${CMAKE_CXX_COMPILER}")
 if(MSVC AND CMAKE_GENERATOR_INSTANCE)
-    set(_nk_vcvars "${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat")
-    if(EXISTS "${_nk_vcvars}")
+    set(_numkit_vcvars "${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat")
+    if(EXISTS "${_numkit_vcvars}")
         set(NUMKIT_CODEGEN_AOT_AVAILABLE 1)
         set(NUMKIT_CODEGEN_AOT_IS_MSVC 1)
-        set(NUMKIT_CODEGEN_AOT_VCVARS "${_nk_vcvars}")
+        set(NUMKIT_CODEGEN_AOT_VCVARS "${_numkit_vcvars}")
     endif()
 elseif(NOT MSVC AND CMAKE_CXX_COMPILER)
     set(NUMKIT_CODEGEN_AOT_AVAILABLE 1)

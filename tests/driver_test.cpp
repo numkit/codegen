@@ -1,6 +1,6 @@
 // codegen/tests/driver_test.cpp
 //
-// The `nk build` driver core (DESIGN.md §8 M4): the CLI-independent
+// The `numkit build` driver core (DESIGN.md §8 M4): the CLI-independent
 // pieces — the -args type-spec parser and the parse->emit transpile step.
 // (Compilation of the emitted TU is covered by the e2e tests.)
 
@@ -53,7 +53,7 @@ TEST(Driver, TranspileNamedEntryWithArrayArg)
         "  for k = 1:n\n    y(k) = b0 * x(k);\n  end\nend\n",
         "biquad", driver::parseTypeSpec("double[], double"));
     EXPECT_NE(em.source.find("biquad"), std::string::npos);
-    EXPECT_NE(em.signature.find("const double* x, std::size_t _nk_x_len"), std::string::npos);
+    EXPECT_NE(em.signature.find("const double* x, std::size_t _numkit_x_len"), std::string::npos);
 }
 
 TEST(Driver, ArityMismatchThrows)
@@ -121,7 +121,7 @@ TEST(Driver, TranspileTopLevelScriptWithDispAndFprintf)
         "disp(s);\n"
         "fprintf('sum=%d\\n', s);\n",
         "", {});
-    EXPECT_EQ(em.name, "nk_0script_0main_1v");
+    EXPECT_EQ(em.name, "numkit_0script_0main_1v");
     EXPECT_NE(em.source.find("numkit_rt::disp(s);"), std::string::npos);
     EXPECT_NE(em.source.find("std::fprintf(stdout, \"sum=%lld\\n\", static_cast<long long>(s));"),
               std::string::npos);
@@ -136,7 +136,7 @@ TEST(Driver, TranspileScriptWithLocalHelperFunction)
         "  r = x * x;\n"
         "end\n",
         "", {});
-    EXPECT_EQ(em.name, "nk_0script_0main_1v");
+    EXPECT_EQ(em.name, "numkit_0script_0main_1v");
     EXPECT_NE(em.source.find("sq_1d(7.0)"), std::string::npos);
     EXPECT_NE(em.source.find("numkit_rt::disp(y);"), std::string::npos);
 }
