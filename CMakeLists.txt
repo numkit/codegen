@@ -20,7 +20,35 @@ include(FetchContent)
 
 # ── Dependency: numkit (and transitive value / sys / ops) ────────────────
 if(NOT TARGET numkit)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/CMakeLists.txt")
+    set(_nk_prebuilt_dir "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/build")
+    find_library(_nk_lib_numkit NAMES numkit PATHS "${_nk_prebuilt_dir}" "${_nk_prebuilt_dir}/Release" NO_DEFAULT_PATH)
+    find_library(_nk_lib_ops    NAMES numkit_ops PATHS "${_nk_prebuilt_dir}/_deps/numkit_ops" "${_nk_prebuilt_dir}/_deps/numkit_ops/Release" NO_DEFAULT_PATH)
+    find_library(_nk_lib_sys    NAMES numkit_sys PATHS "${_nk_prebuilt_dir}/_deps/numkit_sys" "${_nk_prebuilt_dir}/_deps/numkit_sys/Release" NO_DEFAULT_PATH)
+    find_library(_nk_lib_value  NAMES numkit_value PATHS "${_nk_prebuilt_dir}/_deps/numkit_value" "${_nk_prebuilt_dir}/_deps/numkit_value/Release" NO_DEFAULT_PATH)
+    find_library(_nk_lib_hwy    NAMES hwy PATHS "${_nk_prebuilt_dir}/_deps/highway-build" "${_nk_prebuilt_dir}/_deps/highway-build/Release" NO_DEFAULT_PATH)
+    find_library(_nk_lib_hwy_c  NAMES hwy_contrib PATHS "${_nk_prebuilt_dir}/_deps/highway-build" "${_nk_prebuilt_dir}/_deps/highway-build/Release" NO_DEFAULT_PATH)
+    if(NOT NUMKIT_BUILD_TESTS AND _nk_lib_numkit AND _nk_lib_ops AND _nk_lib_sys AND _nk_lib_value)
+        message(STATUS "Using prebuilt numkit libraries from ${_nk_prebuilt_dir}")
+        add_library(numkit INTERFACE)
+        add_library(numkit::numkit ALIAS numkit)
+        target_include_directories(numkit INTERFACE
+            "${CMAKE_CURRENT_SOURCE_DIR}/../value/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../sys/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../ops/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/include"
+        )
+        target_link_libraries(numkit INTERFACE
+            "${_nk_lib_numkit}"
+            "${_nk_lib_ops}"
+            "${_nk_lib_sys}"
+            "${_nk_lib_value}"
+        )
+        if(_nk_lib_hwy AND _nk_lib_hwy_c)
+            target_link_libraries(numkit INTERFACE "${_nk_lib_hwy}" "${_nk_lib_hwy_c}")
+        endif()
+        find_package(Threads REQUIRED)
+        target_link_libraries(numkit INTERFACE Threads::Threads)
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/CMakeLists.txt")
         message(STATUS "Using local numkit/numkit from ${CMAKE_CURRENT_SOURCE_DIR}/../numkit")
         add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../numkit" _deps/numkit)
     else()
