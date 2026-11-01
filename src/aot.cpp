@@ -214,6 +214,10 @@ CompileOptions defaultBridgeCompileOptions()
             opts.linkLibs.push_back(found);
         }
     }
+#ifdef _WIN32
+    opts.linkLibs.push_back("user32.lib");
+    opts.linkLibs.push_back("gdi32.lib");
+#endif
     return opts;
 }
 
