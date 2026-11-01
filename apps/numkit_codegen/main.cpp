@@ -40,7 +40,7 @@ namespace {
 {
     std::cerr << "error: " << err << "\n\n"
               << "usage: " << argv0 << " <file.m> [--args \"<spec>\"] [--entry <name>]"
-              << " [--bridge | --plugin <name>] [--run] [-o <file>]\n";
+              << " [--bridge | --plugin <name>] [--build] [--run] [-o <file>]\n";
     std::exit(2);
 }
 
@@ -54,12 +54,21 @@ std::string readFile(const std::string &path, bool &ok)
     return ss.str();
 }
 
+bool hasBinaryExtension(const std::string &p)
+{
+    if (p.size() >= 4) {
+        const std::string ext = p.substr(p.size() - 4);
+        if (ext == ".exe" || ext == ".EXE" || ext == ".out") return true;
+    }
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
     std::string file, argsSpec, entry, outPath, pluginExport;
-    bool        bridge = false, runFlag = false;
+    bool        bridge = false, runFlag = false, buildFlag = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -72,6 +81,7 @@ int main(int argc, char **argv)
         else if (a == "-o") outPath = next("-o");
         else if (a == "--bridge") bridge = true;
         else if (a == "--plugin") pluginExport = next("--plugin");
+        else if (a == "--build") buildFlag = true;
         else if (a == "--run") runFlag = true;
         else if (a == "-h" || a == "--help") usage(argv[0], "help");
         else if (!a.empty() && a[0] == '-') usage(argv[0], "unknown option " + a);
@@ -79,8 +89,9 @@ int main(int argc, char **argv)
         else usage(argv[0], "unexpected extra argument " + a);
     }
     if (file.empty()) usage(argv[0], "no input file");
-    if (runFlag && !pluginExport.empty())
-        usage(argv[0], "--run and --plugin are mutually exclusive (a plugin TU is "
+    if (!outPath.empty() && hasBinaryExtension(outPath)) buildFlag = true;
+    if ((runFlag || buildFlag) && !pluginExport.empty())
+        usage(argv[0], "--build/--run and --plugin are mutually exclusive (a plugin TU is "
                        "a shared lib, not a runnable program)");
 
     bool ok = false;
@@ -111,11 +122,9 @@ int main(int argc, char **argv)
             info      = "emitted entry '" + emittedFn.name + "': " + emittedFn.signature;
         }
 
-        // --run: wrap the emitted TU in a main() harness, AOT-compile it, and
-        // execute it. The artifact is a temp file so -o (the C++ source path)
-        // and the binary don't collide. v1 requires a nullary entry returning a
-        // scalar / complex / void — buildHarnessMain throws otherwise.
-        if (runFlag) {
+        // --build / --run: wrap the emitted TU in a main() harness, AOT-compile
+        // it, and optionally execute it.
+        if (buildFlag || runFlag) {
             if (!bridge && numkit::sys::envGet("NUMKIT_CXX").empty() &&
                 numkit::sys::findZig().found) {
                 numkit::sys::envSet("NUMKIT_USE_ZIG", "1");
@@ -125,35 +134,57 @@ int main(int argc, char **argv)
                     "no C++ compiler configured — set NUMKIT_CXX or rebuild with a "
                     "build-time compiler (see DESIGN.md §8)");
             if (!pluginExport.empty())
-                throw std::runtime_error("--run is incompatible with --plugin");
+                throw std::runtime_error("--build/--run is incompatible with --plugin");
             if (!paramTypes.empty())
                 throw std::runtime_error(
-                    "--run: v1 supports only a nullary entry (no --args). For "
+                    "--build/--run: v1 supports only a nullary entry (no --args). For "
                     "functions with args, emit the C++ with -o and write your "
                     "own main() harness.");
             const std::string program = generated + cg::driver::buildHarnessMain(emittedFn);
 
             namespace fs = std::filesystem;
-            const auto base = fs::temp_directory_path() / "numkit_codegen_run";
-            fs::create_directories(base);
-            std::string exe = (base / "aot").string();
+            std::string exe;
+            if (buildFlag) {
+                if (!outPath.empty()) {
+                    exe = outPath;
 #ifdef _WIN32
-            exe += ".exe";
+                    if (fs::path(exe).extension().empty()) exe += ".exe";
 #endif
+                } else {
+                    exe = fs::path(file).stem().string();
+#ifdef _WIN32
+                    exe += ".exe";
+#endif
+                }
+            } else {
+                const auto base = fs::temp_directory_path() / "numkit_codegen_run";
+                fs::create_directories(base);
+                exe = (base / "aot").string();
+#ifdef _WIN32
+                exe += ".exe";
+#endif
+            }
             const auto cr = cg::aot::compileToExecutable(program, exe);
+            std::error_code ec;
+            fs::remove(exe + ".cpp", ec);
+            fs::remove(exe + ".log", ec);
+#ifdef _WIN32
+            fs::remove(exe + ".obj", ec);
+            fs::remove(exe + ".build.bat", ec);
+#endif
             if (!cr.ok())
                 throw std::runtime_error("compilation failed.\n--- compiler log ---\n" +
                                          cr.log + "\n--- end log ---");
-            std::cerr << "numkit_codegen: compiled -> " << exe << "\n";
+            std::cerr << "numkit-codegen: compiled -> " << exe << "\n";
+            if (!runFlag) return 0;
+
             const auto rr = cg::aot::runExecutable(exe);
-            std::error_code ec;
-            fs::remove(exe, ec); fs::remove(exe + ".cpp", ec); fs::remove(exe + ".log", ec);
-#ifdef _WIN32
-            fs::remove(exe + ".obj", ec); fs::remove(exe + ".build.bat", ec);
-#endif
+            if (!buildFlag) {
+                fs::remove(exe, ec);
+            }
             std::cout << rr.log;
             if (rr.exitCode != 0) {
-                std::cerr << "numkit_codegen: program exited with code " << rr.exitCode << "\n";
+                std::cerr << "numkit-codegen: program exited with code " << rr.exitCode << "\n";
                 return rr.exitCode;
             }
             return 0;
@@ -168,7 +199,7 @@ int main(int argc, char **argv)
             os.flush();
             if (!os) { std::cerr << "error: failed writing " << outPath << "\n"; return 1; }
         }
-        std::cerr << "numkit_codegen: " << info << "\n";  // stderr, so -o stays clean
+        std::cerr << "numkit-codegen: " << info << "\n";  // stderr, so -o stays clean
         return 0;
     } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";

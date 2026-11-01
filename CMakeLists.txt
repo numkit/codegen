@@ -105,9 +105,13 @@ target_link_libraries(numkit_codegen_core
         numkit
 )
 
-# ── Executable: numkit_codegen CLI ───────────────────────────────────────
+# ── Executable: numkit-codegen CLI ───────────────────────────────────────
 if(NUMKIT_BUILD_CLI AND NOT EMSCRIPTEN)
     add_executable(numkit_codegen apps/numkit_codegen/main.cpp)
+    set_target_properties(numkit_codegen PROPERTIES
+        RUNTIME_OUTPUT_NAME numkit-codegen
+        ARCHIVE_OUTPUT_NAME numkit_codegen_cli
+    )
     target_link_libraries(numkit_codegen PRIVATE numkit_codegen_core)
 endif()
 

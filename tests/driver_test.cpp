@@ -109,3 +109,34 @@ TEST(Driver, TranspileToPluginRefusesArrayOutput)
                                            driver::parseTypeSpec("double[]"), "f", "numkit_plugin.h"),
                  std::runtime_error);
 }
+
+TEST(Driver, TranspileTopLevelScriptWithDispAndFprintf)
+{
+    const EmittedFunction em = driver::transpileSource(
+        "clear;\n"
+        "s = 0;\n"
+        "for k = 1:100\n"
+        "  s = s + k;\n"
+        "end\n"
+        "disp(s);\n"
+        "fprintf('sum=%d\\n', s);\n",
+        "", {});
+    EXPECT_EQ(em.name, "nk_0script_0main_1v");
+    EXPECT_NE(em.source.find("numkit_rt::disp(s);"), std::string::npos);
+    EXPECT_NE(em.source.find("std::fprintf(stdout, \"sum=%lld\\n\", static_cast<long long>(s));"),
+              std::string::npos);
+}
+
+TEST(Driver, TranspileScriptWithLocalHelperFunction)
+{
+    const EmittedFunction em = driver::transpileSource(
+        "y = sq(7);\n"
+        "disp(y);\n"
+        "function r = sq(x)\n"
+        "  r = x * x;\n"
+        "end\n",
+        "", {});
+    EXPECT_EQ(em.name, "nk_0script_0main_1v");
+    EXPECT_NE(em.source.find("sq_1d(7.0)"), std::string::npos);
+    EXPECT_NE(em.source.find("numkit_rt::disp(y);"), std::string::npos);
+}

@@ -837,6 +837,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
         return;
     }
 
+    case NodeType::COMMAND_CALL:
     case NodeType::EXPR_STMT:
         // Pure type inference: an expression statement has no binding
         // effect we model (side effects are out of scope).

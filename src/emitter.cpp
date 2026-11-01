@@ -8898,12 +8898,165 @@ void Emitter::emitStmt(const ASTNode &s)
         else if (returnDynamic_) emitReturnDynamic(returnName_);
         else                     emitReturnScalar(returnName_);
         return;
-    case NodeType::EXPR_STMT:
-        // A call evaluated for effect — a void method/function (e.g. a
-        // handle class's in-place mutator), result discarded.
-        if (!s.children.empty() && s.children[0]->type == NodeType::CALL) {
-            line(emitExpr(*s.children[0]) + ";");
+    case NodeType::COMMAND_CALL:
+        if (s.strValue == "clear" || s.strValue == "clc" || s.strValue == "close")
             return;
+        unsupported("command call '" + s.strValue + "'");
+    case NodeType::EXPR_STMT:
+        if (!s.children.empty() && s.children[0]) {
+            const ASTNode &e = *s.children[0];
+            if (e.type == NodeType::IDENTIFIER && !types_.has(e.strValue)
+                && (e.strValue == "clear" || e.strValue == "clc" || e.strValue == "close")) {
+                return;
+            }
+            if (e.type == NodeType::CALL && !e.children.empty()
+                && e.children[0]->type == NodeType::IDENTIFIER) {
+                const std::string &fn = e.children[0]->strValue;
+                const bool shadowed = types_.has(fn)
+                                      || (ctx_ && ctx_->funcs && ctx_->funcs->has(fn));
+                if (!shadowed && fn == "disp" && e.children.size() == 2) {
+                    const ASTNode &arg = *e.children[1];
+                    if (arg.type == NodeType::STRING_LITERAL
+                        || arg.type == NodeType::DQSTRING_LITERAL) {
+                        bool ok = false;
+                        const std::string esc = cEscape(arg.strValue, ok);
+                        if (!ok) unsupported("disp string literal contains non-printable bytes");
+                        line("numkit_rt::disp(\"" + esc + "\");");
+                        return;
+                    }
+                    if (arg.type == NodeType::IDENTIFIER && isArrayVar(arg.strValue)) {
+                        const ArrayInfo &ai = arrays_.at(arg.strValue);
+                        if (ai.is2D) {
+                            line("numkit_rt::disp_mat(" + ai.dataExpr + ", " + ai.rowsVar + ", "
+                                 + ai.colsVar + ");");
+                        } else {
+                            line("numkit_rt::disp_vec(" + ai.dataExpr + ", " + ai.lenVar + ");");
+                        }
+                        return;
+                    }
+                    line("numkit_rt::disp(" + emitExpr(arg) + ");");
+                    return;
+                }
+                if (!shadowed && fn == "fprintf" && e.children.size() >= 2) {
+                    std::size_t fmtIdx = 1;
+                    std::string stream = "stdout";
+                    if (e.children.size() >= 3
+                        && e.children[1]->type == NodeType::NUMBER_LITERAL
+                        && (e.children[1]->numValue == 1.0 || e.children[1]->numValue == 2.0)
+                        && (e.children[2]->type == NodeType::STRING_LITERAL
+                            || e.children[2]->type == NodeType::DQSTRING_LITERAL)) {
+                        fmtIdx = 2;
+                        stream = (e.children[1]->numValue == 2.0) ? "stderr" : "stdout";
+                    }
+                    if (e.children[fmtIdx]->type == NodeType::STRING_LITERAL
+                        || e.children[fmtIdx]->type == NodeType::DQSTRING_LITERAL) {
+                        const std::string &rawFmt = e.children[fmtIdx]->strValue;
+                        std::string cppFmt;
+                        std::vector<char> specKinds;
+                        for (std::size_t i = 0; i < rawFmt.size(); ++i) {
+                            const char c = rawFmt[i];
+                            if (c == '%') {
+                                if (i + 1 < rawFmt.size() && rawFmt[i + 1] == '%') {
+                                    cppFmt += "%%";
+                                    ++i;
+                                    continue;
+                                }
+                                cppFmt += '%';
+                                ++i;
+                                while (i < rawFmt.size()
+                                       && (rawFmt[i] == '-' || rawFmt[i] == '+' || rawFmt[i] == ' '
+                                           || rawFmt[i] == '#' || rawFmt[i] == '0'
+                                           || rawFmt[i] == '.'
+                                           || (rawFmt[i] >= '0' && rawFmt[i] <= '9'))) {
+                                    cppFmt += rawFmt[i++];
+                                }
+                                if (i >= rawFmt.size())
+                                    unsupported("fprintf format ends with incomplete '%'");
+                                const char conv = rawFmt[i];
+                                if (conv == 'd' || conv == 'i') {
+                                    cppFmt += "lld";
+                                    specKinds.push_back('i');
+                                } else if (conv == 'u' || conv == 'x' || conv == 'X'
+                                           || conv == 'o') {
+                                    cppFmt += "ll";
+                                    cppFmt += conv;
+                                    specKinds.push_back('u');
+                                } else if (conv == 'f' || conv == 'F' || conv == 'e' || conv == 'E'
+                                           || conv == 'g' || conv == 'G') {
+                                    cppFmt += conv;
+                                    specKinds.push_back('f');
+                                } else if (conv == 's') {
+                                    cppFmt += 's';
+                                    specKinds.push_back('s');
+                                } else if (conv == 'c') {
+                                    cppFmt += 'c';
+                                    specKinds.push_back('c');
+                                } else {
+                                    unsupported(std::string("fprintf format specifier '%") + conv
+                                                + "'");
+                                }
+                            } else if (c == '\\') {
+                                if (i + 1 < rawFmt.size()) {
+                                    const char nx = rawFmt[i + 1];
+                                    if (nx == 'n' || nx == 't' || nx == 'r' || nx == '\\'
+                                        || nx == '\'' || nx == '"') {
+                                        cppFmt += '\\';
+                                        cppFmt += nx;
+                                        ++i;
+                                        continue;
+                                    }
+                                }
+                                cppFmt += "\\\\";
+                            } else if (c == '"') {
+                                cppFmt += "\\\"";
+                            } else if (c == '\n') {
+                                cppFmt += "\\n";
+                            } else if (c == '\r') {
+                                cppFmt += "\\r";
+                            } else if (c == '\t') {
+                                cppFmt += "\\t";
+                            } else {
+                                cppFmt += c;
+                            }
+                        }
+                        const std::size_t nArgs = e.children.size() - (fmtIdx + 1);
+                        if (nArgs != specKinds.size())
+                            unsupported("fprintf argument count does not match format specifiers");
+                        std::string callStr = "std::fprintf(" + stream + ", \"" + cppFmt + "\"";
+                        for (std::size_t k = 0; k < nArgs; ++k) {
+                            const ASTNode &a = *e.children[fmtIdx + 1 + k];
+                            const char     sk = specKinds[k];
+                            callStr += ", ";
+                            if (sk == 's') {
+                                if (a.type != NodeType::STRING_LITERAL
+                                    && a.type != NodeType::DQSTRING_LITERAL)
+                                    unsupported("fprintf %s requires a string literal argument");
+                                bool ok = false;
+                                const std::string esc = cEscape(a.strValue, ok);
+                                if (!ok) unsupported("fprintf %s literal has non-printable bytes");
+                                callStr += "\"" + esc + "\"";
+                            } else if (sk == 'i') {
+                                callStr += "static_cast<long long>(" + emitExpr(a) + ")";
+                            } else if (sk == 'u') {
+                                callStr += "static_cast<unsigned long long>(" + emitExpr(a) + ")";
+                            } else if (sk == 'c') {
+                                callStr += "static_cast<int>(" + emitExpr(a) + ")";
+                            } else {
+                                callStr += "static_cast<double>(" + emitExpr(a) + ")";
+                            }
+                        }
+                        callStr += ");";
+                        line(callStr);
+                        return;
+                    }
+                }
+            }
+            // A call evaluated for effect — a void method/function (e.g. a
+            // handle class's in-place mutator), result discarded.
+            if (e.type == NodeType::CALL) {
+                line(emitExpr(e) + ";");
+                return;
+            }
         }
         unsupported("expression statement (only a void call is supported)");
     default:
@@ -8919,6 +9072,7 @@ const char *kPrelude =
     "#include <complex>\n"
     "#include <cstddef>\n"
     "#include <cstdint>\n"
+    "#include <cstdio>\n"
     "#include <initializer_list>\n"
     "#include <limits>\n"
     "#include <memory>\n"
@@ -8926,6 +9080,43 @@ const char *kPrelude =
     "#include <vector>\n"
     "\n"
     "namespace numkit_rt {\n"
+    "inline void disp(double x) { std::printf(\"    %.15g\\n\", x); }\n"
+    "inline void disp(float x) { std::printf(\"    %.7g\\n\", static_cast<double>(x)); }\n"
+    "inline void disp(bool b) { std::printf(\"   %d\\n\", b ? 1 : 0); }\n"
+    "inline void disp(std::int8_t x) { std::printf(\"    %d\\n\", static_cast<int>(x)); }\n"
+    "inline void disp(std::int16_t x) { std::printf(\"    %d\\n\", static_cast<int>(x)); }\n"
+    "inline void disp(std::int32_t x) { std::printf(\"    %d\\n\", static_cast<int>(x)); }\n"
+    "inline void disp(std::int64_t x) { std::printf(\"    %lld\\n\", static_cast<long long>(x)); }\n"
+    "inline void disp(std::uint8_t x) { std::printf(\"    %u\\n\", static_cast<unsigned>(x)); }\n"
+    "inline void disp(std::uint16_t x) { std::printf(\"    %u\\n\", static_cast<unsigned>(x)); }\n"
+    "inline void disp(std::uint32_t x) { std::printf(\"    %u\\n\", static_cast<unsigned>(x)); }\n"
+    "inline void disp(std::uint64_t x) { std::printf(\"    %llu\\n\", static_cast<unsigned long long>(x)); }\n"
+    "inline void disp(std::complex<double> z) { std::printf(\"    %.15g %+.15gi\\n\", z.real(), z.imag()); }\n"
+    "inline void disp(const char* s) { std::printf(\"%s\\n\", s); }\n"
+    "template <class T>\n"
+    "inline void disp_vec(const T* p, std::size_t n) {\n"
+    "    for (std::size_t i = 0; i < n; ++i)\n"
+    "        std::printf(\"%s%.15g\", i ? \"  \" : \"    \", static_cast<double>(p[i]));\n"
+    "    std::printf(\"\\n\");\n"
+    "}\n"
+    "inline void disp_vec(const std::complex<double>* p, std::size_t n) {\n"
+    "    for (std::size_t i = 0; i < n; ++i)\n"
+    "        std::printf(\"%s%.15g%+.15gi\", i ? \"  \" : \"    \", p[i].real(), p[i].imag());\n"
+    "    std::printf(\"\\n\");\n"
+    "}\n"
+    "inline void disp_vec(const std::uint16_t* p, std::size_t n) {\n"
+    "    for (std::size_t i = 0; i < n; ++i)\n"
+    "        std::putchar(static_cast<int>(p[i] & 0xFFu));\n"
+    "    std::putchar('\\n');\n"
+    "}\n"
+    "template <class T>\n"
+    "inline void disp_mat(const T* p, std::size_t rows, std::size_t cols) {\n"
+    "    for (std::size_t r = 0; r < rows; ++r) {\n"
+    "        for (std::size_t c = 0; c < cols; ++c)\n"
+    "            std::printf(\"%s%.15g\", c ? \"  \" : \"    \", static_cast<double>(p[r + c * rows]));\n"
+    "        std::printf(\"\\n\");\n"
+    "    }\n"
+    "}\n"
     "// Reference wrapper for a handle class: shared identity + lifetime; the\n"
     "// wrapped object stays a plain struct (no inheritance from shared_ptr).\n"
     "template <class T> class handle {\n"

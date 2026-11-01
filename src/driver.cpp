@@ -102,10 +102,28 @@ auto withPrepared(const std::string &source, const std::string &entry,
     }
     const ClassRegistry *classesPtr = classes.size() > 0 ? &classes : nullptr;
 
+    ASTNode syntheticScriptFn;
+    if (entry.empty() && root->type == NodeType::BLOCK) {
+        auto scriptBody = std::make_unique<ASTNode>();
+        scriptBody->type = NodeType::BLOCK;
+        for (auto &c : root->children) {
+            if (c && c->type != NodeType::FUNCTION_DEF && c->type != NodeType::CLASSDEF_DEF) {
+                scriptBody->children.push_back(std::move(c));
+            }
+        }
+        if (!scriptBody->children.empty()) {
+            syntheticScriptFn.type = NodeType::FUNCTION_DEF;
+            syntheticScriptFn.strValue = "nk_script_main";
+            syntheticScriptFn.children.push_back(std::move(scriptBody));
+        }
+    }
+
     const ASTNode *fn = nullptr;
     if (!entry.empty()) {
         fn = table.find(entry);
         if (!fn) throw std::runtime_error("nk build: no function named '" + entry + "'");
+    } else if (!syntheticScriptFn.children.empty()) {
+        fn = &syntheticScriptFn;
     } else if (table.size() == 1) {
         fn = table.entries().begin()->second;
     } else {
