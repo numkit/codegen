@@ -91,6 +91,20 @@ void collectFunctions(const ASTNode &root, FunctionTable &table)
     if (root.elseBranch) collectFunctions(*root.elseBranch, table);
 }
 
+namespace {
+
+void seedStructParamFields(const std::string &prefix, const StructLayout &layout, TypeEnv &env)
+{
+    for (const auto &f : layout.fields) {
+        const std::string fld = prefix + "_" + f.first;
+        env.set(fld, {f.second, ConstVal::unknown()});
+        if (f.second.isStruct() && f.second.structLayout)
+            seedStructParamFields(fld, *f.second.structLayout, env);
+    }
+}
+
+} // namespace
+
 std::vector<InferredType> inferFunctionReturns(const ASTNode &funcDef,
                                                const std::vector<ArgInfo> &args,
                                                const TransferRegistry &reg,
@@ -106,13 +120,12 @@ std::vector<InferredType> inferFunctionReturns(const ASTNode &funcDef,
     TypeEnv env;
     for (std::size_t i = 0; i < args.size(); ++i) {
         env.set(funcDef.paramNames[i], {args[i].type, args[i].constant});
-        // A STRUCT param also seeds its field-locals (_numkit_fld_<p>_<f>) so the body's `s.f`
-        // reads them -- mirrors emitOneFunction's struct-param explosion (G2.3). Without
-        // this the body's field reads infer Dynamic and the return is mis-typed.
+        // A STRUCT param also seeds its field-locals (_numkit_fld_<p>_<f>...) recursively
+        // so the body's `s.f` and nested `s.a.b` reads resolve them -- mirrors
+        // emitOneFunction's struct-param explosion (G2.3).
         if (args[i].type.isStruct() && args[i].type.structLayout)
-            for (const auto &f : args[i].type.structLayout->fields)
-                env.set("_numkit_fld_" + funcDef.paramNames[i] + "_" + f.first,
-                        {f.second, ConstVal::unknown()});
+            seedStructParamFields("_numkit_fld_" + funcDef.paramNames[i],
+                                  *args[i].type.structLayout, env);
     }
 
     inferStmt(*funcDef.children[0], env, reg, nullptr, classes);

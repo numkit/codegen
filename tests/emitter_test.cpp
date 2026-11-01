@@ -1663,3 +1663,127 @@ TEST(EmitterFn, ImplicitExpansion2D1D)
                      reg),
         std::runtime_error);
 }
+
+TEST(EmitterFn, MultiOutputFunctionsAndMethodsAllContexts)
+{
+    const std::string src =
+        "classdef Stepper\n"
+        "  properties\n"
+        "    pos = 0\n"
+        "  end\n"
+        "  methods\n"
+        "    function obj = Stepper(p0)\n"
+        "      obj.pos = p0;\n"
+        "    end\n"
+        "    function [obj, prev] = step(obj, dx)\n"
+        "      prev = obj.pos;\n"
+        "      obj.pos = obj.pos + dx;\n"
+        "    end\n"
+        "    function [delta, obj] = measure(obj, target)\n"
+        "      delta = target - obj.pos;\n"
+        "      obj.pos = target;\n"
+        "    end\n"
+        "  end\n"
+        "end\n"
+        "function [s, d] = sumdiff(a, b)\n"
+        "  s = a + b;\n"
+        "  d = a - b;\n"
+        "end\n"
+        "function [v, total] = vecAndSum(n)\n"
+        "  v = 1:n;\n"
+        "  total = sum(v);\n"
+        "end\n"
+        "function y = main(x)\n"
+        "  [a, b] = sumdiff(x, 2);\n"
+        "  c = sumdiff(x, 3);\n"
+        "  e = sumdiff(x, 1) * 2;\n"
+        "  w = vecAndSum(4);\n"
+        "  st = Stepper(10);\n"
+        "  [st, p0] = st.step(5);\n"
+        "  st2 = st.step(2);\n"
+        "  m = st2.measure(20) + 1;\n"
+        "  y = a + b + c + e + w(1) + p0 + st2.pos + m;\n"
+        "end\n";
+
+    numkit::Lexer  lex(src);
+    auto           tokens = lex.tokenize();
+    numkit::Parser parser(tokens);
+    auto           root = parser.parse();
+
+    auto          reg = stdReg();
+    ClassRegistry classes;
+    collectClasses(*root, classes, reg);
+    FunctionTable funcs;
+    collectFunctions(*root, funcs);
+    registerClassConstructors(reg, classes);
+    registerClassMethods(reg, classes);
+    registerUserFunctions(reg, funcs);
+
+    const std::string code =
+        emitProgram(*funcs.find("main"), {{"x", kDoubleScalar}}, funcs, reg, &classes).source;
+    // Callee where output `obj` is also an input parameter uses an `_numkit_out_obj` reference
+    // out-param and assigns it in the function epilogue.
+    EXPECT_TRUE(contains(code, "Stepper& _numkit_out_obj"));
+    EXPECT_TRUE(contains(code, "_numkit_out_obj = obj;"));
+    // Multi-assign method call `[st, p0] = st.step(5)`
+    EXPECT_TRUE(contains(code, "Stepper_0_0step_1o0_1d(st, 5.0, st, p0);"));
+    // Single-LHS assignment from a multi-output function and method call
+    EXPECT_TRUE(contains(code, "sumdiff_1d_1d(x, 3.0, c, _numkit_ignore_1);"));
+    EXPECT_TRUE(contains(code, "Stepper_0_0step_1o0_1d(st, 2.0, st2, _numkit_ignore_1);"));
+    // Expression-context multi-output function and method calls via IIFE
+    EXPECT_TRUE(contains(code, "([&]() -> double { double _numkit_mc_"));
+    // Single-LHS assignment from a multi-output function with a leading array output
+    EXPECT_TRUE(contains(code, "w = vecAndSum_1d(4.0, _numkit_ignore_1);"));
+    EXPECT_FALSE(contains(code, "numkit_codegen_rt.h"));
+}
+
+TEST(EmitterFn, NonScalarAndNestedStructFields)
+{
+    const std::string src =
+        "function out = transformCfg(cfg, scale)\n"
+        "  out = cfg;\n"
+        "  out.meta.gain = cfg.meta.gain * scale;\n"
+        "  out.vec = cfg.vec * scale;\n"
+        "  out.mat(1, 2) = cfg.mat(1, 2) + cfg.cube(1, 2, 3) + numel(cfg.vec);\n"
+        "end\n"
+        "function [res, total] = buildAndSum(x)\n"
+        "  cfg.meta.gain = x;\n"
+        "  cfg.vec = linspace(1, 4, 4);\n"
+        "  cfg.mat = ones(2, 3);\n"
+        "  cfg.cube = zeros(2, 2, 2);\n"
+        "  cfg.cube(1, 2, 2) = 5;\n"
+        "  res = transformCfg(cfg, 2);\n"
+        "  total = res.meta.gain + res.vec(2) + res.mat(1, 2) + size(res.mat, 2);\n"
+        "end\n"
+        "function y = main(x)\n"
+        "  [r, t] = buildAndSum(x);\n"
+        "  r_only = buildAndSum(x + 1);\n"
+        "  y = t + r.vec(1) + r_only.meta.gain + r_only.mat(1, 2);\n"
+        "end\n";
+
+    numkit::Lexer  lex(src);
+    auto           tokens = lex.tokenize();
+    numkit::Parser parser(tokens);
+    auto           root = parser.parse();
+
+    auto          reg = stdReg();
+    FunctionTable funcs;
+    collectFunctions(*root, funcs);
+    registerUserFunctions(reg, funcs);
+
+    const std::string code =
+        emitProgram(*funcs.find("main"), {{"x", kDoubleScalar}}, funcs, reg).source;
+    // Nested struct scalar field flattened to `_numkit_fld_<var>_meta_gain`
+    EXPECT_TRUE(contains(code, "_numkit_fld_cfg_meta_gain"));
+    EXPECT_TRUE(contains(code, "_numkit_fld_out_meta_gain"));
+    // Array struct fields passed as pointer+dims on input and `std::vector<double>&` on output
+    EXPECT_TRUE(contains(code, "const double* _numkit_fld_cfg_vec, std::size_t _numkit_fld_0cfg_0vec_len"));
+    EXPECT_TRUE(contains(code, "const double* _numkit_fld_cfg_mat, std::size_t _numkit_fld_0cfg_0mat_rows, std::size_t _numkit_fld_0cfg_0mat_cols"));
+    EXPECT_TRUE(contains(code, "std::vector<double>& _numkit_fld_out_vec"));
+    EXPECT_TRUE(contains(code, "std::vector<double>& _numkit_fld_out_mat"));
+    EXPECT_TRUE(contains(code, "std::vector<double>& _numkit_fld_out_cube"));
+    // Companion names never produce reserved double underscores `__`
+    EXPECT_FALSE(contains(code, "_numkit__"));
+    EXPECT_FALSE(contains(code, "numkit_codegen_rt.h"));
+}
+

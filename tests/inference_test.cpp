@@ -7,7 +7,9 @@
 // matter: constant propagation into shape (n=5 -> zeros(n) is 5x5) and
 // scalar element access (x(i) is an unboxed scalar).
 
+#include <numkit/codegen/classinfo.hpp>
 #include <numkit/codegen/inference.hpp>
+#include <numkit/codegen/monomorphize.hpp>
 #include <numkit/codegen/transfer.hpp>
 
 #include <numkit/core/lexer.hpp>
@@ -215,3 +217,133 @@ TEST(Inference, ElementwiseMathPreservesArrayShape)
     EXPECT_EQ(s.type.shape.rows, 1u);
     EXPECT_EQ(s.type.shape.cols, 8u);
 }
+
+// Nested and non-scalar struct fields: local writes, reads, array element
+// indexing, and whole-struct copies preserve nested struct layouts and
+// 1-D / 2-D / N-D array shapes.
+TEST(Inference, NestedAndArrayStructFields)
+{
+    const auto env = inferSrc(
+        "s.scalar = 42;\n"
+        "s.vec = linspace(0, 1, 8);\n"
+        "s.mat = zeros(2, 3);\n"
+        "s.inner.cube = ones(2, 3, 4);\n"
+        "s.inner.deep.val = 7;\n"
+        "elem1 = s.vec(3);\n"
+        "elem2 = s.mat(1, 2);\n"
+        "elem3 = s.inner.cube(1, 2, 3);\n"
+        "deepv = s.inner.deep.val;\n"
+        "copy = s;\n"
+        "copy_elem = copy.inner.cube(2, 1, 1);\n");
+
+    const auto sType = env.get("s").type;
+    ASSERT_TRUE(sType.isStruct());
+    ASSERT_NE(sType.structLayout, nullptr);
+    EXPECT_TRUE(sType.structLayout->field("scalar") != nullptr);
+    EXPECT_TRUE(sType.structLayout->field("vec") != nullptr);
+    EXPECT_TRUE(sType.structLayout->field("mat") != nullptr);
+    EXPECT_TRUE(sType.structLayout->field("inner") != nullptr);
+
+    const InferredType *vecT = sType.structLayout->field("vec");
+    ASSERT_NE(vecT, nullptr);
+    EXPECT_EQ(vecT->shape.kind, ShapeKind::KnownDims);
+    EXPECT_EQ(vecT->shape.rows, 1u);
+    EXPECT_EQ(vecT->shape.cols, 8u);
+
+    const InferredType *matT = sType.structLayout->field("mat");
+    ASSERT_NE(matT, nullptr);
+    EXPECT_EQ(matT->shape.kind, ShapeKind::KnownDims);
+    EXPECT_EQ(matT->shape.rows, 2u);
+    EXPECT_EQ(matT->shape.cols, 3u);
+
+    const InferredType *innerT = sType.structLayout->field("inner");
+    ASSERT_NE(innerT, nullptr);
+    ASSERT_TRUE(innerT->isStruct());
+    ASSERT_NE(innerT->structLayout, nullptr);
+    const InferredType *cubeT = innerT->structLayout->field("cube");
+    ASSERT_NE(cubeT, nullptr);
+    EXPECT_TRUE(cubeT->shape.isNDims());
+    ASSERT_EQ(cubeT->shape.nd.size(), 3u);
+    EXPECT_EQ(cubeT->shape.nd[0], 2u);
+    EXPECT_EQ(cubeT->shape.nd[1], 3u);
+    EXPECT_EQ(cubeT->shape.nd[2], 4u);
+
+    EXPECT_TRUE(env.get("elem1").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("elem2").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("elem3").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("deepv").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("copy").type.isStruct());
+    EXPECT_TRUE(env.get("copy_elem").type.isUnboxableScalar());
+}
+
+// Multi-output user functions and class methods infer across multi-assign,
+// single-LHS assignment, and expression contexts.
+TEST(Inference, MultiOutputFunctionAndMethodContexts)
+{
+    const std::string src =
+        "classdef Counter\n"
+        "  properties\n"
+        "    x = 0\n"
+        "  end\n"
+        "  methods\n"
+        "    function obj = Counter(v)\n"
+        "      obj.x = v;\n"
+        "    end\n"
+        "    function [obj, prev] = step(obj, dx)\n"
+        "      prev = obj.x;\n"
+        "      obj.x = obj.x + dx;\n"
+        "    end\n"
+        "    function [val, obj] = readAndStep(obj, dx)\n"
+        "      val = obj.x;\n"
+        "      obj.x = obj.x + dx;\n"
+        "    end\n"
+        "  end\n"
+        "end\n"
+        "function [s, d] = sumdiff(a, b)\n"
+        "  s = a + b;\n"
+        "  d = a - b;\n"
+        "end\n"
+        "function y = main()\n"
+        "  [u, v] = sumdiff(5, 2);\n"
+        "  first_fn = sumdiff(5, 2);\n"
+        "  expr_fn = sumdiff(5, 2) + 10;\n"
+        "  c = Counter(3);\n"
+        "  [c, p] = c.step(4);\n"
+        "  c2 = c.step(1);\n"
+        "  expr_m = c.readAndStep(2) * 3;\n"
+        "  y = u + v + first_fn + expr_fn + p + c2.x + expr_m;\n"
+        "end\n";
+
+    numkit::Lexer  lex(src);
+    auto           tokens = lex.tokenize();
+    numkit::Parser parser(tokens);
+    auto           root = parser.parse();
+
+    TransferRegistry reg;
+    registerStandardTransfers(reg);
+    ClassRegistry classes;
+    collectClasses(*root, classes, reg);
+    FunctionTable funcs;
+    collectFunctions(*root, funcs);
+    registerClassConstructors(reg, classes);
+    registerClassMethods(reg, classes);
+    registerUserFunctions(reg, funcs);
+
+    const numkit::ASTNode *mainFn = funcs.find("main");
+    ASSERT_NE(mainFn, nullptr);
+    ASSERT_GE(mainFn->children.size(), 1u);
+
+    TypeEnv env;
+    inferStmt(*mainFn->children[0], env, reg, nullptr, &classes);
+
+    EXPECT_TRUE(env.get("u").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("v").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("first_fn").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("expr_fn").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("c").type.isObject());
+    EXPECT_TRUE(env.get("p").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("c2").type.isObject());
+    EXPECT_TRUE(env.get("expr_m").type.isUnboxableScalar());
+    EXPECT_TRUE(env.get("y").type.isUnboxableScalar());
+}
+

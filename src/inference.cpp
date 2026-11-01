@@ -5,6 +5,7 @@
 #include <numkit/codegen/classinfo.hpp>
 #include <numkit/codegen/monomorphize.hpp>  // FunctionTable (user-fn lookup for `c = f(x)`)
 
+#include <algorithm>
 #include <vector>
 
 namespace numkit::codegen {
@@ -133,6 +134,71 @@ std::string structFieldLocal(const ASTNode &fa)
     return "_numkit_fld_" + n->strValue + suffix;
 }
 
+bool extractStructFieldChain(const ASTNode &fa, std::string &rootVar,
+                             std::vector<std::string> &path)
+{
+    path.clear();
+    const ASTNode *n = &fa;
+    for (;;) {
+        std::string field;
+        if (n->type == NodeType::FIELD_ACCESS) {
+            field = n->strValue;
+        } else if (n->type == NodeType::DYNAMIC_FIELD_ACCESS && n->children.size() == 2
+                   && n->children[1] && n->children[1]->type == NodeType::STRING_LITERAL) {
+            field = n->children[1]->strValue;
+        } else {
+            break;
+        }
+        if (n->children.empty() || !n->children[0]) return false;
+        path.push_back(field);
+        n = n->children[0].get();
+    }
+    if (n->type != NodeType::IDENTIFIER || path.empty()) return false;
+    std::reverse(path.begin(), path.end());
+    rootVar = n->strValue;
+    return true;
+}
+
+InferredType setNestedStructField(const InferredType &curStruct,
+                                  const std::vector<std::string> &path,
+                                  std::size_t depth,
+                                  const InferredType &leafType)
+{
+    auto layout = std::make_shared<StructLayout>();
+    if (curStruct.isStruct() && curStruct.structLayout)
+        layout->fields = curStruct.structLayout->fields;
+    const std::string &fname  = path[depth];
+    const bool         isLast = (depth + 1 == path.size());
+    bool               found  = false;
+    for (auto &fp : layout->fields) {
+        if (fp.first == fname) {
+            fp.second = isLast ? leafType
+                               : setNestedStructField(fp.second, path, depth + 1, leafType);
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        const InferredType childType =
+            isLast ? leafType
+                   : setNestedStructField(InferredType::dynamic(), path, depth + 1, leafType);
+        layout->fields.emplace_back(fname, childType);
+    }
+    return InferredType::structOf(std::move(layout));
+}
+
+const InferredType *lookupNestedStructField(const InferredType &rootStruct,
+                                            const std::vector<std::string> &path)
+{
+    const InferredType *cur = &rootStruct;
+    for (const std::string &fname : path) {
+        if (!cur->isStruct() || !cur->structLayout) return nullptr;
+        cur = cur->structLayout->field(fname);
+        if (!cur) return nullptr;
+    }
+    return cur;
+}
+
 } // namespace
 
 AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
@@ -216,7 +282,17 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
         // classdef path.
         if (!base.type.isObject()) {
             const std::string fld = structFieldLocal(expr);
-            if (!fld.empty()) return env.has(fld) ? env.get(fld) : AbstractValue::dynamic();
+            if (!fld.empty()) {
+                if (env.has(fld)) return env.get(fld);
+                std::string              rootVar;
+                std::vector<std::string> path;
+                if (extractStructFieldChain(expr, rootVar, path)) {
+                    if (const InferredType *ft =
+                            lookupNestedStructField(env.get(rootVar).type, path))
+                        return {*ft, ConstVal::unknown()};
+                }
+                return AbstractValue::dynamic();
+            }
         }
         // Object field (classdef): typed only with a class registry + known field;
         // otherwise Dynamic (sound — non-class code, or a handle we cannot class).
@@ -406,17 +482,32 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
                 }
                 return indexResult(base, argVals);
             }
-            return {reg.apply(name, argInfos), ConstVal::unknown()};
+            InferredType rt = reg.apply(name, argInfos);
+            if (rt.isDynamic() && reg.userFunctions() && reg.userFunctions()->has(name)) {
+                const std::vector<InferredType> outs = reg.applyMulti(name, argInfos);
+                if (outs.size() > 1) rt = outs[0];
+            }
+            return {rt, ConstVal::unknown()};
         }
-        // s.v(k): indexing a struct array FIELD (field-flattening). The callee is
+        // s.v(k) / s.a.v(k): indexing a struct array FIELD (field-flattening). The callee is
         // FIELD_ACCESS on a non-object base var -> index the field-local array.
         // (An object method obj.m(args) falls through to the method path below.)
-        if (callee.type == NodeType::FIELD_ACCESS && !callee.children.empty()
-            && callee.children[0]->type == NodeType::IDENTIFIER
+        if ((callee.type == NodeType::FIELD_ACCESS
+             || callee.type == NodeType::DYNAMIC_FIELD_ACCESS)
+            && !callee.children.empty()
             && !inferExpr(*callee.children[0], env, reg, classes).type.isObject()) {
-            const std::string fld =
-                "_numkit_fld_" + callee.children[0]->strValue + "_" + callee.strValue;
-            return env.has(fld) ? indexResult(env.get(fld), argVals) : AbstractValue::dynamic();
+            const std::string fld = structFieldLocal(callee);
+            if (!fld.empty()) {
+                if (env.has(fld)) return indexResult(env.get(fld), argVals);
+                std::string              rootVar;
+                std::vector<std::string> path;
+                if (extractStructFieldChain(callee, rootVar, path)) {
+                    if (const InferredType *ft =
+                            lookupNestedStructField(env.get(rootVar).type, path))
+                        return indexResult({*ft, ConstVal::unknown()}, argVals);
+                }
+                return AbstractValue::dynamic();
+            }
         }
         // Method call `obj.m(args)`: callee is FIELD_ACCESS. Resolve the
         // object's class, prepend the object as the implicit first argument,
@@ -430,7 +521,13 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
             withSelf.reserve(argInfos.size() + 1);
             withSelf.push_back(base.asArg());
             for (const auto &ai : argInfos) withSelf.push_back(ai);
-            return {reg.apply(ci->name + "::" + callee.strValue, withSelf), ConstVal::unknown()};
+            const std::string mkey = ci->name + "::" + callee.strValue;
+            InferredType      rt   = reg.apply(mkey, withSelf);
+            if (rt.isDynamic()) {
+                const std::vector<InferredType> outs = reg.applyMulti(mkey, withSelf);
+                if (outs.size() > 1) rt = outs[0];
+            }
+            return {rt, ConstVal::unknown()};
         }
         // Other non-identifier callee (chained / expression callee) — deferred.
         return AbstractValue::dynamic();
@@ -668,6 +765,35 @@ void recordDecl(DeclTypeRecorder *declOut, const std::string &name,
     (*declOut)[name] = (it == declOut->end()) ? t : join(it->second, t);
 }
 
+void seedStructFields(const std::string &prefix, const StructLayout &layout,
+                      TypeEnv &env, DeclTypeRecorder *declOut)
+{
+    for (const auto &f : layout.fields) {
+        const std::string fld = prefix + "_" + f.first;
+        env.set(fld, {f.second, ConstVal::unknown()});
+        recordDecl(declOut, fld, f.second);
+        if (f.second.isStruct() && f.second.structLayout)
+            seedStructFields(fld, *f.second.structLayout, env, declOut);
+    }
+}
+
+void syncIntermediateStructLocals(const std::string &rootVar,
+                                  const std::vector<std::string> &path,
+                                  const InferredType &rootType,
+                                  TypeEnv &env, DeclTypeRecorder *declOut)
+{
+    std::string         prefix = "_numkit_fld_" + rootVar;
+    const InferredType *cur    = &rootType;
+    for (std::size_t d = 0; d + 1 < path.size(); ++d) {
+        if (!cur->isStruct() || !cur->structLayout) break;
+        cur = cur->structLayout->field(path[d]);
+        if (!cur) break;
+        prefix += "_" + path[d];
+        env.set(prefix, {*cur, ConstVal::unknown()});
+        recordDecl(declOut, prefix, *cur);
+    }
+}
+
 // Conservatively mark every variable assigned anywhere within `node` as
 // Dynamic (used for statement kinds the straight-line driver does not
 // model precisely yet — try/catch, function defs, etc.). Sound.
@@ -710,126 +836,26 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
         if (stmt.children.size() != 2) return;
         const ASTNode &lhs = *stmt.children[0];
         const AbstractValue rhs = inferExpr(*stmt.children[1], env, reg, classes);
+        AbstractValue rv = rhs;
+        {
+            const ASTNode &rn       = *stmt.children[1];
+            bool           emptyMat = rn.type == NodeType::MATRIX_LITERAL;
+            if (emptyMat)
+                for (const auto &row : rn.children)
+                    if (row && !row->children.empty()) { emptyMat = false; break; }
+            if (emptyMat)
+                rv = {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
+                      ConstVal::unknown()};
+        }
         if (lhs.type == NodeType::IDENTIFIER) {
-            AbstractValue rv = rhs;
-            // `c = f(x)` where f is a co-compiled MULTI-output USER function: MATLAB binds c
-            // to f's FIRST output. inferExpr projects a multi-out fn to Dynamic (the single-
-            // output transfer); recover the precise first-output type here so c hoists typed
-            // and the emit can bind it (emitAssign mirrors this). Scoped to a DIRECT call to a
-            // USER fn -- a builtin (size/max) has its own single-output semantics, and a NESTED
-            // f(x) sub-expression stays Dynamic (the emit cannot use a void multi-out spec as a
-            // value there) -> sound fallback.
-            if (rv.type.isDynamic()) {
-                const ASTNode &rn = *stmt.children[1];
-                if (rn.type == NodeType::CALL && !rn.children.empty() && rn.children[0]
-                    && rn.children[0]->type == NodeType::IDENTIFIER
-                    && !env.has(rn.children[0]->strValue) && reg.userFunctions()
-                    && reg.userFunctions()->has(rn.children[0]->strValue)) {
-                    std::vector<ArgInfo> ats;
-                    for (std::size_t i = 1; i < rn.children.size(); ++i)
-                        ats.push_back(inferExpr(*rn.children[i], env, reg, classes).asArg());
-                    const std::vector<InferredType> outs =
-                        reg.applyMulti(rn.children[0]->strValue, ats);
-                    if (outs.size() > 1) rv = {outs[0], ConstVal::unknown()};
-                }
-            }
-            // x = [] : MATLAB's empty matrix is 0x0 double. Type it as a growable DOUBLE 1-D
-            // (Unknown length) so a later x(i)=v / x(end+1)=v GROWS it -- otherwise [] (which
-            // infers Dynamic) would poison x's decl join to Dynamic and block the loop-build
-            // idiom. Localized to `x = []`; other [] uses (max(A,[],dim)) stay Dynamic.
-            {
-                const ASTNode &rn       = *stmt.children[1];
-                bool           emptyMat = rn.type == NodeType::MATRIX_LITERAL;
-                if (emptyMat)
-                    for (const auto &row : rn.children)
-                        if (row && !row->children.empty()) { emptyMat = false; break; }
-                if (emptyMat)
-                    rv = {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                          ConstVal::unknown()};
-            }
             env.set(lhs.strValue, rv);
             recordDecl(declOut, lhs.strValue, rv.type);
-            // A struct-valued assignment (t = structReturningCall()) also DECLARES the
-            // per-field locals (_numkit_fld_t_<f>) so they hoist and t.f reads work, and seeds
-            // them -- the caller-receipt (G2.4) passes them as the callee's out-param refs.
+            // A struct-valued assignment (t = structReturningCall() or t = s) also DECLARES
+            // all leaf per-field locals (_numkit_fld_t_<f>...) recursively so they hoist and
+            // field reads work.
             if (rv.type.isStruct() && rv.type.structLayout)
-                for (const auto &f : rv.type.structLayout->fields) {
-                    const std::string fld = "_numkit_fld_" + lhs.strValue + "_" + f.first;
-                    env.set(fld, {f.second, ConstVal::unknown()});
-                    recordDecl(declOut, fld, f.second);
-                }
-        } else if (!lhs.children.empty()
-                   && lhs.children[0]->type == NodeType::IDENTIFIER) {
-            const std::string  &base = lhs.children[0]->strValue;
-            const AbstractValue cur  = env.get(base);
-            if (lhs.type == NodeType::FIELD_ACCESS && cur.type.isObject()) {
-                // Writing a field (`obj.f = rhs`) leaves the object's class
-                // unchanged — do NOT clobber the base to Dynamic.
-                recordDecl(declOut, base, cur.type);
-            } else if (lhs.type == NodeType::FIELD_ACCESS
-                       || (lhs.type == NodeType::DYNAMIC_FIELD_ACCESS && lhs.children.size() == 2
-                           && lhs.children[1]
-                           && lhs.children[1]->type == NodeType::STRING_LITERAL)) {
-                // Plain struct: flatten `s.f = rhs` (or `s.('f') = rhs`, a CONSTANT dynamic
-                // field -- G2.6) to a synthesized scalar field-local (field-flattening), AND
-                // accumulate s's STRUCT type (field f -> rhs's type) so a WHOLESALE reference to
-                // `s` (e.g. a call argument) can be typed and passed across the ABI (G2). The two
-                // coexist: `s.f` reads the field-local; bare `s` reads the STRUCT type. The
-                // struct local is virtual -- the emit hoist skips it (its fields ARE the locals).
-                const std::string fieldName = (lhs.type == NodeType::FIELD_ACCESS)
-                                                  ? lhs.strValue
-                                                  : lhs.children[1]->strValue;
-                const std::string fld = "_numkit_fld_" + base + "_" + fieldName;
-                env.set(fld, rhs);
-                recordDecl(declOut, fld, rhs.type);
-                auto layout = std::make_shared<StructLayout>();
-                if (cur.type.isStruct() && cur.type.structLayout)
-                    layout->fields = cur.type.structLayout->fields;  // extend the existing layout
-                bool found = false;
-                for (auto &fp : layout->fields)
-                    if (fp.first == fieldName) { fp.second = rhs.type; found = true; break; }
-                if (!found) layout->fields.emplace_back(fieldName, rhs.type);
-                const InferredType st = InferredType::structOf(std::move(layout));
-                env.set(base, {st, ConstVal::unknown()});
-                recordDecl(declOut, base, st);
-            } else if (cur.type.isConcrete() && rhs.type.isConcrete()
-                       && cur.type.dtype == rhs.type.dtype) {
-                // Indexed assign x(i)=rhs: base keeps its dtype. A 1-D x(i)=v
-                // may grow the vector -> Unknown shape. A 2-D subscript
-                // A(i,j)=v on a KnownDims matrix does NOT change its dims (the
-                // codegen is fixed-size — an out-of-range write throws, never
-                // grows), so its 2-D shape is preserved.
-                const std::size_t nidx   = lhs.children.size() - 1;
-                const bool        keep2D = nidx == 2
-                                    && cur.type.shape.kind == ShapeKind::KnownDims;
-                // A rank-N subscript write on a ranked matrix likewise keeps
-                // its dims (fixed-size; out-of-range throws, never grows).
-                const bool keepND = cur.type.shape.isNDims() && nidx == cur.type.shape.ndRank();
-                // A bare-colon whole-array write `A(:) = rhs` fills in place -- it never
-                // changes the shape (1-D length / 2-D / N-D dims preserved), so keep it.
-                const bool keepColon = nidx == 1 && lhs.children[1]
-                                       && lhs.children[1]->type == NodeType::COLON_EXPR
-                                       && lhs.children[1]->children.empty();
-                // A LOGICAL-array mask write `A(A>0) = c` scatters into EXISTING elements --
-                // it cannot grow A (unlike a numeric linear index, which can), so it preserves
-                // shape. Detect via the subscript inferring a concrete non-scalar LOGICAL array.
-                bool keepMask = false;
-                if (nidx == 1 && lhs.children[1]) {
-                    const InferredType st =
-                        inferExpr(*lhs.children[1], env, reg, classes).type;
-                    keepMask = st.isConcrete() && st.dtype == ValueType::LOGICAL
-                               && !st.shape.isScalar();
-                }
-                const Shape sh = (keep2D || keepND || keepColon || keepMask)
-                                     ? cur.type.shape
-                                     : Shape::unknown();
-                env.set(base, {InferredType::concrete(cur.type.dtype, sh), ConstVal::unknown()});
-                recordDecl(declOut, base, env.get(base).type);
-            } else {
-                // Differing dtype / unknown base or rhs -> conservative.
-                env.set(base, AbstractValue::dynamic());
-                recordDecl(declOut, base, env.get(base).type);
-            }
+                seedStructFields("_numkit_fld_" + lhs.strValue, *rv.type.structLayout, env,
+                                 declOut);
         } else if (lhs.type == NodeType::FIELD_ACCESS && !lhs.children.empty()
                    && lhs.children[0]->type == NodeType::CALL
                    && !lhs.children[0]->children.empty()
@@ -844,17 +870,99 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                 env.set(fld, {at, ConstVal::unknown()});
                 recordDecl(declOut, fld, at);
             }
-        } else if (lhs.type == NodeType::FIELD_ACCESS && !lhs.children.empty()) {
-            // Nested plain-struct field write s.a.b = rhs: children[0] is itself a
-            // FIELD_ACCESS, so the single-level branch above (children[0]==IDENTIFIER)
-            // missed it. Flatten to the leaf field-local via the chain helper, unless
-            // the chain is rooted at an object.
-            const AbstractValue ibase = inferExpr(*lhs.children[0], env, reg, classes);
-            if (!ibase.type.isObject()) {
-                const std::string fld = structFieldLocal(lhs);
-                if (!fld.empty()) {
-                    env.set(fld, rhs);
-                    recordDecl(declOut, fld, rhs.type);
+        } else if (lhs.type == NodeType::FIELD_ACCESS
+                   || lhs.type == NodeType::DYNAMIC_FIELD_ACCESS) {
+            if (!lhs.children.empty() && lhs.children[0]->type == NodeType::IDENTIFIER
+                && env.get(lhs.children[0]->strValue).type.isObject()) {
+                // Writing a field (`obj.f = rhs`) leaves the object's class
+                // unchanged — do NOT clobber the base to Dynamic.
+                recordDecl(declOut, lhs.children[0]->strValue,
+                           env.get(lhs.children[0]->strValue).type);
+            } else if (!lhs.children.empty()
+                       && !inferExpr(*lhs.children[0], env, reg, classes).type.isObject()) {
+                // Plain struct (single-level `s.f = rhs`, constant dynamic `s.('f') = rhs`, or
+                // nested chain `s.a.b = rhs`): flatten to `_numkit_fld_...` and update the root
+                // struct's nested StructLayout so wholesale struct passing/returning sees all
+                // scalar, array, and nested struct fields.
+                std::string              rootVar;
+                std::vector<std::string> path;
+                const std::string        fld = structFieldLocal(lhs);
+                if (!fld.empty() && extractStructFieldChain(lhs, rootVar, path)
+                    && !env.get(rootVar).type.isObject()) {
+                    env.set(fld, rv);
+                    recordDecl(declOut, fld, rv.type);
+                    if (rv.type.isStruct() && rv.type.structLayout)
+                        seedStructFields(fld, *rv.type.structLayout, env, declOut);
+                    const InferredType st =
+                        setNestedStructField(env.get(rootVar).type, path, 0, rv.type);
+                    env.set(rootVar, {st, ConstVal::unknown()});
+                    recordDecl(declOut, rootVar, st);
+                    syncIntermediateStructLocals(rootVar, path, st, env, declOut);
+                }
+            }
+        } else if (!lhs.children.empty()) {
+            // Indexed assign: either `x(i) = rhs` on an identifier or `s.v(i) = rhs` / `s.a.v(i,j) = rhs`
+            // on a flattened struct array field.
+            std::string              base;
+            std::string              structRoot;
+            std::vector<std::string> structPath;
+            bool                     isStructFld = false;
+            if (lhs.children[0]->type == NodeType::IDENTIFIER) {
+                base = lhs.children[0]->strValue;
+            } else if ((lhs.children[0]->type == NodeType::FIELD_ACCESS
+                        || lhs.children[0]->type == NodeType::DYNAMIC_FIELD_ACCESS)
+                       && extractStructFieldChain(*lhs.children[0], structRoot, structPath)
+                       && !env.get(structRoot).type.isObject()) {
+                base        = structFieldLocal(*lhs.children[0]);
+                isStructFld = !base.empty();
+            }
+            if (!base.empty()) {
+                const AbstractValue cur = env.get(base);
+                if (cur.type.isConcrete() && rhs.type.isConcrete()
+                    && cur.type.dtype == rhs.type.dtype) {
+                    const std::size_t nidx   = lhs.children.size() - 1;
+                    const bool        keep2D = nidx == 2
+                                        && cur.type.shape.kind == ShapeKind::KnownDims;
+                    const bool keepND =
+                        cur.type.shape.isNDims() && nidx == cur.type.shape.ndRank();
+                    const bool keepColon = nidx == 1 && lhs.children[1]
+                                           && lhs.children[1]->type == NodeType::COLON_EXPR
+                                           && lhs.children[1]->children.empty();
+                    bool keepMask = false;
+                    if (nidx == 1 && lhs.children[1]) {
+                        const InferredType st =
+                            inferExpr(*lhs.children[1], env, reg, classes).type;
+                        keepMask = st.isConcrete() && st.dtype == ValueType::LOGICAL
+                                   && !st.shape.isScalar();
+                    }
+                    const Shape sh = (keep2D || keepND || keepColon || keepMask)
+                                         ? cur.type.shape
+                                         : Shape::unknown();
+                    const InferredType newT = InferredType::concrete(cur.type.dtype, sh);
+                    env.set(base, {newT, ConstVal::unknown()});
+                    recordDecl(declOut, base, newT);
+                    if (isStructFld) {
+                        const InferredType st =
+                            setNestedStructField(env.get(structRoot).type, structPath, 0, newT);
+                        env.set(structRoot, {st, ConstVal::unknown()});
+                        recordDecl(declOut, structRoot, st);
+                        syncIntermediateStructLocals(structRoot, structPath, st, env, declOut);
+                    }
+                } else if (isStructFld && !env.has(base) && lhs.children.size() == 2
+                           && rhs.type.isConcrete() && rhs.type.shape.isScalar()) {
+                    // Growable 1-D struct array field built by indexed stores `s.v(i) = val`.
+                    const InferredType newT =
+                        InferredType::concrete(rhs.type.dtype, Shape::unknown());
+                    env.set(base, {newT, ConstVal::unknown()});
+                    recordDecl(declOut, base, newT);
+                    const InferredType st =
+                        setNestedStructField(env.get(structRoot).type, structPath, 0, newT);
+                    env.set(structRoot, {st, ConstVal::unknown()});
+                    recordDecl(declOut, structRoot, st);
+                    syncIntermediateStructLocals(structRoot, structPath, st, env, declOut);
+                } else {
+                    env.set(base, AbstractValue::dynamic());
+                    recordDecl(declOut, base, env.get(base).type);
                 }
             }
         }
@@ -962,10 +1070,9 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
     }
 
     case NodeType::MULTI_ASSIGN: {
-        // [a, b, ...] = f(args). Type each simple-identifier target from the
-        // call's corresponding output. Complex lvalue targets (lhsTargets),
-        // or a RHS that is not a bare-name user-function call, fall back to
-        // conservative Dynamic.
+        // [a, b, ...] = f(args) or [a, b, ...] = obj.m(args). Type each simple-identifier
+        // target from the call's corresponding output. Complex lvalue targets (lhsTargets),
+        // or an unrecognized RHS, fall back to conservative Dynamic.
         if (stmt.children.empty() || !stmt.lhsTargets.empty()) {
             markAssignedDynamic(stmt, env, declOut);
             return;
@@ -979,6 +1086,21 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             for (std::size_t i = 1; i < rhs.children.size(); ++i)
                 argInfos.push_back(inferExpr(*rhs.children[i], env, reg, classes).asArg());
             outs = reg.applyMulti(rhs.children[0]->strValue, argInfos);
+        } else if (rhs.type == NodeType::CALL && !rhs.children.empty()
+                   && rhs.children[0]->type == NodeType::FIELD_ACCESS && classes
+                   && !rhs.children[0]->children.empty()) {
+            const AbstractValue base = inferExpr(*rhs.children[0]->children[0], env, reg, classes);
+            if (base.type.isObject()) {
+                const ClassInfo *ci = classes->byId(base.type.classId);
+                if (ci && ci->method(rhs.children[0]->strValue)) {
+                    std::vector<ArgInfo> withSelf;
+                    withSelf.reserve(rhs.children.size());
+                    withSelf.push_back(base.asArg());
+                    for (std::size_t i = 1; i < rhs.children.size(); ++i)
+                        withSelf.push_back(inferExpr(*rhs.children[i], env, reg, classes).asArg());
+                    outs = reg.applyMulti(ci->name + "::" + rhs.children[0]->strValue, withSelf);
+                }
+            }
         }
         for (std::size_t i = 0; i < stmt.returnNames.size(); ++i) {
             const std::string &rn = stmt.returnNames[i];
@@ -986,6 +1108,8 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             const InferredType t = (i < outs.size()) ? outs[i] : InferredType::dynamic();
             env.set(rn, {t, ConstVal::unknown()});
             recordDecl(declOut, rn, t);
+            if (t.isStruct() && t.structLayout)
+                seedStructFields("_numkit_fld_" + rn, *t.structLayout, env, declOut);
         }
         return;
     }

@@ -194,6 +194,7 @@ struct ArrayInfo {
                                          // `<name>_dN` size_t vars hoisted at fn entry and
                                          // set from the zeros/ones args at the assignment
                                          // (vs a const-dim local, whose ndDims are literals)
+    bool        isRefParam = false;  // a `std::vector<T>&` reference out-param (do not hoist)
 };
 
 // A 2-D matrix type (KnownDims with both dims > 1): indexed A(i,j),
@@ -251,6 +252,74 @@ std::string structFieldLocal(const ASTNode &fa)
     }
     if (n->type != NodeType::IDENTIFIER) return "";
     return "_numkit_fld_" + n->strValue + suffix;
+}
+
+// Extract the root struct variable and ordered field chain for a flattenable field
+// access `s.a.b` (rootOut = "s", chainOut = {"a", "b"}).
+bool extractStructFieldChain(const ASTNode &fa, std::string &rootOut,
+                             std::vector<std::string> &chainOut)
+{
+    chainOut.clear();
+    const ASTNode *n = &fa;
+    for (;;) {
+        std::string field;
+        if (n->type == NodeType::FIELD_ACCESS) {
+            field = n->strValue;
+        } else if (n->type == NodeType::DYNAMIC_FIELD_ACCESS && n->children.size() == 2
+                   && n->children[1] && n->children[1]->type == NodeType::STRING_LITERAL) {
+            field = n->children[1]->strValue;
+        } else {
+            break;
+        }
+        if (n->children.empty() || !n->children[0]) return false;
+        chainOut.push_back(field);
+        n = n->children[0].get();
+    }
+    if (n->type != NodeType::IDENTIFIER || chainOut.empty()) return false;
+    std::reverse(chainOut.begin(), chainOut.end());
+    rootOut = n->strValue;
+    return true;
+}
+
+void setNestedStructField(StructLayout &layout, const std::vector<std::string> &chain,
+                          std::size_t idx, const InferredType &leafType)
+{
+    const std::string &fname = chain[idx];
+    if (idx + 1 == chain.size()) {
+        for (auto &fp : layout.fields) {
+            if (fp.first == fname) {
+                fp.second = leafType;
+                return;
+            }
+        }
+        layout.fields.emplace_back(fname, leafType);
+        return;
+    }
+    for (auto &fp : layout.fields) {
+        if (fp.first == fname) {
+            auto sub = std::make_shared<StructLayout>();
+            if (fp.second.isStruct() && fp.second.structLayout)
+                sub->fields = fp.second.structLayout->fields;
+            setNestedStructField(*sub, chain, idx + 1, leafType);
+            fp.second = InferredType::structOf(std::move(sub));
+            return;
+        }
+    }
+    auto sub = std::make_shared<StructLayout>();
+    setNestedStructField(*sub, chain, idx + 1, leafType);
+    layout.fields.emplace_back(fname, InferredType::structOf(std::move(sub)));
+}
+
+void syncIntermediateStructLocals(const std::string &prefix, const StructLayout &layout,
+                                  TypeEnv &env)
+{
+    for (const auto &f : layout.fields) {
+        if (f.second.isStruct() && f.second.structLayout) {
+            const std::string fld = prefix + "_" + f.first;
+            env.set(fld, {f.second, ConstVal::unknown()});
+            syncIntermediateStructLocals(fld, *f.second.structLayout, env);
+        }
+    }
 }
 
 // A concrete numeric/logical buffer of non-scalar shape (raw-buffer array).
@@ -633,7 +702,8 @@ std::string mangle(const std::string &base, const std::vector<InferredType> &arg
 // base is escaped so a name like `x_` cannot form a reserved "__".
 std::string companion(const std::string &base, const std::string &suffix)
 {
-    return "_numkit_" + escapeBase(base) + suffix;
+    const std::string stem = (base.rfind("_numkit_", 0) == 0) ? base.substr(8) : base;
+    return "_numkit_" + escapeBase(stem) + suffix;
 }
 
 std::vector<ArgInfo> toArgInfos(const std::vector<InferredType> &types)
@@ -663,6 +733,19 @@ public:
         returnName_    = std::move(name);
         returnDynamic_ = dynamic;
     }
+
+    void setEpilogueAssigns(std::vector<std::pair<std::string, std::string>> assigns)
+    {
+        epilogueAssigns_ = std::move(assigns);
+    }
+
+    void emitEpilogueAssigns()
+    {
+        for (const auto &[dst, src] : epilogueAssigns_)
+            line(dst + " = " + src + ";");
+    }
+
+    void emitRawLine(const std::string &s) { line(s); }
 
     // Record a local that was hoisted as Dynamic (numkit_val); see dynamicLocals_.
     void addDynamicLocal(const std::string &n) { dynamicLocals_.insert(n); }
@@ -698,7 +781,8 @@ public:
         for (const auto &[name, ai] : arrays_)
             if (ai.isLocal) ordered.emplace(name, ai.dtype);
         for (const auto &[name, dtype] : ordered)
-            line("std::vector<" + cppArrayElemType(dtype) + "> " + name + ";");
+            if (!arrays_.at(name).isRefParam)
+                line("std::vector<" + cppArrayElemType(dtype) + "> " + name + ";");
         // Runtime-dim N-D locals also need their size_t dim companions declared
         // (set at the zeros/ones assignment; read by indexN / size / numel).
         for (const auto &[name, dtype] : ordered) {
@@ -733,7 +817,7 @@ private:
     std::string emitDynamicExpr(const ASTNode &e);
     // A control-flow condition (if / while): a typed condition is the bare C++
     // boolean; a Dynamic condition is evaluated in the Value tier and reduced to
-    // MATLAB truthiness (non-empty AND every element non-zero). DESIGN.md §10 C1.
+    // the reference engine's truthiness (non-empty AND every element non-zero). DESIGN.md §10 C1.
     std::string emitCondition(const ASTNode &c);
     std::string emitBuiltinCall(const std::string &name, const ASTNode &call);
     std::string emitUserCall(const std::string &name, const ASTNode &call);
@@ -741,6 +825,16 @@ private:
     std::string emitConstruct(const std::string &name, const ASTNode &call);
     void        appendCallArg(const ASTNode &arg, std::vector<InferredType> &argTypes,
                               std::string &argList);
+    void        appendStructCallArgs(const std::string &prefix, const StructLayout &layout,
+                                     std::string &argList);
+    void        appendStructOutArgs(const std::string &prefix, const StructLayout &layout,
+                                    std::string &argList);
+    void        appendIgnoreOutArg(const std::string &tmpName, const InferredType &ot,
+                                   std::vector<std::string> &ignoreDecls, std::string &argList);
+    void        emitStructCopy(const std::string &dstPrefix, const std::string &srcPrefix,
+                               const StructLayout &layout);
+    std::string emitMultiCallExpr(const std::string &mangled, const std::string &argList,
+                                  const std::vector<InferredType> &outs);
     std::string emitIndexRead(const std::string &base, const ASTNode &call);
     // True if `e` is a pure ELEMENTWISE expression — literals, scalar vars,
     // whole arrays, and only elementwise ops (+ - .* ./ .\ .^, unary +/-).
@@ -763,6 +857,38 @@ private:
 
     bool isArrayVar(const std::string &n) const { return arrays_.count(n) != 0; }
 
+    std::string resolveArrayVar(const ASTNode &n) const
+    {
+        if (n.type == NodeType::IDENTIFIER && isArrayVar(n.strValue))
+            return n.strValue;
+        if ((n.type == NodeType::FIELD_ACCESS || n.type == NodeType::DYNAMIC_FIELD_ACCESS)
+            && !n.children.empty() && n.children[0]) {
+            const AbstractValue base = inferExpr(*n.children[0], types_, reg_, classes_);
+            if (!base.type.isObject()) {
+                const std::string fld = structFieldLocal(n);
+                if (!fld.empty() && isArrayVar(fld)) return fld;
+            }
+        }
+        return "";
+    }
+
+    void recordStructFieldWrite(const ASTNode &lhs, const std::string &fld,
+                                const InferredType &ft)
+    {
+        types_.set(fld, {ft, ConstVal::unknown()});
+        std::string              rootVar;
+        std::vector<std::string> chain;
+        if (!extractStructFieldChain(lhs, rootVar, chain)) return;
+        const AbstractValue cur =
+            types_.has(rootVar) ? types_.get(rootVar) : AbstractValue::dynamic();
+        auto layout = std::make_shared<StructLayout>();
+        if (cur.type.isStruct() && cur.type.structLayout)
+            layout->fields = cur.type.structLayout->fields;
+        setNestedStructField(*layout, chain, 0, ft);
+        syncIntermediateStructLocals("_numkit_fld_" + rootVar, *layout, types_);
+        types_.set(rootVar, {InferredType::structOf(std::move(layout)), ConstVal::unknown()});
+    }
+
     // The AbstractValue for an array variable (non-scalar -> buffer).
     AbstractValue arrayValue(const std::string &n) const
     {
@@ -770,47 +896,49 @@ private:
                 ConstVal::unknown()};
     }
 
-    std::string                                 out_;
-    int                                         indent_        = 1;
-    int                                         switchCounter_ = 0;  // unique switch-selector temp ids
-    TypeEnv                                     types_;
-    const TransferRegistry                     &reg_;
-    std::unordered_map<std::string, ArrayInfo>  arrays_;
-    OptFacts                                    opt_;
+    std::string                                      out_;
+    int                                              indent_           = 1;
+    int                                              switchCounter_    = 0;  // unique switch-selector temp ids
+    int                                              multiCallCounter_ = 0;  // unique multi-output expr temp ids
+    TypeEnv                                          types_;
+    const TransferRegistry                          &reg_;
+    std::unordered_map<std::string, ArrayInfo>       arrays_;
+    OptFacts                                         opt_;
     // Non-null inside a promoted clean-index loop: the 0-based size_t
     // counter that replaced the 1-based double loop variable.
-    const std::string                          *promotedCounter_ = nullptr;
-    std::vector<std::string>                    endStack_;  // `end` extents (active index ctx)
+    const std::string                               *promotedCounter_ = nullptr;
+    std::vector<std::string>                         endStack_;  // `end` extents (active index ctx)
     // Non-empty inside an elementwise-array fill loop: the 0-based size_t
     // index, so a bare whole-array `x` emits the element `x[<idx>]`.
-    std::string                                  elementCtx_;
-    std::string                                  elementRows_, elementCols_;
-    std::unordered_map<std::string, std::string> elementIdxMap_;
+    std::string                                       elementCtx_;
+    std::string                                       elementRows_, elementCols_;
+    std::unordered_map<std::string, std::string>      elementIdxMap_;
     // The function's RETURN ABI (set by emitOneFunction before the body is
     // emitted), so an early `return` lowers to the SAME form as the
     // end-of-function return: a value output (`return name;`, or `.take()` if
     // boxed), or a bare `return;` for a void / out-param / multi-ref function.
-    bool                                        returnsValue_  = false;
-    std::string                                 returnName_;
-    bool                                        returnDynamic_ = false;
+    bool                                             returnsValue_  = false;
+    std::string                                      returnName_;
+    bool                                             returnDynamic_ = false;
+    std::vector<std::pair<std::string, std::string>> epilogueAssigns_;
     // Locals hoisted as Dynamic (numkit_val) — arising from markAssignedDynamic
     // constructs (e.g. try/catch bodies). Every assignment to one must box (there
     // is no numkit_val = <typed>), and it stays Dynamic so later reads route through
     // the runtime.
-    std::set<std::string>                       dynamicLocals_;
+    std::set<std::string>                            dynamicLocals_;
     // Non-null when emitting as part of a multi-function program: routes
     // user-function calls and accumulates the specialisations to emit.
-    ProgramEmitCtx                             *ctx_ = nullptr;
+    ProgramEmitCtx                                  *ctx_ = nullptr;
     // Non-null when classes are in play: resolves object field access,
     // value-vs-handle representation, and constructor calls.
-    const ClassRegistry                        *classes_ = nullptr;
+    const ClassRegistry                             *classes_ = nullptr;
     // Bridged emission (DESIGN.md §6a): when true, a call the emitter cannot
     // lower but whose result inference proves scalar is emitted as a C-ABI
     // call (numkit_rt::bridge_scalar) instead of throwing.
-    bool                                        bridge_ = false;
+    bool                                             bridge_ = false;
     // Ops-kernel lowering: when true, a heavy array op with a matching ops
     // kernel (matmul, …) emits a numkit::ops:: call instead of an inline loop.
-    bool                                        opsKernels_ = false;
+    bool                                             opsKernels_ = false;
 };
 
 // MATLAB unary-math name -> std:: name. Restricted to functions that BOTH
@@ -928,17 +1056,12 @@ std::string Emitter::emitExpr(const ASTNode &e)
     case NodeType::CALL: {
         if (e.children.empty()) unsupported("empty call");
         const ASTNode &callee = *e.children[0];
-        if (callee.type == NodeType::FIELD_ACCESS) {
-            // s.v(k): index a struct array FIELD (field-flattening) when the base is
-            // a non-object plain var -> index the field-local array. (An object
-            // method obj.m(args) routes to emitMethodCall below.)
-            if (!callee.children.empty() && callee.children[0]->type == NodeType::IDENTIFIER
-                && !inferExpr(*callee.children[0], types_, reg_, classes_).type.isObject()) {
-                const std::string fld =
-                    "_numkit_fld_" + callee.children[0]->strValue + "_" + callee.strValue;
-                if (isArrayVar(fld)) return emitIndexRead(fld, e);
-            }
-            if (classes_) return emitMethodCall(e);  // obj.method(args)
+        if (callee.type == NodeType::FIELD_ACCESS
+            || callee.type == NodeType::DYNAMIC_FIELD_ACCESS) {
+            const std::string fld = resolveArrayVar(callee);
+            if (!fld.empty()) return emitIndexRead(fld, e);
+            if (callee.type == NodeType::FIELD_ACCESS && classes_)
+                return emitMethodCall(e);  // obj.method(args)
         }
         if (callee.type != NodeType::IDENTIFIER)
             unsupported("non-identifier callee");
@@ -948,7 +1071,7 @@ std::string Emitter::emitExpr(const ASTNode &e)
         if (classes_ && !types_.has(callee.strValue) && classes_->has(callee.strValue))
             return emitConstruct(callee.strValue, e);
         // A user function (not a variable in scope) takes priority over a
-        // same-named builtin (MATLAB path shadowing) when emitting a program.
+        // same-named builtin (the reference engine's path shadowing) when emitting a program.
         if (ctx_ && ctx_->funcs && !types_.has(callee.strValue)
             && ctx_->funcs->has(callee.strValue))
             return emitUserCall(callee.strValue, e);
@@ -972,7 +1095,15 @@ std::string Emitter::emitExpr(const ASTNode &e)
         // non-object gates struct-vs-object at every level.
         if (!base.type.isObject()) {
             const std::string fld = structFieldLocal(e);
-            if (!fld.empty()) return fld;
+            if (!fld.empty()) {
+                if (isArrayVar(fld)) {
+                    if (auto it = elementIdxMap_.find(fld); it != elementIdxMap_.end())
+                        return arrays_.at(fld).dataExpr + "[" + it->second + "]";
+                    if (!elementCtx_.empty())
+                        return arrays_.at(fld).dataExpr + "[" + elementCtx_ + "]";
+                }
+                return fld;
+            }
         }
         if (!base.type.isObject() || !classes_)
             unsupported("field access on a non-object value");
@@ -1297,29 +1428,30 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
 {
     const std::size_t nargs = call.children.size() - 1;
 
-    // numel / length / ndims of an array variable. 1-D: the length companion.
-    // 2-D: numel = rows*cols; length = max(rows,cols). N-D: product / max of dims.
-    if ((name == "numel" || name == "length" || name == "ndims") && nargs == 1
-        && call.children[1]->type == NodeType::IDENTIFIER
-        && isArrayVar(call.children[1]->strValue)) {
-        const ArrayInfo &ai = arrays_.at(call.children[1]->strValue);
-        if (name == "ndims")  // MATLAB: vectors/matrices are 2-D; N-D reports its rank
-            return "static_cast<double>(" + std::to_string(ai.isND ? ai.ndDims.size() : std::size_t{2})
-                   + ")";
-        if (ai.isND) {
-            std::string e = ai.ndDims[0];
-            for (std::size_t i = 1; i < ai.ndDims.size(); ++i)
-                e = name == "numel" ? (e + " * " + ai.ndDims[i])
-                                    : ("(" + e + " > " + ai.ndDims[i] + " ? " + e + " : "
-                                       + ai.ndDims[i] + ")");  // length = max dim
-            return "static_cast<double>(" + e + ")";
+    // numel / length / ndims of an array variable (or struct array field). 1-D: the length
+    // companion. 2-D: numel = rows*cols; length = max(rows,cols). N-D: product / max of dims.
+    if ((name == "numel" || name == "length" || name == "ndims") && nargs == 1) {
+        const std::string arrVar = resolveArrayVar(*call.children[1]);
+        if (!arrVar.empty()) {
+            const ArrayInfo &ai = arrays_.at(arrVar);
+            if (name == "ndims")
+                return "static_cast<double>("
+                       + std::to_string(ai.isND ? ai.ndDims.size() : std::size_t{2}) + ")";
+            if (ai.isND) {
+                std::string e = ai.ndDims[0];
+                for (std::size_t i = 1; i < ai.ndDims.size(); ++i)
+                    e = name == "numel" ? (e + " * " + ai.ndDims[i])
+                                        : ("(" + e + " > " + ai.ndDims[i] + " ? " + e + " : "
+                                           + ai.ndDims[i] + ")");  // length = max dim
+                return "static_cast<double>(" + e + ")";
+            }
+            if (!ai.is2D)
+                return "static_cast<double>(" + ai.lenVar + ")";
+            if (name == "numel")
+                return "static_cast<double>(" + ai.rowsVar + " * " + ai.colsVar + ")";
+            return "static_cast<double>(" + ai.rowsVar + " > " + ai.colsVar + " ? " + ai.rowsVar
+                   + " : " + ai.colsVar + ")";  // length = max(rows, cols)
         }
-        if (!ai.is2D)
-            return "static_cast<double>(" + ai.lenVar + ")";
-        if (name == "numel")
-            return "static_cast<double>(" + ai.rowsVar + " * " + ai.colsVar + ")";
-        return "static_cast<double>(" + ai.rowsVar + " > " + ai.colsVar + " ? " + ai.rowsVar
-               + " : " + ai.colsVar + ")";  // length = max(rows, cols)
     }
 
     // Type/shape query predicates -> a LOGICAL scalar. Pure expressions (no loop /
@@ -1331,10 +1463,11 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     // non-scalar (Dynamic) arg falls through to the boundary (refuse, never
     // miscompile).
     if ((name == "isempty" || name == "isscalar") && nargs == 1) {
-        const ASTNode &arg = *call.children[1];
-        const char    *cmp = name == "isempty" ? ") == 0)" : ") == 1)";
-        if (arg.type == NodeType::IDENTIFIER && isArrayVar(arg.strValue)) {
-            const ArrayInfo &ai = arrays_.at(arg.strValue);
+        const ASTNode    &arg    = *call.children[1];
+        const char       *cmp    = name == "isempty" ? ") == 0)" : ") == 1)";
+        const std::string arrVar = resolveArrayVar(arg);
+        if (!arrVar.empty()) {
+            const ArrayInfo &ai = arrays_.at(arrVar);
             std::string      n  = ai.lenVar;
             if (ai.isND) {
                 n = ai.ndDims[0];
@@ -1359,16 +1492,11 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     }
 
     // isrow / iscolumn / isvector: 2-D orientation predicates -> a LOGICAL scalar.
-    // MATLAB: isrow = (ndims==2 && rows==1); iscolumn = (ndims==2 && cols==1);
-    // isvector = (ndims==2 && (rows==1 || cols==1)). A rank-N (N>=3) array is none
-    // of these. A 2-D matrix compares its known dims. A 1-D buffer is always a
-    // vector; its row/col answer comes from the recorded orientation (a row is
-    // also a column iff length 1, and vice-versa). A 1-D buffer of ERASED
-    // orientation can't answer isrow/iscolumn -> boundary. A scalar is all three.
     if ((name == "isrow" || name == "iscolumn" || name == "isvector") && nargs == 1) {
-        const ASTNode &arg = *call.children[1];
-        if (arg.type == NodeType::IDENTIFIER && isArrayVar(arg.strValue)) {
-            const ArrayInfo &ai = arrays_.at(arg.strValue);
+        const ASTNode    &arg    = *call.children[1];
+        const std::string arrVar = resolveArrayVar(arg);
+        if (!arrVar.empty()) {
+            const ArrayInfo &ai = arrays_.at(arrVar);
             if (ai.isND)
                 return "false";  // ndims >= 3 -> not a row / column / vector
             if (ai.is2D) {
@@ -1391,7 +1519,7 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     // dtype-classification predicates -> a LOGICAL scalar. A codegen value's dtype
     // is STATIC, so each is a compile-time constant from the operand's dtype:
     //   isnumeric : float (double/single) | integer (int*/uint*) | complex
-    //   isfloat   : double | single | complex   (MATLAB: complex doubles are float)
+    //   isfloat   : double | single | complex
     //   isinteger : int* | uint*
     //   ischar    : char        islogical : logical
     // A Dynamic arg falls through to the boundary (refuse, never miscompile).
@@ -1417,23 +1545,17 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     }
 
     // size(A, dim) with a compile-time literal dim: the dim's size (2-D
-    // rows/cols, N-D the dim, out-of-range -> 1). A 1-D buffer's row/col
-    // orientation is erased by the RawBuffer ABI but recorded from the
-    // compile-time type (ai.orient): a row is 1 x len (size(.,1)=1,
-    // size(.,2)=len), a col is len x 1. Unknown orientation still falls
-    // through (bridge / explicit boundary).
-    if (name == "size" && nargs == 2 && call.children[1]->type == NodeType::IDENTIFIER
-        && isArrayVar(call.children[1]->strValue)
-        && call.children[2]->type == NodeType::NUMBER_LITERAL) {
-        const ArrayInfo &ai = arrays_.at(call.children[1]->strValue);
-        const double     kd = call.children[2]->numValue;
-        const auto       k  = static_cast<std::size_t>(kd);
-        const bool       kok = kd >= 1.0 && static_cast<double>(k) == kd;
-        // Emit only once the axis is determinate: any 2-D/N-D array, or a 1-D
-        // vector with a known orientation. A 1-D unknown-orientation vector
-        // falls through (-> bridge), since dimExpr can't place its single axis.
-        if (kok && (ai.isND || ai.is2D || ai.orient != VecOrient::Unknown))
-            return "static_cast<double>(" + dimExpr(ai, k - 1) + ")";
+    // rows/cols, N-D the dim, out-of-range -> 1).
+    if (name == "size" && nargs == 2 && call.children[2]->type == NodeType::NUMBER_LITERAL) {
+        const std::string arrVar = resolveArrayVar(*call.children[1]);
+        if (!arrVar.empty()) {
+            const ArrayInfo &ai  = arrays_.at(arrVar);
+            const double     kd  = call.children[2]->numValue;
+            const auto       k   = static_cast<std::size_t>(kd);
+            const bool       kok = kd >= 1.0 && static_cast<double>(k) == kd;
+            if (kok && (ai.isND || ai.is2D || ai.orient != VecOrient::Unknown))
+                return "static_cast<double>(" + dimExpr(ai, k - 1) + ")";
+        }
     }
 
     // Complex accessors: real/imag/angle/conj (scalar). std::real / std::imag /
@@ -1627,47 +1749,194 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     unsupported("builtin call '" + name + "' (arity " + std::to_string(nargs) + ")");
 }
 
+void Emitter::appendStructCallArgs(const std::string &prefix, const StructLayout &layout,
+                                   std::string &argList)
+{
+    for (const auto &f : layout.fields) {
+        const std::string   fld = prefix + "_" + f.first;
+        const InferredType &ft  = f.second;
+        if (isUnboxableScalarType(ft) || ft.isObject()) {
+            if (!argList.empty()) argList += ", ";
+            argList += fld;
+        } else if (is2DMatrixType(ft) && isArrayVar(fld)) {
+            const ArrayInfo &ai = arrays_.at(fld);
+            if (!argList.empty()) argList += ", ";
+            argList += ai.dataExpr + ", " + ai.rowsVar + ", " + ai.colsVar;
+        } else if (ft.isConcrete() && ft.shape.isNDims() && isArrayVar(fld)) {
+            const ArrayInfo &ai = arrays_.at(fld);
+            if (!argList.empty()) argList += ", ";
+            argList += ai.dataExpr;
+            for (const std::string &dv : ai.ndDims) argList += ", " + dv;
+        } else if (isBufferArrayType(ft) && isArrayVar(fld)) {
+            const ArrayInfo &ai = arrays_.at(fld);
+            if (!argList.empty()) argList += ", ";
+            argList += ai.dataExpr + ", " + ai.lenVar;
+        } else if (ft.isStruct() && ft.structLayout && !ft.structLayout->fields.empty()) {
+            appendStructCallArgs(fld, *ft.structLayout, argList);
+        } else {
+            unsupported("struct call argument field '" + fld + "' has an unsupported type");
+        }
+    }
+}
+
+void Emitter::appendStructOutArgs(const std::string &prefix, const StructLayout &layout,
+                                  std::string &argList)
+{
+    for (const auto &f : layout.fields) {
+        const std::string   fld = prefix + "_" + f.first;
+        const InferredType &ft  = f.second;
+        if (isUnboxableScalarType(ft) || ft.isObject() || isBufferArrayType(ft)) {
+            if (!argList.empty()) argList += ", ";
+            argList += fld;
+            types_.set(fld, {ft, ConstVal::unknown()});
+        } else if (ft.isStruct() && ft.structLayout && !ft.structLayout->fields.empty()) {
+            types_.set(fld, {ft, ConstVal::unknown()});
+            appendStructOutArgs(fld, *ft.structLayout, argList);
+        } else {
+            unsupported("struct-return field '" + fld + "' has an unsupported type");
+        }
+    }
+}
+
+void Emitter::appendIgnoreOutArg(const std::string &tmpName, const InferredType &ot,
+                                 std::vector<std::string> &ignoreDecls, std::string &argList)
+{
+    if (isUnboxableScalarType(ot)) {
+        ignoreDecls.push_back(cppScalarType(ot.dtype) + " " + tmpName + " = "
+                              + zeroLiteral(ot.dtype) + ";");
+        if (!argList.empty()) argList += ", ";
+        argList += tmpName;
+    } else if (ot.isObject()) {
+        const ClassInfo *oci = classes_ ? classes_->byId(ot.classId) : nullptr;
+        if (!oci) unsupported("ignored object output with no class registry");
+        ignoreDecls.push_back(oci->isHandle ? ("numkit_rt::handle<" + oci->name + "> " + tmpName + ";")
+                                            : (oci->name + " " + tmpName + "{};"));
+        if (!argList.empty()) argList += ", ";
+        argList += tmpName;
+    } else if (isBufferArrayType(ot)) {
+        ignoreDecls.push_back("std::vector<" + cppArrayElemType(ot.dtype) + "> " + tmpName + ";");
+        if (!argList.empty()) argList += ", ";
+        argList += tmpName;
+    } else if (ot.isStruct() && ot.structLayout && !ot.structLayout->fields.empty()) {
+        for (const auto &f : ot.structLayout->fields)
+            appendIgnoreOutArg(tmpName + "_" + f.first, f.second, ignoreDecls, argList);
+    } else {
+        unsupported("ignored / unrequested multi-output has an unsupported type");
+    }
+}
+
+void Emitter::emitStructCopy(const std::string &dstPrefix, const std::string &srcPrefix,
+                             const StructLayout &layout)
+{
+    for (const auto &f : layout.fields) {
+        const std::string   dstFld = dstPrefix + "_" + f.first;
+        const std::string   srcFld = srcPrefix + "_" + f.first;
+        const InferredType &ft     = f.second;
+        if (isUnboxableScalarType(ft) || ft.isObject()) {
+            line(dstFld + " = " + srcFld + ";");
+            types_.set(dstFld, {ft, ConstVal::unknown()});
+        } else if (isBufferArrayType(ft) && isArrayVar(dstFld) && isArrayVar(srcFld)) {
+            const ArrayInfo &A = arrays_.at(srcFld);
+            const ArrayInfo &B = arrays_.at(dstFld);
+            std::string      numel;
+            if (A.isND) {
+                numel = A.ndDims[0];
+                for (std::size_t i = 1; i < A.ndDims.size(); ++i) numel += " * " + A.ndDims[i];
+            } else if (A.is2D) {
+                numel = A.rowsVar + " * " + A.colsVar;
+            } else {
+                numel = A.lenVar;
+            }
+            if (B.isND && B.ndRuntimeLocal)
+                for (std::size_t k = 0; k < B.ndDims.size(); ++k)
+                    line(B.ndDims[k] + " = " + dimExpr(A, k) + ";");
+            line(dstFld + ".assign(" + A.dataExpr + ", " + A.dataExpr + " + (" + numel + "));");
+            types_.set(dstFld, {ft, ConstVal::unknown()});
+        } else if (ft.isStruct() && ft.structLayout) {
+            types_.set(dstFld, {ft, ConstVal::unknown()});
+            emitStructCopy(dstFld, srcFld, *ft.structLayout);
+        } else {
+            unsupported("struct copy field '" + dstFld + "' has an unsupported type");
+        }
+    }
+}
+
+std::string Emitter::emitMultiCallExpr(const std::string &mangled, const std::string &argList,
+                                       const std::vector<InferredType> &outs)
+{
+    if (outs.empty()) unsupported("multi-output call with no outputs");
+    const InferredType &out0        = outs[0];
+    const bool          out0ByValue = isByValueReturnArrayType(out0);
+    std::string         retCpp;
+    if (isUnboxableScalarType(out0))
+        retCpp = cppScalarType(out0.dtype);
+    else if (out0.isObject())
+        retCpp = cppObjectType(out0.classId, classes_);
+    else if (out0ByValue)
+        retCpp = "std::vector<" + cppScalarType(out0.dtype) + ">";
+    else
+        unsupported("expression-context multi-output call '" + mangled
+                    + "' requires a scalar, object, or by-value array first output");
+
+    const int                id       = multiCallCounter_++;
+    std::string              callArgs = argList;
+    std::vector<std::string> decls;
+    const std::string        out0Tmp = "_numkit_mc_" + std::to_string(id) + "_0";
+    for (std::size_t i = (out0ByValue ? 1 : 0); i < outs.size(); ++i) {
+        const std::string tmp = "_numkit_mc_" + std::to_string(id) + "_" + std::to_string(i);
+        appendIgnoreOutArg(tmp, outs[i], decls, callArgs);
+    }
+    std::string joinedDecls;
+    for (const std::string &d : decls) joinedDecls += d + " ";
+    if (out0ByValue)
+        return "([&]() -> " + retCpp + " { " + joinedDecls + "return " + mangled + "(" + callArgs
+               + "); }())";
+    return "([&]() -> " + retCpp + " { " + joinedDecls + mangled + "(" + callArgs + "); return "
+           + out0Tmp + "; }())";
+}
+
 // Append one interprocedural call argument: a scalar or object is passed by
-// value (one C++ arg); an array VARIABLE is passed as `ptr, len` (two C++
-// args, reusing its length companion). An array expression (no companion)
-// or a Dynamic arg is refused (v1). Its inferred type drives the callee
-// specialisation's signature.
+// value (one C++ arg); an array VARIABLE is passed as `ptr, len` / `ptr, rows, cols` /
+// `ptr, d0, ...`; a struct is recursively exploded into its field arguments.
 void Emitter::appendCallArg(const ASTNode &arg, std::vector<InferredType> &argTypes,
                             std::string &argList)
 {
-    const AbstractValue av = inferExpr(arg, types_, reg_, classes_);
-    if (!argList.empty()) argList += ", ";
+    const AbstractValue av     = inferExpr(arg, types_, reg_, classes_);
+    const std::string   arrVar = resolveArrayVar(arg);
     if (isUnboxableScalarType(av.type) || av.type.isObject()) {
+        if (!argList.empty()) argList += ", ";
         argList += emitExpr(arg);
-    } else if (isBufferArrayType(av.type) && arg.type == NodeType::IDENTIFIER
-               && isArrayVar(arg.strValue)) {
-        const ArrayInfo &ai = arrays_.at(arg.strValue);
+    } else if (is2DMatrixType(av.type) && !arrVar.empty()) {
+        const ArrayInfo &ai = arrays_.at(arrVar);
+        if (!argList.empty()) argList += ", ";
+        argList += ai.dataExpr + ", " + ai.rowsVar + ", " + ai.colsVar;
+    } else if (av.type.isConcrete() && av.type.shape.isNDims() && !arrVar.empty()) {
+        const ArrayInfo &ai = arrays_.at(arrVar);
+        if (!argList.empty()) argList += ", ";
+        argList += ai.dataExpr;
+        for (const std::string &dv : ai.ndDims) argList += ", " + dv;
+    } else if (isBufferArrayType(av.type) && !arrVar.empty()) {
+        const ArrayInfo &ai = arrays_.at(arrVar);
+        if (!argList.empty()) argList += ", ";
         argList += ai.dataExpr + ", " + ai.lenVar;  // ptr + len (local: .data()/.size())
-    } else if (av.type.isStruct() && arg.type == NodeType::IDENTIFIER) {
-        // Explode a struct arg into its field-locals (_numkit_fld_<s>_<f>), matching the callee's
-        // exploded params. argTypes gets ONE struct entry (arity = paramNames); argList gets one
-        // entry per field. v1: all-scalar fields, a plain-identifier base.
-        if (!av.type.structLayout || av.type.structLayout->fields.empty())
-            unsupported("struct call argument '" + arg.strValue + "' has no fields (v1)");
-        bool firstF = true;
-        for (const auto &f : av.type.structLayout->fields) {
-            if (!isUnboxableScalarType(f.second))
-                unsupported("struct call argument field '" + arg.strValue + "." + f.first
-                            + "' must be a scalar (v1; array / nested struct fields deferred)");
-            if (!firstF) argList += ", ";
-            firstF = false;
-            argList += "_numkit_fld_" + arg.strValue + "_" + f.first;
-        }
+    } else if (av.type.isStruct()) {
+        std::string prefix;
+        if (arg.type == NodeType::IDENTIFIER)
+            prefix = "_numkit_fld_" + arg.strValue;
+        else if (arg.type == NodeType::FIELD_ACCESS || arg.type == NodeType::DYNAMIC_FIELD_ACCESS)
+            prefix = structFieldLocal(arg);
+        if (prefix.empty() || !av.type.structLayout || av.type.structLayout->fields.empty())
+            unsupported("struct call argument has no fields");
+        appendStructCallArgs(prefix, *av.type.structLayout, argList);
     } else {
-        unsupported("call argument must be a scalar, object, or array variable (v1)");
+        unsupported("call argument must be a scalar, object, struct, or array variable (v1)");
     }
     argTypes.push_back(av.type);
 }
 
 // A call to a user-defined function within a program (ctx_ set). Arguments
-// may be scalars, objects, or array variables; the result is scalar/object
-// or void. Emits a direct call to the monomorphised specialisation and
-// queues it for emission.
+// may be scalars, objects, structs, or array variables. Emits a direct call
+// to the monomorphised specialisation and queues it for emission.
 std::string Emitter::emitUserCall(const std::string &name, const ASTNode &call)
 {
     const ASTNode *def = ctx_->funcs->find(name);
@@ -1680,24 +1949,24 @@ std::string Emitter::emitUserCall(const std::string &name, const ASTNode &call)
     if (argTypes.size() != def->paramNames.size())
         unsupported("arity mismatch calling '" + name + "'");
 
-    const std::size_t nout = def->returnNames.size();
-    if (nout >= 2)
-        unsupported("multi-output call not yet supported (2b): '" + name + "'");
+    const std::size_t nout    = def->returnNames.size();
+    const std::string mangled = mangle(name, argTypes);
+    if (nout >= 2) {
+        const std::vector<InferredType> outs = reg_.applyMulti(name, toArgInfos(argTypes));
+        if (outs.size() != nout)
+            unsupported("multi-output call '" + name + "' has unknown output types");
+        if (ctx_->seen.insert(mangled).second)
+            ctx_->pending.push_back({def, argTypes, mangled});
+        return emitMultiCallExpr(mangled, argList, outs);
+    }
     if (nout == 1) {  // 0 -> void function, result discarded
         const InferredType ret = reg_.apply(name, toArgInfos(argTypes));
-        // A 1-D / 2-D-KnownDims / fully-known-N-D double/complex array result is
-        // returned BY VALUE (flat std::vector) — the callee is emitted with
-        // interprocByValueReturn so its signature returns std::vector<T>
-        // (self-describing .size(); dims compile-time-known on both sides). A
-        // runtime-dim N-D result stays an explicit boundary (its dims would need to
-        // travel with the buffer; sound refusal below).
         const bool arrayByValue = isByValueReturnArrayType(ret);
-        if (!isUnboxableScalarType(ret) && !arrayByValue)
-            unsupported("interprocedural call result must be an unboxed scalar or a 1-D / "
+        if (!isUnboxableScalarType(ret) && !ret.isObject() && !arrayByValue)
+            unsupported("interprocedural call result must be an unboxed scalar, object, or a 1-D / "
                         "2-D / fully-known-N-D double/complex array (v1): '" + name + "'");
     }
 
-    const std::string mangled = mangle(name, argTypes);
     if (ctx_->seen.insert(mangled).second)
         ctx_->pending.push_back({def, argTypes, mangled});
     return mangled + "(" + argList + ")";
@@ -1706,8 +1975,6 @@ std::string Emitter::emitUserCall(const std::string &name, const ASTNode &call)
 // A method call `obj.m(args)` (ctx_ set). The object is the implicit first
 // argument; dispatch is monomorphic (the exact class is known). Emits a
 // direct call to the specialisation `Class__m(self, args)` and queues it.
-// v1: extra args + result are unboxed scalars (the result may also be an
-// object — value-in/out methods return the modified object).
 std::string Emitter::emitMethodCall(const ASTNode &call)
 {
     const ASTNode &callee = *call.children[0];  // FIELD_ACCESS: method on object
@@ -1725,19 +1992,27 @@ std::string Emitter::emitMethodCall(const ASTNode &call)
     std::string argList = emitExpr(*callee.children[0]);  // the object expr
     for (std::size_t i = 1; i < call.children.size(); ++i)
         appendCallArg(*call.children[i], argTypes, argList);
+    if (argTypes.size() != md->paramNames.size())
+        unsupported("arity mismatch calling method '" + callee.strValue + "'");
 
-    const std::size_t nout = md->returnNames.size();
-    if (nout >= 2)
-        unsupported("multi-output method not yet supported (2b): '" + callee.strValue + "'");
+    const std::size_t nout    = md->returnNames.size();
+    const std::string mkey    = ci->name + "::" + callee.strValue;
+    const std::string mangled = mangle(ci->name + "__" + callee.strValue, argTypes);
+    if (nout >= 2) {
+        const std::vector<InferredType> outs = reg_.applyMulti(mkey, toArgInfos(argTypes));
+        if (outs.size() != nout)
+            unsupported("multi-output method '" + callee.strValue + "' has unknown output types");
+        if (ctx_->seen.insert(mangled).second)
+            ctx_->pending.push_back({md, argTypes, mangled});
+        return emitMultiCallExpr(mangled, argList, outs);
+    }
     if (nout == 1) {  // 0 -> void method (in-place mutator), result discarded
-        const InferredType ret =
-            reg_.apply(ci->name + "::" + callee.strValue, toArgInfos(argTypes));
-        if (!isUnboxableScalarType(ret) && !ret.isObject())
-            unsupported("method result must be an unboxed scalar or object (v1): '"
+        const InferredType ret = reg_.apply(mkey, toArgInfos(argTypes));
+        if (!isUnboxableScalarType(ret) && !ret.isObject() && !isByValueReturnArrayType(ret))
+            unsupported("method result must be an unboxed scalar, object, or array (v1): '"
                         + callee.strValue + "'");
     }
 
-    const std::string mangled = mangle(ci->name + "__" + callee.strValue, argTypes);
     if (ctx_->seen.insert(mangled).second)
         ctx_->pending.push_back({md, argTypes, mangled});
     return mangled + "(" + argList + ")";
@@ -1849,8 +2124,13 @@ std::string Emitter::emitIndexRead(const std::string &base, const ASTNode &call)
 
 void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
 {
-    const std::string &base = lhsCall.children[0]->strValue;
-    if (!isArrayVar(base)) unsupported("indexed write to non-array '" + base + "'");
+    const std::string base = resolveArrayVar(*lhsCall.children[0]);
+    if (base.empty())
+        unsupported("indexed write to non-array '"
+                    + (lhsCall.children[0]->type == NodeType::IDENTIFIER
+                           ? lhsCall.children[0]->strValue
+                           : std::string("<expr>"))
+                    + "'");
     const ArrayInfo  &ai  = arrays_.at(base);
     const std::string ptr = ai.dataExpr;  // `base` (buffer) or `base.data()` (local vec)
 
@@ -2836,6 +3116,16 @@ bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays
     case NodeType::IDENTIFIER:
         if (isArrayVar(e.strValue)) arrays.insert(e.strValue);
         return true;  // a scalar var, or a whole array (recorded)
+    case NodeType::FIELD_ACCESS:
+    case NodeType::DYNAMIC_FIELD_ACCESS: {
+        if (e.children.empty() || !e.children[0]) return false;
+        const AbstractValue base = inferExpr(*e.children[0], types_, reg_, classes_);
+        if (base.type.isObject()) return false;
+        const std::string fld = structFieldLocal(e);
+        if (fld.empty()) return false;
+        if (isArrayVar(fld)) arrays.insert(fld);
+        return true;
+    }
     case NodeType::BINARY_OP: {
         // Operator SYMBOLS (the AST stores the symbol; inference maps it to the
         // transfer name). Unconditionally elementwise: + - .* ./ .\ .^. The
@@ -2920,106 +3210,122 @@ void Emitter::emitAssign(const ASTNode &s)
     const ASTNode &lhs = *s.children[0];
     const ASTNode &rhs = *s.children[1];
 
-    if (lhs.type == NodeType::IDENTIFIER) {
-        const std::string &name = lhs.strValue;
+    std::string structWriteFld;
+    if ((lhs.type == NodeType::FIELD_ACCESS || lhs.type == NodeType::DYNAMIC_FIELD_ACCESS)
+        && !lhs.children.empty() && lhs.children[0]
+        && !(lhs.children[0]->type == NodeType::CALL && lhs.children[0]->children.size() == 2
+             && lhs.children[0]->children[0]->type == NodeType::IDENTIFIER
+             && !types_.has(lhs.children[0]->children[0]->strValue))) {
+        const AbstractValue base = inferExpr(*lhs.children[0], types_, reg_, classes_);
+        if (!base.type.isObject())
+            structWriteFld = structFieldLocal(lhs);
+    }
 
-        // `t = f(args)` where f is a user function RETURNING A STRUCT (G2.4): emit a void
-        // call binding t's per-field locals (_numkit_fld_t_<f>) as the callee's out-param refs
-        // (the inverse of the struct PARAM explosion). The callee fills them in place; the
-        // field-locals were declared by the inference (so they are hoisted). v1: all-scalar
-        // fields. A non-struct return / builtin / indexing falls through to the normal path.
-        if (rhs.type == NodeType::CALL && !rhs.children.empty()
-            && rhs.children[0]->type == NodeType::IDENTIFIER && ctx_ && ctx_->funcs
-            && !types_.has(rhs.children[0]->strValue)
-            && ctx_->funcs->has(rhs.children[0]->strValue)) {
-            const AbstractValue retAv = inferExpr(rhs, types_, reg_, classes_);
-            if (retAv.type.isStruct() && retAv.type.structLayout) {
-                const std::string &callee = rhs.children[0]->strValue;
-                const ASTNode     *def    = ctx_->funcs->find(callee);
-                std::vector<InferredType> argTypes;
-                std::string               argList;
-                for (std::size_t i = 1; i < rhs.children.size(); ++i)
-                    appendCallArg(*rhs.children[i], argTypes, argList);
-                if (argTypes.size() != def->paramNames.size())
-                    unsupported("arity mismatch calling '" + callee + "'");
-                // t's per-field locals as out-arg refs, in the return layout's field order.
-                for (const auto &f : retAv.type.structLayout->fields) {
-                    if (!isUnboxableScalarType(f.second))
-                        unsupported("struct-return field '" + name + "." + f.first
-                                    + "' must be a scalar (v1)");
-                    if (!argList.empty()) argList += ", ";
-                    const std::string fld = "_numkit_fld_" + name + "_" + f.first;
-                    argList += fld;
-                    types_.set(fld, {f.second, ConstVal::unknown()});
+    if (lhs.type == NodeType::IDENTIFIER || !structWriteFld.empty()) {
+        const std::string &name = structWriteFld.empty() ? lhs.strValue : structWriteFld;
+        struct StructWriteSync {
+            Emitter           *self;
+            const ASTNode     *lhsNode;
+            const std::string *fldName;
+            ~StructWriteSync()
+            {
+                if (std::uncaught_exceptions() == 0 && self && lhsNode && fldName
+                    && !fldName->empty() && self->types_.has(*fldName)) {
+                    self->recordStructFieldWrite(*lhsNode, *fldName,
+                                                 self->types_.get(*fldName).type);
                 }
-                const std::string mangled = mangle(callee, argTypes);
-                if (ctx_->seen.insert(mangled).second)
-                    ctx_->pending.push_back({def, argTypes, mangled});
-                line(mangled + "(" + argList + ");");
-                types_.set(name, {retAv.type, ConstVal::unknown()});
-                return;
             }
-        }
+        } syncGuard{structWriteFld.empty() ? nullptr : this, &lhs, &structWriteFld};
 
-        // `c = f(args)` where f is a co-compiled MULTI-output user fn: MATLAB binds c to f's
-        // FIRST output. Emit the spec call exactly as `[c, ~, ...] = f` would (same ABI):
-        // output 0 is c (a ref out-arg, or the BY-VALUE return for a leading 1-D array),
-        // outputs 1.. get throwaway out-params (the monomorphic spec always computes them).
-        // The inference (inferStmt) typed c as output 0 so it hoists correctly. A single-output
-        // user fn (outs.size() <= 1) falls through to the normal scalar/array assignment path.
-        if (rhs.type == NodeType::CALL && !rhs.children.empty()
-            && rhs.children[0]->type == NodeType::IDENTIFIER && ctx_ && ctx_->funcs
-            && !types_.has(rhs.children[0]->strValue)
-            && ctx_->funcs->has(rhs.children[0]->strValue)) {
-            const std::string &callee = rhs.children[0]->strValue;
-            const ASTNode     *def    = ctx_->funcs->find(callee);
+        // Struct-return call (`t = f(args)` or `t = obj.m(args)`) and single-LHS multi-output
+        // call (`c = f(args)` or `c = obj.m(args)`).
+        if (rhs.type == NodeType::CALL && !rhs.children.empty() && ctx_) {
+            const ASTNode            *def = nullptr;
+            std::string               calleeKey;
+            std::string               mangleBase;
             std::vector<InferredType> argTypes;
             std::string               argList;
-            for (std::size_t i = 1; i < rhs.children.size(); ++i)
-                appendCallArg(*rhs.children[i], argTypes, argList);
-            const std::vector<InferredType> outs =
-                (def && argTypes.size() == def->paramNames.size())
-                    ? reg_.applyMulti(callee, toArgInfos(argTypes))
-                    : std::vector<InferredType>{};
-            if (outs.size() > 1) {  // a genuine multi-output user fn in single-LHS context
-                const InferredType out0        = outs[0];
-                const bool         out0ByValue = isByValueReturnArrayType(out0);
-                if (!out0ByValue && !isUnboxableScalarType(out0))
-                    unsupported("c = f(x): first output of multi-output '" + callee
-                                + "' must be a scalar or a by-value 1-D array (v1)");
-                std::vector<std::string> ignoreDecls;
-                for (std::size_t i = 1; i < outs.size(); ++i) {
-                    if (!isUnboxableScalarType(outs[i]))
-                        unsupported("c = f(x): trailing output of '" + callee
-                                    + "' must be a scalar (v1)");
-                    const std::string tmp = "_numkit_ignore_" + std::to_string(i);
-                    ignoreDecls.push_back(cppScalarType(outs[i].dtype) + " " + tmp + " = "
-                                          + zeroLiteral(outs[i].dtype) + ";");
+            if (rhs.children[0]->type == NodeType::IDENTIFIER && ctx_->funcs
+                && !types_.has(rhs.children[0]->strValue)
+                && ctx_->funcs->has(rhs.children[0]->strValue)) {
+                const std::string &callee = rhs.children[0]->strValue;
+                def                       = ctx_->funcs->find(callee);
+                calleeKey                 = callee;
+                mangleBase                = callee;
+                for (std::size_t i = 1; i < rhs.children.size(); ++i)
+                    appendCallArg(*rhs.children[i], argTypes, argList);
+            } else if (rhs.children[0]->type == NodeType::FIELD_ACCESS
+                       && !rhs.children[0]->children.empty() && classes_) {
+                const ASTNode      &callee = *rhs.children[0];
+                const AbstractValue base =
+                    inferExpr(*callee.children[0], types_, reg_, classes_);
+                if (base.type.isObject()) {
+                    const ClassInfo *ci = classes_->byId(base.type.classId);
+                    def                 = ci ? ci->method(callee.strValue) : nullptr;
+                    if (def) {
+                        calleeKey  = ci->name + "::" + callee.strValue;
+                        mangleBase = ci->name + "__" + callee.strValue;
+                        argTypes.push_back(base.type);
+                        argList = emitExpr(*callee.children[0]);
+                        for (std::size_t i = 1; i < rhs.children.size(); ++i)
+                            appendCallArg(*rhs.children[i], argTypes, argList);
+                    }
                 }
-                if (!out0ByValue) {  // output 0 -> a ref out-arg (c)
-                    if (!argList.empty()) argList += ", ";
-                    argList += name;
+            }
+            if (def) {
+                if (argTypes.size() != def->paramNames.size())
+                    unsupported("arity mismatch calling '" + calleeKey + "'");
+                const std::vector<InferredType> outs =
+                    reg_.applyMulti(calleeKey, toArgInfos(argTypes));
+                const std::string dstPrefix =
+                    structWriteFld.empty() ? ("_numkit_fld_" + name) : name;
+                if (def->returnNames.size() == 1) {
+                    const AbstractValue retAv = inferExpr(rhs, types_, reg_, classes_);
+                    if (retAv.type.isStruct() && retAv.type.structLayout) {
+                        appendStructOutArgs(dstPrefix, *retAv.type.structLayout, argList);
+                        const std::string mangled = mangle(mangleBase, argTypes);
+                        if (ctx_->seen.insert(mangled).second)
+                            ctx_->pending.push_back({def, argTypes, mangled});
+                        line(mangled + "(" + argList + ");");
+                        types_.set(name, {retAv.type, ConstVal::unknown()});
+                        return;
+                    }
+                } else if (outs.size() > 1) {
+                    const InferredType out0        = outs[0];
+                    const bool         out0ByValue = isByValueReturnArrayType(out0);
+                    if (out0ByValue) {
+                        // Returned by value -> assigned to `name` below.
+                    } else if (isUnboxableScalarType(out0) || out0.isObject()) {
+                        if (!argList.empty()) argList += ", ";
+                        argList += name;
+                    } else if (out0.isStruct() && out0.structLayout) {
+                        appendStructOutArgs(dstPrefix, *out0.structLayout, argList);
+                    } else {
+                        unsupported("c = f(x): first output of multi-output '" + calleeKey
+                                    + "' has an unsupported type");
+                    }
+                    std::vector<std::string> ignoreDecls;
+                    for (std::size_t i = 1; i < outs.size(); ++i) {
+                        const std::string tmp = "_numkit_ignore_" + std::to_string(i);
+                        appendIgnoreOutArg(tmp, outs[i], ignoreDecls, argList);
+                    }
+                    const std::string mangled = mangle(mangleBase, argTypes);
+                    if (ctx_->seen.insert(mangled).second)
+                        ctx_->pending.push_back({def, argTypes, mangled});
+                    open("");  // fresh scope for the throwaway locals
+                    for (const std::string &d : ignoreDecls) line(d);
+                    if (out0ByValue)
+                        line(name + " = " + mangled + "(" + argList + ");");
+                    else
+                        line(mangled + "(" + argList + ");");
+                    close();
+                    types_.set(name, {out0, ConstVal::unknown()});
+                    return;
                 }
-                for (std::size_t i = 1; i < outs.size(); ++i)
-                    argList += (argList.empty() ? "" : ", ") + ("_numkit_ignore_" + std::to_string(i));
-                const std::string mangled = mangle(callee, argTypes);
-                if (ctx_->seen.insert(mangled).second)
-                    ctx_->pending.push_back({def, argTypes, mangled});
-                open("");  // fresh scope for the throwaway locals (no cross-statement collision)
-                for (const std::string &d : ignoreDecls) line(d);
-                if (out0ByValue)
-                    line(name + " = " + mangled + "(" + argList + ");");
-                else
-                    line(mangled + "(" + argList + ");");
-                close();
-                types_.set(name, {out0, ConstVal::unknown()});
-                return;
             }
         }
 
-        // x = [] : empty a 1-D LOCAL vector (MATLAB empty matrix). The inference typed x as a
-        // DOUBLE 1-D growable owned vector; emit a clear (idempotent on a fresh hoist). Enables
-        // the loop-build idiom x=[]; for i; x(end+1)=..; end.
+        // x = [] : empty a 1-D LOCAL vector.
         if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
             && !arrays_.at(name).isND && rhs.type == NodeType::MATRIX_LITERAL) {
             bool emptyMat = true;
@@ -3027,6 +3333,8 @@ void Emitter::emitAssign(const ASTNode &s)
                 if (row && !row->children.empty()) { emptyMat = false; break; }
             if (emptyMat) {
                 line(name + ".clear();");
+                types_.set(name, {InferredType::concrete(arrays_.at(name).dtype, Shape::rowVector()),
+                                  ConstVal::unknown()});
                 return;
             }
         }
@@ -8451,51 +8759,58 @@ void Emitter::emitAssign(const ASTNode &s)
             }
         }
 
-        // Whole-array struct-field READ: `y = s.v` where s.v is an array field-local
-        // (field-flattening). emitExpr(s.v) yields the field-local vector name, so
-        // this is a vector copy-assign. v1: a 1-D array field; y a 1-D array LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && rhs.type == NodeType::FIELD_ACCESS
-            && !rhs.children.empty() && rhs.children[0]->type == NodeType::IDENTIFIER) {
-            const AbstractValue rbase = inferExpr(*rhs.children[0], types_, reg_, classes_);
-            const AbstractValue rv    = inferExpr(rhs, types_, reg_, classes_);
-            if (!rbase.type.isObject() && rv.type.isConcrete() && !rv.type.shape.isScalar()
-                && !is2DMatrixType(rv.type) && !rv.type.shape.isNDims()) {
-                line(name + " = " + emitExpr(rhs) + ";");  // vector copy from the field-local
+        // Whole-array struct-field READ: `y = s.v` / `y = s.a.v` where the field is a local
+        // std::vector (non-ND, or known-dim ND).
+        if (isArrayVar(name) && arrays_.at(name).isLocal
+            && (rhs.type == NodeType::FIELD_ACCESS || rhs.type == NodeType::DYNAMIC_FIELD_ACCESS)) {
+            const std::string rhsFld = resolveArrayVar(rhs);
+            const AbstractValue rv   = inferExpr(rhs, types_, reg_, classes_);
+            if (!rhsFld.empty() && rhsFld != name && arrays_.at(rhsFld).isLocal
+                && !arrays_.at(name).ndRuntimeLocal && !arrays_.at(rhsFld).ndRuntimeLocal
+                && rv.type.isConcrete() && !rv.type.shape.isScalar()) {
+                line(name + " = " + rhsFld + ";");  // vector copy from the field-local
                 types_.set(name, rv);
                 return;
             }
         }
 
-        // Whole-array COPY: `B = A` where A is an array VAR (param or local) -> a value
-        // copy of A's flat buffer into B (column-major), plus B's dim companions for a
-        // runtime-dim dst. Works for any rank (1-D / 2-D KnownDims / runtime-dim N-D); B
-        // takes A's inferred type. v1: A distinct from B (a self-copy B=B is a no-op,
-        // skipped). numel(A) = 1-D length / 2-D rows*cols / N-D product of dims.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && rhs.type == NodeType::IDENTIFIER
-            && isArrayVar(rhs.strValue) && rhs.strValue != name) {
-            const ArrayInfo    &A  = arrays_.at(rhs.strValue);
-            const ArrayInfo    &B  = arrays_.at(name);
-            const AbstractValue rv = inferExpr(rhs, types_, reg_, classes_);
-            if (rv.type.isConcrete() && !rv.type.shape.isScalar()) {
-                std::string numel;
-                if (A.isND) {
-                    numel = A.ndDims[0];
-                    for (std::size_t i = 1; i < A.ndDims.size(); ++i) numel += " * " + A.ndDims[i];
-                } else if (A.is2D) {
-                    numel = A.rowsVar + " * " + A.colsVar;
-                } else {
-                    numel = A.lenVar;
+        // Whole-array COPY: `B = A` (or `y = s.v` for a struct param buffer / runtime-dim N-D,
+        // or `s.v = x` / `s.A = M`).
+        {
+            const std::string rhsArr = resolveArrayVar(rhs);
+            if (isArrayVar(name) && arrays_.at(name).isLocal && !rhsArr.empty() && rhsArr != name) {
+                const ArrayInfo    &A  = arrays_.at(rhsArr);
+                const ArrayInfo    &B  = arrays_.at(name);
+                const AbstractValue rv = inferExpr(rhs, types_, reg_, classes_);
+                if (rv.type.isConcrete() && !rv.type.shape.isScalar()) {
+                    if (!structWriteFld.empty() && !A.is2D && !A.isND && !B.is2D && !B.isND) {
+                        line(name + ".assign(" + A.dataExpr + ", " + A.dataExpr + " + "
+                             + A.lenVar + ");");
+                        types_.set(name, rv);
+                        return;
+                    }
+                    std::string numel;
+                    if (A.isND) {
+                        numel = A.ndDims[0];
+                        for (std::size_t i = 1; i < A.ndDims.size(); ++i)
+                            numel += " * " + A.ndDims[i];
+                    } else if (A.is2D) {
+                        numel = A.rowsVar + " * " + A.colsVar;
+                    } else {
+                        numel = A.lenVar;
+                    }
+                    line("{");
+                    ++indent_;
+                    if (B.isND && B.ndRuntimeLocal)
+                        for (std::size_t k = 0; k < B.ndDims.size(); ++k)
+                            line(B.ndDims[k] + " = " + dimExpr(A, k) + ";");
+                    line(name + ".assign(" + A.dataExpr + ", " + A.dataExpr + " + (" + numel
+                         + "));");
+                    --indent_;
+                    line("}");
+                    types_.set(name, rv);
+                    return;
                 }
-                line("{");
-                ++indent_;
-                if (B.isND && B.ndRuntimeLocal)  // runtime-dim dst: copy A's dims -> B's companions
-                    for (std::size_t k = 0; k < B.ndDims.size(); ++k)
-                        line(B.ndDims[k] + " = " + dimExpr(A, k) + ";");
-                line(name + ".assign(" + A.dataExpr + ", " + A.dataExpr + " + (" + numel + "));");
-                --indent_;
-                line("}");
-                types_.set(name, rv);
-                return;
             }
         }
 
@@ -8503,33 +8818,37 @@ void Emitter::emitAssign(const ASTNode &s)
             unsupported("array-valued assignment to '" + name
                         + "' (only size-constructor init of the output in RawBuffer ABI)");
 
-        // Scalar assignment (the local was hoisted at function entry).
+        // Scalar / object / struct assignment (the local was hoisted at function entry).
         const AbstractValue rv = inferExpr(rhs, types_, reg_, classes_);
-        // Dynamic tier (DESIGN.md §10 C1): the RHS type could not be inferred —
-        // keep it boxed as an numkit_rt::val (the local was hoisted as one) and
-        // dispatch its operations to the runtime. The universal sound fallback;
-        // needs the C-ABI, so only under bridge_ (else the typed path throws).
-        // A Dynamic-hoisted local (numkit_val) keeps EVERY assignment boxed: there is
-        // no numkit_val = <typed> conversion, and its later reads must stay Dynamic so
-        // they route through the runtime. Box when the RHS is Dynamic OR the LHS
-        // local was hoisted Dynamic (from markAssignedDynamic — e.g. a try/catch
-        // body); the local then stays Dynamic in the flow env.
+        if (rv.type.isStruct() && rv.type.structLayout) {
+            std::string srcPrefix;
+            if (rhs.type == NodeType::IDENTIFIER)
+                srcPrefix = "_numkit_fld_" + rhs.strValue;
+            else if (rhs.type == NodeType::FIELD_ACCESS
+                     || rhs.type == NodeType::DYNAMIC_FIELD_ACCESS)
+                srcPrefix = structFieldLocal(rhs);
+            const std::string dstPrefix =
+                structWriteFld.empty() ? ("_numkit_fld_" + name) : name;
+            if (!srcPrefix.empty()) {
+                if (srcPrefix != dstPrefix)
+                    emitStructCopy(dstPrefix, srcPrefix, *rv.type.structLayout);
+                types_.set(name, rv);
+                return;
+            }
+        }
         const bool lhsDynamic = dynamicLocals_.count(name) != 0;
         if (bridge_ && (rv.type.isDynamic() || lhsDynamic)) {
             line(name + " = " + emitDynamicExpr(rhs) + ";");
             types_.set(name, lhsDynamic ? AbstractValue::dynamic() : rv);
             return;
         }
-        // numel/length return a count; assigning into a double local needs
-        // no cast (the builtin emitter already produced a double). But the
-        // companion length is size_t, so the cast is inside emitBuiltinCall.
         line(name + " = " + emitExpr(rhs) + ";");
         types_.set(name, rv);
         return;
     }
 
     if (lhs.type == NodeType::FIELD_ACCESS
-        || lhs.type == NodeType::DYNAMIC_FIELD_ACCESS) {  // obj.field = rhs / s.('f') = rhs (G2.6)
+        || lhs.type == NodeType::DYNAMIC_FIELD_ACCESS) {  // obj.field = rhs / s(i).a = rhs
         if (lhs.children.empty()) unsupported("field write arity");
         // s(i).a = v : struct-ARRAY field write (SoA, G2.5) -> _numkit_fld_s_a(i) = v, GROWABLE
         // (index_set_grow), so s(i).a=v in a loop builds the field-array. s is not a value;
@@ -8549,49 +8868,6 @@ void Emitter::emitAssign(const ASTNode &s)
             }
         }
         const AbstractValue base = inferExpr(*lhs.children[0], types_, reg_, classes_);
-        // Plain struct: flatten `s.f = rhs` to a synthesized field-local (field-
-        // flattening; no struct type), generalised to a NESTED chain s.a.b via the
-        // chain helper. v1: a scalar (unboxable) field, or a 1-D array-var field.
-        const std::string fld = base.type.isObject() ? std::string() : structFieldLocal(lhs);
-        if (!fld.empty()) {
-            const AbstractValue rv = inferExpr(rhs, types_, reg_, classes_);
-            // After flattening the field write, accumulate the base's STRUCT type (a
-            // single-level base s.f only) so a WHOLESALE `s` reference -- e.g. a call arg --
-            // sees the layout. Mirrors the inference accumulation (G2.2); the emit env
-            // (types_) is separate, so it must be updated here too.
-            auto accumulateStruct = [&]() {
-                if (lhs.children[0]->type != NodeType::IDENTIFIER) return;
-                const std::string  &svar = lhs.children[0]->strValue;
-                const AbstractValue cur  = types_.has(svar) ? types_.get(svar)
-                                                            : AbstractValue::dynamic();
-                auto layout = std::make_shared<StructLayout>();
-                if (cur.type.isStruct() && cur.type.structLayout)
-                    layout->fields = cur.type.structLayout->fields;
-                bool found = false;
-                for (auto &fp : layout->fields)
-                    if (fp.first == lhs.strValue) { fp.second = rv.type; found = true; break; }
-                if (!found) layout->fields.emplace_back(lhs.strValue, rv.type);
-                types_.set(svar, {InferredType::structOf(std::move(layout)), ConstVal::unknown()});
-            };
-            if (rv.type.isUnboxableScalar()) {
-                line(fld + " = " + emitExpr(rhs) + ";");  // scalar field
-                types_.set(fld, rv);
-                accumulateStruct();
-                return;
-            }
-            // Array field `s.v = x` (x a 1-D array VAR): the field-local vector
-            // (hoisted from the inferred array decl) copies x's elements.
-            if (rv.type.isConcrete() && !rv.type.shape.isScalar() && !is2DMatrixType(rv.type)
-                && !rv.type.shape.isNDims() && rhs.type == NodeType::IDENTIFIER
-                && isArrayVar(rhs.strValue)) {
-                const ArrayInfo &x = arrays_.at(rhs.strValue);
-                line(fld + ".assign(" + x.dataExpr + ", " + x.dataExpr + " + " + x.lenVar + ");");
-                types_.set(fld, rv);
-                accumulateStruct();
-                return;
-            }
-            unsupported("struct field write (v1: a scalar, or a 1-D array var, field)");
-        }
         if (!base.type.isObject() || !classes_)
             unsupported("field write on a non-object value");
         const ClassInfo *ci = classes_->byId(base.type.classId);
@@ -8604,8 +8880,20 @@ void Emitter::emitAssign(const ASTNode &s)
 
     if ((lhs.type == NodeType::CALL || lhs.type == NodeType::INDEX)
         && !lhs.children.empty()
-        && lhs.children[0]->type == NodeType::IDENTIFIER) {
+        && (lhs.children[0]->type == NodeType::IDENTIFIER
+            || !resolveArrayVar(*lhs.children[0]).empty())) {
         emitIndexWrite(lhs, rhs);
+        if (lhs.children[0]->type == NodeType::FIELD_ACCESS
+            || lhs.children[0]->type == NodeType::DYNAMIC_FIELD_ACCESS) {
+            const std::string fld = resolveArrayVar(*lhs.children[0]);
+            if (!fld.empty()) {
+                const ArrayInfo &ai = arrays_.at(fld);
+                const InferredType ft =
+                    types_.has(fld) ? types_.get(fld).type
+                                    : InferredType::concrete(ai.dtype, Shape::rowVector());
+                recordStructFieldWrite(*lhs.children[0], fld, ft);
+            }
+        }
         return;
     }
 
@@ -9166,35 +9454,68 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         close();
         return;
     }
-    if (rhs.type != NodeType::CALL || rhs.children.empty()
-        || rhs.children[0]->type != NodeType::IDENTIFIER)
-        unsupported("multi-assign RHS must be a user-function call (v1)");
-    const std::string &name = rhs.children[0]->strValue;
-    if (!ctx_ || !ctx_->funcs || types_.has(name) || !ctx_->funcs->has(name))
-        unsupported("multi-assign of a non-user-function '" + name + "'");
-    const ASTNode *def = ctx_->funcs->find(name);
+    // Multi-assign RHS can be either a user-function call `f(args)` or a value/handle
+    // class method call `obj.m(args)`.
+    if (rhs.type != NodeType::CALL || rhs.children.empty())
+        unsupported("multi-assign RHS must be a function or method call");
 
+    const ASTNode    &callee     = *rhs.children[0];
+    const ASTNode    *def        = nullptr;
+    std::string       calleeName;
+    std::string       mangledBase;
     std::vector<InferredType> argTypes;
-    std::string               argList;
-    for (std::size_t i = 1; i < rhs.children.size(); ++i)
-        appendCallArg(*rhs.children[i], argTypes, argList);
-    if (argTypes.size() != def->paramNames.size())
-        unsupported("arity mismatch calling '" + name + "'");
+    std::string       argList;
+    std::vector<InferredType> outs;
+
+    if (callee.type == NodeType::IDENTIFIER) {
+        calleeName  = callee.strValue;
+        mangledBase = calleeName;
+        if (!ctx_ || !ctx_->funcs || types_.has(calleeName) || !ctx_->funcs->has(calleeName))
+            unsupported("multi-assign of a non-user-function '" + calleeName + "'");
+        def = ctx_->funcs->find(calleeName);
+        for (std::size_t i = 1; i < rhs.children.size(); ++i)
+            appendCallArg(*rhs.children[i], argTypes, argList);
+        if (argTypes.size() != def->paramNames.size())
+            unsupported("arity mismatch calling '" + calleeName + "'");
+        outs = reg_.applyMulti(calleeName, toArgInfos(argTypes));
+    } else if (callee.type == NodeType::FIELD_ACCESS && !callee.children.empty()) {
+        const std::string &method = callee.strValue;
+        const ASTNode     &objNode = *callee.children[0];
+        const InferredType objT   = inferExpr(objNode, types_, reg_, classes_).type;
+        if (!objT.isObject() || !classes_ || !ctx_)
+            unsupported("multi-assign method call on non-object '" + method + "'");
+        const ClassInfo *ci = classes_->byId(objT.classId);
+        if (!ci) unsupported("unknown class id in multi-assign method call");
+        const ASTNode *md = ci->method(method);
+        if (!md)
+            unsupported("class '" + ci->name + "' has no method '" + method + "'");
+        def         = md;
+        calleeName  = ci->name + "::" + method;
+        mangledBase = ci->name + "__" + method;
+        appendCallArg(objNode, argTypes, argList);
+        for (std::size_t i = 1; i < rhs.children.size(); ++i)
+            appendCallArg(*rhs.children[i], argTypes, argList);
+        if (argTypes.size() != def->paramNames.size())
+            unsupported("arity mismatch calling method '" + calleeName + "'");
+        outs = reg_.applyMulti(calleeName, toArgInfos(argTypes));
+    } else {
+        unsupported("multi-assign RHS must be a user-function or method call");
+    }
+
     const std::size_t ncallee = def->returnNames.size();
     if (s.returnNames.size() > ncallee)
-        unsupported("multi-assign requests more outputs than '" + name + "' returns");
+        unsupported("multi-assign requests more outputs than '" + calleeName + "' returns");
     // PARTIAL NARGOUT: requesting FEWER targets than the callee returns is allowed. The
     // monomorphic callee always computes every output (its signature has one out-param per
     // output), so the caller satisfies the full signature -- the unrequested TRAILING outputs
     // get throwaway out-params, exactly like an explicit `~`. `nargout` is not a value in the
     // compilable subset (a function branching on it falls outside it), so there is no
-    // nargout-gated behaviour to diverge on: the bound first-k outputs match MATLAB's. Sound.
+    // nargout-gated behaviour to diverge on: the bound first-k outputs match the reference engine's. Sound.
 
-    const std::vector<InferredType> outs = reg_.applyMulti(name, toArgInfos(argTypes));
-    // Output 0 may be returned BY VALUE — a leading 1-D array (the callee's ABI
-    // mirror in emitOneFunction). Then target 0 takes the call's RETURN value and
+    // Output 0 may be returned BY VALUE — a leading 1-D/2-D-known/N-D-known array (the callee's
+    // ABI mirror in emitOneFunction). Then target 0 takes the call's RETURN value and
     // is NOT a reference out-arg; outputs 1.. stay reference out-args. Otherwise
-    // every output is a reference out-arg (the all-scalar multi-output case).
+    // every output is a reference out-arg.
     const InferredType out0 = !outs.empty() ? outs[0] : InferredType::dynamic();
     const bool         out0ByValue = isByValueReturnArrayType(out0);
     // An ignored (~) output, OR an unrequested trailing output (partial nargout), still has a
@@ -9206,29 +9527,33 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         const bool          requested = i < s.returnNames.size();
         const std::string   rn = requested ? s.returnNames[i] : std::string();  // unrequested -> ""
         const InferredType  ot = i < outs.size() ? outs[i] : InferredType::dynamic();
-        if (!argList.empty()) argList += ", ";
         if (!requested || rn.empty() || rn == "~") {
-            // explicit ~ OR an unrequested trailing output -> a throwaway out-param.
-            if (!isUnboxableScalarType(ot))
-                unsupported("ignored / unrequested multi-output must be a scalar output (v1): '"
-                            + name + "'");
-            const std::string tmp = "_numkit_ignore_" + std::to_string(i);
-            ignoreDecls.push_back(cppScalarType(ot.dtype) + " " + tmp + " = "
-                                  + zeroLiteral(ot.dtype) + ";");
-            argList += tmp;
-        } else {
+            appendIgnoreOutArg("_numkit_ignore_" + std::to_string(i), ot, ignoreDecls, argList);
+        } else if (ot.isStruct()) {
+            if (!ot.structLayout || ot.structLayout->fields.empty())
+                unsupported("multi-output struct '" + rn + "' has no fields");
+            types_.set(rn, {ot, ConstVal::unknown()});
+            appendStructOutArgs("_numkit_fld_" + rn, *ot.structLayout, argList);
+        } else if (isUnboxableScalarType(ot) || ot.isObject()
+                   || is2DMatrixType(ot) || (ot.isConcrete() && ot.shape.isNDims())
+                   || isBufferArrayType(ot)) {
+            if (!argList.empty()) argList += ", ";
             argList += rn;  // out-arg, bound to the callee's reference out-param
             types_.set(rn, {ot, ConstVal::unknown()});
+        } else {
+            unsupported("multi-output '" + rn + "' of '" + calleeName + "' has unsupported type "
+                        + ot.str());
         }
     }
 
-    const std::string mangled = mangle(name, argTypes);
+    const std::string mangled = mangle(mangledBase, argTypes);
     if (ctx_->seen.insert(mangled).second)
         ctx_->pending.push_back({def, argTypes, mangled});
     // With a by-value output 0, target 0 takes the RETURN (an array LOCAL —
     // std::vector); a ~ slot discards the returned vector.
     std::string callStmt;
-    if (out0ByValue && !(s.returnNames[0].empty() || s.returnNames[0] == "~")) {
+    if (out0ByValue && !s.returnNames.empty()
+        && !(s.returnNames[0].empty() || s.returnNames[0] == "~")) {
         callStmt = s.returnNames[0] + " = " + mangled + "(" + argList + ");";
         types_.set(s.returnNames[0], {out0, ConstVal::unknown()});
     } else {
@@ -9366,11 +9691,11 @@ void Emitter::emitIf(const ASTNode &s)
 
 void Emitter::emitSwitch(const ASTNode &s)
 {
-    // MATLAB switch: evaluate the selector ONCE, then take the first case whose
+    // switch: evaluate the selector ONCE, then take the first case whose
     // value — or ANY element of a `case {a,b}` cell-list — equals it (isequal),
     // else `otherwise`. Lowered to an if-else chain over a selector temp. v1: an
     // unboxed-scalar selector + unboxed-scalar case values, so isequal reduces to
-    // `==` (NaN matches nothing, as in MATLAB). A string/array selector or case
+    // `==` (NaN matches nothing). A string/array selector or case
     // value (full isequal), or a 2-D cell case-list, is refused.
     if (s.children.empty()) unsupported("switch with no selector expression");
     const ASTNode      &sel  = *s.children[0];
@@ -9437,11 +9762,11 @@ void Emitter::emitSwitch(const ASTNode &s)
 
 void Emitter::emitTry(const ASTNode &s)
 {
-    // try/catch -> C++ `try { <body> } catch (...) { <handler> }`. A nk runtime
+    // try/catch -> C++ `try { <body> } catch (...) { <handler> }`. A runtime
     // error surfaces as a C++ exception, so `catch (...)` catches it. The inference
     // marks try/catch-assigned vars Dynamic (a throw mid-try leaves them uncertain
     // — sound over-approximation), so the bodies ride the Dynamic tier (bridge).
-    // v1: the catch's bound exception variable (MATLAB binds an MException object)
+    // v1: the catch's bound exception variable (an MException object)
     // is NOT represented -> refuse a `catch err` form; a bare `catch`, or
     // `try ... end` with no catch (which silently swallows), is supported.
     if (s.children.empty()) unsupported("try with no body");
@@ -9484,11 +9809,11 @@ void Emitter::emitStmt(const ASTNode &s)
     case NodeType::SWITCH_STMT: emitSwitch(s); return;
     case NodeType::TRY_STMT:    emitTry(s);    return;
     // break / continue lower directly to the C++ loop-control keywords. They only
-    // ever appear inside a loop body (MATLAB semantics + the parser enforce it,
+    // ever appear inside a loop body (language semantics + the parser enforce it,
     // and the emitted code mirrors that structure), so the keyword lands inside
     // the corresponding emitted for/while. No effect on the index/bound analyses
     // (those are per-expression, not control-flow sensitive); an early exit just
-    // leaves arrays filled up to the exit point, matching MATLAB.
+    // leaves arrays filled up to the exit point.
     case NodeType::BREAK_STMT:    line("break;");    return;
     case NodeType::CONTINUE_STMT: line("continue;"); return;
     case NodeType::RETURN_STMT:
@@ -9496,6 +9821,7 @@ void Emitter::emitStmt(const ASTNode &s)
         // emitOneFunction via setReturnInfo). A value function returns its output
         // var (boxed via .take() for a Dynamic result); a void / out-param /
         // multi-ref function emits a bare `return;`.
+        emitEpilogueAssigns();
         if (!returnsValue_)      line("return;");
         else if (returnDynamic_) emitReturnDynamic(returnName_);
         else                     emitReturnScalar(returnName_);
@@ -10104,6 +10430,8 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     std::unordered_map<std::string, ArrayInfo>  arrays;
     std::vector<std::string>                    sigParams;
     std::set<std::string>                       paramSet;
+    std::vector<std::string> prologueStmts;
+    std::vector<std::pair<std::string, std::string>> epilogueAssigns;
     for (const ParamSpec &p : params) {
         entry.set(p.name, {p.type, ConstVal::unknown()});
         paramSet.insert(p.name);
@@ -10154,25 +10482,121 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             // value class -> by value (value semantics); handle -> wrapper.
             sigParams.push_back(cppObjectType(p.type.classId, classes) + " " + p.name);
         } else if (p.type.isStruct()) {
-            // A plain struct param explodes into one C++ param per field, named
-            // _numkit_fld_<p>_<f> (the field-flatten convention the body's s.f reads). The
-            // struct itself is virtual -- no param of its own (p.name stays in paramSet, so
-            // the hoist skips it). v1: all-scalar fields (array / nested struct fields
-            // deferred). p.name was already entry-set to the STRUCT type at the loop top.
+            // A struct param explodes recursively into C++ params per leaf field, named
+            // _numkit_fld_<p>_<f1>_<f2>... (the field-flatten convention the body reads).
+            // The struct (and any nested sub-structs) are virtual -- no C++ param of their own.
+            // Supports scalar, object, 1D/2D/ND array, and arbitrarily nested struct fields.
             if (!p.type.structLayout)
                 unsupported("struct parameter '" + p.name + "' has no field layout");
-            for (const auto &f : p.type.structLayout->fields) {
-                if (!isUnboxableScalarType(f.second))
-                    unsupported("struct parameter field '" + p.name + "." + f.first
-                                + "' must be a scalar (v1; array / nested struct fields deferred)");
-                const std::string fld = "_numkit_fld_" + p.name + "_" + f.first;
-                entry.set(fld, {f.second, ConstVal::unknown()});  // body reads s.f -> this field-local
-                paramSet.insert(fld);
-                sigParams.push_back(cppScalarType(f.second.dtype) + " " + fld);
-            }
+            const bool isReturnStruct =
+                std::find(funcDef.returnNames.begin(), funcDef.returnNames.end(), p.name)
+                != funcDef.returnNames.end();
+            std::function<void(const std::string &, const std::string &, const StructLayout &)>
+                explodeStructParam = [&](const std::string &prefix,
+                                         const std::string &dotPath,
+                                         const StructLayout &layout) {
+                    for (const auto &f : layout.fields) {
+                        const std::string fld = prefix + "_" + f.first;
+                        const std::string dp  = dotPath + "." + f.first;
+                        const InferredType &ft = f.second;
+                        entry.set(fld, {ft, ConstVal::unknown()});
+                        if (ft.isStruct()) {
+                            if (!ft.structLayout)
+                                unsupported("nested struct parameter field '" + dp
+                                            + "' has no field layout");
+                            paramSet.insert(fld);
+                            explodeStructParam(fld, dp, *ft.structLayout);
+                        } else if (isUnboxableScalarType(ft)) {
+                            paramSet.insert(fld);
+                            sigParams.push_back(cppScalarType(ft.dtype) + " " + fld);
+                        } else if (ft.isObject()) {
+                            paramSet.insert(fld);
+                            sigParams.push_back(cppObjectType(ft.classId, classes) + " " + fld);
+                        } else if (is2DMatrixType(ft)) {
+                            const std::string sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld;
+                            const std::string rowsVar = companion(sigName, "_rows");
+                            const std::string colsVar = companion(sigName, "_cols");
+                            const std::string lenExpr = "(" + rowsVar + " * " + colsVar + ")";
+                            sigParams.push_back("const " + cppScalarType(ft.dtype) + "* " + sigName
+                                                + ", std::size_t " + rowsVar
+                                                + ", std::size_t " + colsVar);
+                            if (isReturnStruct) {
+                                prologueStmts.push_back(fld + ".assign(" + sigName + ", "
+                                                        + sigName + " + " + lenExpr + ");");
+                            } else {
+                                ArrayInfo ai;
+                                ai.dtype    = ft.dtype;
+                                ai.is2D     = true;
+                                ai.rowsVar  = rowsVar;
+                                ai.colsVar  = colsVar;
+                                ai.lenVar   = lenExpr;
+                                ai.dataExpr = fld;
+                                arrays[fld] = ai;
+                                paramSet.insert(fld);
+                            }
+                        } else if (ft.isConcrete() && ft.shape.isNDims()) {
+                            const std::string sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld;
+                            std::string sig = "const " + cppScalarType(ft.dtype) + "* " + sigName;
+                            std::string prod;
+                            std::vector<std::string> inDims;
+                            for (std::size_t d = 0; d < ft.shape.nd.size(); ++d) {
+                                const std::string dv = companion(sigName, "_d" + std::to_string(d));
+                                inDims.push_back(dv);
+                                sig += ", std::size_t " + dv;
+                                prod += (prod.empty() ? "" : " * ") + dv;
+                            }
+                            const std::string lenExpr = "(" + prod + ")";
+                            sigParams.push_back(sig);
+                            if (isReturnStruct) {
+                                prologueStmts.push_back(fld + ".assign(" + sigName + ", "
+                                                        + sigName + " + " + lenExpr + ");");
+                                bool allKnown = true;
+                                for (std::size_t d : ft.shape.nd)
+                                    if (d == 0) { allKnown = false; break; }
+                                if (!allKnown) {
+                                    for (std::size_t d = 0; d < ft.shape.nd.size(); ++d) {
+                                        prologueStmts.push_back(
+                                            companion(fld, "_d" + std::to_string(d)) + " = "
+                                            + inDims[d] + ";");
+                                    }
+                                }
+                            } else {
+                                ArrayInfo ai;
+                                ai.dtype    = ft.dtype;
+                                ai.isND     = true;
+                                ai.dataExpr = fld;
+                                ai.ndDims   = inDims;
+                                ai.lenVar   = lenExpr;
+                                arrays[fld] = ai;
+                                paramSet.insert(fld);
+                            }
+                        } else if (isBufferArrayType(ft)) {
+                            const std::string sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld;
+                            const std::string lenVar  = companion(sigName, "_len");
+                            sigParams.push_back("const " + cppScalarType(ft.dtype) + "* " + sigName
+                                                + ", std::size_t " + lenVar);
+                            if (isReturnStruct) {
+                                prologueStmts.push_back(fld + ".assign(" + sigName + ", "
+                                                        + sigName + " + " + lenVar + ");");
+                            } else {
+                                ArrayInfo ai;
+                                ai.dtype    = ft.dtype;
+                                ai.lenVar   = lenVar;
+                                ai.dataExpr = fld;
+                                ai.orient   = orientOf(ft);
+                                arrays[fld] = ai;
+                                paramSet.insert(fld);
+                            }
+                        } else {
+                            unsupported("struct parameter field '" + dp + "' has unsupported type "
+                                        + ft.str());
+                        }
+                    }
+                };
+            explodeStructParam("_numkit_fld_" + p.name, p.name, *p.type.structLayout);
         } else if (bridge && p.type.isDynamic()) {
             // Dynamic tier (DESIGN.md §10 C1): an un-typeable parameter is a boxed
-            // numkit_rt::val passed BY VALUE — MATLAB pass-by-value is a copy (val's
+            // numkit_rt::val passed BY VALUE — pass-by-value is a copy (val's
             // copy = deep clone). Directly usable as a Dynamic local in the body.
             sigParams.push_back("numkit_rt::val " + p.name);
         } else {
@@ -10187,8 +10611,8 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     // Reserved-identifier guard. A user variable / parameter is emitted VERBATIM
     // as a C++ name (synthesised names escape "__", but user names stay readable
     // as-is). "__" anywhere in an identifier is reserved to the implementation
-    // ([lex.name]) — UB to declare. A leading "_"+uppercase is impossible (a
-    // MATLAB identifier cannot begin with "_"), so "__" is the only reserved
+    // ([lex.name]) — UB to declare. A leading "_"+uppercase is impossible (an
+    // identifier cannot begin with "_"), so "__" is the only reserved
     // shape a user name can take. Refuse it with a clear message rather than
     // emit UB. (A function/method NAME may contain "__"; it is mangled through
     // escapeBase, so it never reaches the output verbatim — only var names do.)
@@ -10202,15 +10626,106 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
         for (const auto &[n, t] : decls) refuseDunder(n);
     }
 
+    // Helper: register a `std::vector<T>&` out-param for an array (struct output field
+    // or non-leading multi-output array). Treated like a local vector (`ai.isLocal = true`)
+    // for `.resize()` / `.assign()` / `.data()` / `.size()`, with `ai.isRefParam = true`
+    // so `hoistArrayLocals()` does not redeclare the vector inside the body.
+    auto registerOutRefArray = [&](const std::string &varName, const InferredType &ft) {
+        if (is2DMatrixType(ft)) {
+            ArrayInfo ai;
+            ai.dtype      = ft.dtype;
+            ai.isLocal    = true;
+            ai.isRefParam = true;
+            ai.is2D       = true;
+            ai.dataExpr   = varName + ".data()";
+            ai.lenVar     = varName + ".size()";
+            ai.rowsVar    = std::to_string(ft.shape.rows);
+            ai.colsVar    = std::to_string(ft.shape.cols);
+            arrays[varName] = ai;
+        } else if (ft.isConcrete() && ft.shape.isNDims()) {
+            ArrayInfo ai;
+            ai.dtype      = ft.dtype;
+            ai.isLocal    = true;
+            ai.isRefParam = true;
+            ai.isND       = true;
+            ai.dataExpr   = varName + ".data()";
+            ai.lenVar     = varName + ".size()";
+            bool allKnown = true;
+            for (std::size_t d : ft.shape.nd)
+                if (d == 0) { allKnown = false; break; }
+            if (allKnown) {
+                for (std::size_t d : ft.shape.nd) ai.ndDims.push_back(std::to_string(d));
+            } else {
+                ai.ndRuntimeLocal = true;
+                for (std::size_t d = 0; d < ft.shape.nd.size(); ++d)
+                    ai.ndDims.push_back(companion(varName, "_d" + std::to_string(d)));
+            }
+            arrays[varName] = ai;
+        } else {
+            ArrayInfo ai;
+            ai.dtype      = ft.dtype;
+            ai.isLocal    = true;
+            ai.isRefParam = true;
+            ai.dataExpr   = varName + ".data()";
+            ai.lenVar     = varName + ".size()";
+            ai.orient     = orientOf(ft);
+            arrays[varName] = ai;
+        }
+        paramSet.insert(varName);
+        sigParams.push_back("std::vector<" + cppScalarType(ft.dtype) + ">& " + varName);
+    };
+
+    // Helper: recursively explode a struct output into per-leaf reference out-params.
+    std::function<void(const std::string &, const std::string &, const StructLayout &)>
+        explodeStructOutput = [&](const std::string &prefix,
+                                  const std::string &dotPath,
+                                  const StructLayout &layout) {
+            for (const auto &f : layout.fields) {
+                const std::string fld = prefix + "_" + f.first;
+                const std::string dp  = dotPath + "." + f.first;
+                const InferredType &ft = f.second;
+                entry.set(fld, {ft, ConstVal::unknown()});
+                if (ft.isStruct()) {
+                    if (!ft.structLayout)
+                        unsupported("nested struct output field '" + dp + "' has no field layout");
+                    paramSet.insert(fld);
+                    explodeStructOutput(fld, dp, *ft.structLayout);
+                } else if (isUnboxableScalarType(ft)) {
+                    if (paramSet.count(fld)) {
+                        const std::string outRef = "_numkit_out_" + fld;
+                        sigParams.push_back(cppScalarType(ft.dtype) + "& " + outRef);
+                        epilogueAssigns.push_back({outRef, fld});
+                    } else {
+                        paramSet.insert(fld);
+                        sigParams.push_back(cppScalarType(ft.dtype) + "& " + fld);
+                    }
+                } else if (ft.isObject()) {
+                    if (paramSet.count(fld)) {
+                        const std::string outRef = "_numkit_out_" + fld;
+                        sigParams.push_back(cppObjectType(ft.classId, classes) + "& " + outRef);
+                        epilogueAssigns.push_back({outRef, fld});
+                    } else {
+                        paramSet.insert(fld);
+                        sigParams.push_back(cppObjectType(ft.classId, classes) + "& " + fld);
+                    }
+                } else if (is2DMatrixType(ft) || (ft.isConcrete() && ft.shape.isNDims())
+                           || isBufferArrayType(ft)) {
+                    registerOutRefArray(fld, ft);
+                } else {
+                    unsupported("struct output field '" + dp + "' has unsupported type " + ft.str());
+                }
+            }
+        };
+
     // Return classification:
     //   0 outputs -> void (e.g. a handle class's in-place mutator);
-    //   1 output  -> scalar (by value) / array (out-param) / object (by value);
-    //   N outputs -> void + a reference out-param per (scalar) output.
+    //   1 output  -> scalar (by value) / array (out-param) / object (by value) / struct (out-params);
+    //   N outputs -> void (or leading by-value array) + reference out-params per output.
     std::string retCpp             = "void";
     std::string retName;
     bool        arrayReturn        = false;
     bool        dynamicReturn      = false;
-    bool        multiByValueReturn = false;  // nout>=2 + leading 1-D array (output 0 by value)
+    bool        multiByValueReturn = false;  // nout>=2 + leading array (output 0 by value)
     if (nout == 1) {
         retName             = funcDef.returnNames[0];
         const auto retIt    = decls.find(retName);
@@ -10300,23 +10815,14 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             // out-param; the scalar-return path (return retName;) applies.
             retCpp = cppObjectType(retType.classId, classes);
         } else if (retType.isStruct()) {
-            // A struct return (G2.4): the return var's per-field out-param REFERENCES are
+            // A struct return: the return var's per-leaf-field out-param REFERENCES are
             // filled IN PLACE by the body -- `s.f = ..` flattens to `_numkit_fld_<ret>_<f> = ..`,
-            // which IS the out-param ref (mirror of the array-output out-param + the struct
-            // PARAM explosion of G2.3). void return, no scalar return. v1: all-scalar fields.
+            // which IS the out-param ref (or vector ref for array fields).
             if (!retType.structLayout)
                 unsupported("struct output '" + retName + "' has no field layout");
             arrayReturn = true;  // void; body fills the out-params; no scalar return emitted
             retCpp      = "void";
-            for (const auto &f : retType.structLayout->fields) {
-                if (!isUnboxableScalarType(f.second))
-                    unsupported("struct output field '" + retName + "." + f.first
-                                + "' must be a scalar (v1; array / nested struct fields deferred)");
-                const std::string fld = "_numkit_fld_" + retName + "_" + f.first;
-                entry.set(fld, {f.second, ConstVal::unknown()});
-                paramSet.insert(fld);  // an out-param ref the body writes, not a hoisted local
-                sigParams.push_back(cppScalarType(f.second.dtype) + "& " + fld);
-            }
+            explodeStructOutput("_numkit_fld_" + retName, retName, *retType.structLayout);
         } else if (bridge && retType.isDynamic()) {
             // Dynamic tier (DESIGN.md §10 C1): an un-typeable result is returned
             // BOXED as an owned numkit_val — the path for a Dynamic VALUE to cross the
@@ -10330,10 +10836,9 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     } else if (nout >= 2) {
         // Outputs are reference out-params the body writes directly — EXCEPT a
         // leading array (output 0), which is returned BY VALUE as a flat
-        // std::vector (self-describing; no caller pre-alloc). This composes the
-        // interproc-by-value return (1-D / 2-D-KnownDims / fully-known N-D) with
-        // scalar reference outputs. v1: outputs 1.. must be unboxed scalars (a
-        // trailing array output would need caller pre-alloc — sound refusal).
+        // std::vector (self-describing; no caller pre-alloc). Supports scalar,
+        // object, struct, and array outputs, as well as outputs whose name is
+        // also an input parameter (e.g. `function [obj, v] = step(obj, dx)`).
         for (std::size_t oi = 0; oi < funcDef.returnNames.size(); ++oi) {
             const std::string &rn = funcDef.returnNames[oi];
             if (rn.empty()) unsupported("multi-output with an unnamed output");
@@ -10349,18 +10854,44 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
                 multiByValueReturn = true;
                 continue;
             }
+            if (t.isStruct()) {
+                if (!t.structLayout)
+                    unsupported("struct multi-output '" + rn + "' has no field layout");
+                explodeStructOutput("_numkit_fld_" + rn, rn, *t.structLayout);
+                continue;
+            }
+            if (is2DMatrixType(t) || (t.isConcrete() && t.shape.isNDims())
+                || isBufferArrayType(t)) {
+                registerOutRefArray(rn, t);
+                continue;
+            }
+            if (t.isObject()) {
+                if (paramSet.count(rn)) {
+                    const std::string outRef = "_numkit_out_" + rn;
+                    sigParams.push_back(cppObjectType(t.classId, classes) + "& " + outRef);
+                    epilogueAssigns.push_back({outRef, rn});
+                } else {
+                    sigParams.push_back(cppObjectType(t.classId, classes) + "& " + rn);
+                    paramSet.insert(rn);
+                }
+                continue;
+            }
             if (!isUnboxableScalarType(t))
-                unsupported("multi-output '" + rn + "' must be an unboxed scalar "
-                            "(only a leading array output is returned by value; v1)");
-            sigParams.push_back(cppScalarType(t.dtype) + "& " + rn);
-            paramSet.insert(rn);  // a reference param, not a hoisted local
+                unsupported("multi-output '" + rn + "' has unsupported type " + t.str());
+            if (paramSet.count(rn)) {
+                const std::string outRef = "_numkit_out_" + rn;
+                sigParams.push_back(cppScalarType(t.dtype) + "& " + outRef);
+                epilogueAssigns.push_back({outRef, rn});
+            } else {
+                sigParams.push_back(cppScalarType(t.dtype) + "& " + rn);
+                paramSet.insert(rn);  // a reference param, not a hoisted local
+            }
         }
     }
 
     // Array LOCALS: a 1-D buffer-array-typed variable that is neither a
     // parameter nor the output is an owned, runtime-sized std::vector. Register
     // it so index / numel / call-arg resolve to `<name>.data()` / `.size()`.
-    // (A 2-D array local is not yet supported — it falls to the hoist below.)
     for (const auto &[name, t] : decls) {
         if (paramSet.count(name) || arrays.count(name)) continue;  // params + the output
         // 2-D first: a matrix also satisfies isBufferArrayType (as in the
@@ -10412,7 +10943,7 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     }
 
     // (No companion-collision check needed: companion names carry the `_numkit_`
-    // prefix, and a MATLAB identifier can never begin with '_', so a synthesised
+    // prefix, and an identifier can never begin with '_', so a synthesised
     // companion can never equal a user variable — the collision is structurally
     // impossible rather than detected.)
 
@@ -10447,7 +10978,9 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
         em.hoistLocal(name, t);
         if (bridge && t.isDynamic()) em.addDynamicLocal(name);  // boxed-assign discipline
     }
+    for (const std::string &ps : prologueStmts) em.emitRawLine(ps);
     em.setReturnInfo(multiByValueReturn || (nout == 1 && !arrayReturn), retName, dynamicReturn);
+    em.setEpilogueAssigns(epilogueAssigns);
     em.emitStmt(body);
     // Trailing return for the fall-through path. Skipped when the body already
     // ends in an explicit `return` (its emitStmt emitted the return), so we don't
@@ -10456,8 +10989,11 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     const bool bodyEndsInReturn = body.type == NodeType::BLOCK && !body.children.empty()
                                   && body.children.back()
                                   && body.children.back()->type == NodeType::RETURN_STMT;
-    if (!bodyEndsInReturn && (multiByValueReturn || (nout == 1 && !arrayReturn)))
-        dynamicReturn ? em.emitReturnDynamic(retName) : em.emitReturnScalar(retName);
+    if (!bodyEndsInReturn) {
+        em.emitEpilogueAssigns();
+        if (multiByValueReturn || (nout == 1 && !arrayReturn))
+            dynamicReturn ? em.emitReturnDynamic(retName) : em.emitReturnScalar(retName);
+    }
 
     std::string definition = sig + " {\n";
     definition += em.out();
