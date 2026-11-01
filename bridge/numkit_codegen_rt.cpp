@@ -357,9 +357,8 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
         // `value(subs)` is index/call-AMBIGUOUS — resolve exactly as the
         // interpreter (VM::execCallIndirect), so a Dynamic value behaves
         // identically whatever it turns out to be at runtime.
-        // 1. function handle / closure cell -> CALL (captures resolved inside).
-        if (av->isFuncHandle()
-            || (av->isCell() && av->numel() >= 1 && av->cellAt(0).isFuncHandle())) {
+        // 1. function handle -> CALL (captures resolved inside).
+        if (av->isFuncHandle()) {
             std::vector<Value> outs = engine().callFunctionHandleMulti(*av, argSpan, 1);
             return make(outs.empty() ? Value() : outs[0]);
         }
