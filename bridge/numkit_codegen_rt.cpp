@@ -271,9 +271,10 @@ numkit_val numkit_call(const char *name, const numkit_val *args, size_t nargs,
             a.push_back(*av);
         }
 
-        const size_t       nout = nargout == 0 ? 1 : nargout;
         std::vector<Value> outs = engine().callFunctionHandleMulti(
-            handleFor(name), numkit::Span<const Value>(a.data(), a.size()), nout);
+            handleFor(name), numkit::Span<const Value>(a.data(), a.size()), nargout);
+        if (nargout == 0)
+            return nullptr;
 
         for (size_t k = 1; k < nargout && extra_outs; ++k)
             extra_outs[k - 1] = make(k < outs.size() ? outs[k] : Value());

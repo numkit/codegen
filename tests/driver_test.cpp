@@ -140,3 +140,20 @@ TEST(Driver, TranspileScriptWithLocalHelperFunction)
     EXPECT_NE(em.source.find("sq_1d(7.0)"), std::string::npos);
     EXPECT_NE(em.source.find("numkit_rt::disp(y);"), std::string::npos);
 }
+
+TEST(Driver, TranspileBridgedScriptWithMatrixAndRuntimeCalls)
+{
+    BridgeOptions b;
+    b.enabled       = true;
+    b.runtimeHeader = "numkit_codegen_rt.h";
+    const EmittedFunction em = driver::transpileSource(
+        "A = [1 2; 3 4];\n"
+        "B = A * A;\n"
+        "disp(B);\n"
+        "[U, S, V] = svd(A);\n"
+        "disp(S);\n",
+        "", {}, b);
+    EXPECT_EQ(em.name, "numkit_0script_0main_1v");
+    EXPECT_NE(em.source.find("numkit_rt::disp_mat"), std::string::npos);
+    EXPECT_NE(em.source.find("numkit_rt::call_void(\"disp\""), std::string::npos);
+}

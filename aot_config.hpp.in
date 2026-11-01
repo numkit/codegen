@@ -19,3 +19,8 @@
 // The C++ compiler command (full path). Used directly for a non-MSVC
 // compiler; for MSVC the harness invokes `cl` from the vcvars shell.
 #define NUMKIT_CODEGEN_AOT_CXX "@NUMKIT_CODEGEN_AOT_CXX@"
+
+// Bridge header directory and build directories for static runtime linking.
+#define NUMKIT_CODEGEN_BRIDGE_DIR "@NUMKIT_CODEGEN_BRIDGE_DIR@"
+#define NUMKIT_CODEGEN_BUILD_DIR "@NUMKIT_CODEGEN_BUILD_DIR@"
+#define NUMKIT_CODEGEN_PREBUILT_DIR "@NUMKIT_CODEGEN_PREBUILT_DIR@"

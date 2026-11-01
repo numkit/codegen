@@ -48,6 +48,10 @@ struct CompileResult {
 // time (so compileToExecutable can actually build something).
 bool available();
 
+// Build default CompileOptions (include directory + static runtime libraries)
+// for compiling a bridged C++ translation unit into a standalone executable.
+CompileOptions defaultBridgeCompileOptions();
+
 // Compile `cppSource` (a self-contained TU) into a native executable at
 // `exePath`. Writes intermediate files (`<exePath>.cpp`, a build script,
 // a log) next to `exePath`. Synchronous. Returns Unavailable without

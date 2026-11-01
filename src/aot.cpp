@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -118,6 +119,106 @@ bool available() { return !resolveCxx().empty(); }
 
 namespace {
 
+std::string findStaticLibInRoots(const std::vector<std::filesystem::path> &roots,
+                                 const std::string &baseName)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const std::string winName   = baseName + ".lib";
+    const std::string posixName = "lib" + baseName + ".a";
+
+    for (const auto &root : roots) {
+        if (root.empty() || !fs::exists(root, ec)) continue;
+        const fs::path directCandidates[] = {
+            root / "Release" / winName,
+            root / winName,
+            root / "Release" / posixName,
+            root / posixName
+        };
+        for (const auto &p : directCandidates) {
+            if (fs::exists(p, ec) && fs::is_regular_file(p, ec))
+                return p.string();
+        }
+        for (const auto &entry : fs::recursive_directory_iterator(root, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            const std::string fn = entry.path().filename().string();
+            if (fn == winName || fn == posixName)
+                return entry.path().string();
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+CompileOptions defaultBridgeCompileOptions()
+{
+    namespace fs = std::filesystem;
+    CompileOptions opts;
+    std::error_code ec;
+
+#ifdef _WIN32
+    std::string home = sys::envGet("USERPROFILE");
+#else
+    std::string home = sys::envGet("HOME");
+#endif
+    fs::path prefix = sys::envGet("NUMKIT_PREFIX").empty()
+                          ? (home.empty() ? fs::path(".numkit") : (fs::path(home) / ".numkit"))
+                          : fs::path(sys::envGet("NUMKIT_PREFIX"));
+
+    // 1. Locate bridge header directory (numkit_codegen_rt.h)
+    const fs::path bridgeCandidates[] = {
+#ifdef NUMKIT_CODEGEN_BRIDGE_DIR
+        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR),
+#endif
+        prefix / "src" / "codegen" / "bridge"
+    };
+    for (const auto &b : bridgeCandidates) {
+        if (!b.empty() && fs::exists(b / "numkit_codegen_rt.h", ec)) {
+            opts.includeDirs.push_back(b.string());
+            break;
+        }
+    }
+
+    // 2. Locate static runtime libraries
+    std::vector<fs::path> searchRoots;
+#ifdef NUMKIT_CODEGEN_BUILD_DIR
+    if (std::string(NUMKIT_CODEGEN_BUILD_DIR).size() > 0) {
+        fs::path bdir(NUMKIT_CODEGEN_BUILD_DIR);
+        searchRoots.push_back(bdir);
+        if (bdir.has_parent_path() && bdir.parent_path().filename() == "modules") {
+            searchRoots.push_back(bdir.parent_path().parent_path());
+        }
+    }
+#endif
+#ifdef NUMKIT_CODEGEN_PREBUILT_DIR
+    if (std::string(NUMKIT_CODEGEN_PREBUILT_DIR).size() > 0) {
+        searchRoots.push_back(fs::path(NUMKIT_CODEGEN_PREBUILT_DIR));
+    }
+#endif
+    searchRoots.push_back(prefix / "src" / "codegen" / "build");
+    searchRoots.push_back(prefix / "src" / "numkit" / "build");
+
+    const char *requiredLibs[] = {
+        "numkit_codegen_core",
+        "numkit",
+        "numkit_ops",
+        "numkit_sys",
+        "numkit_value",
+        "hwy",
+        "hwy_contrib"
+    };
+    for (const char *libName : requiredLibs) {
+        std::string found = findStaticLibInRoots(searchRoots, libName);
+        if (!found.empty()) {
+            opts.linkLibs.push_back(found);
+        }
+    }
+    return opts;
+}
+
+namespace {
+
 // Shared compile core for the executable and shared-library forms; the
 // only difference is the output kind (an extra /LD for MSVC, -shared
 // -fPIC otherwise).
@@ -154,7 +255,7 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
         for (const auto &d : opts.defines) def += " /D" + d;
         for (const auto &l : opts.linkLibs) libs += " \"" + toNative(l) + "\"";
         b += "call \"" + toNative(NUMKIT_CODEGEN_AOT_VCVARS) + "\" >nul 2>&1\r\n";
-        b += std::string("cl /nologo /O2 /EHsc /std:c++17 ") + (sharedLib ? "/LD " : "") + inc
+        b += std::string("cl /nologo /O2 /EHsc /MD /std:c++17 ") + (sharedLib ? "/LD " : "") + inc
              + def + " \"" + toNative(src) + "\" /Fe:\"" + toNative(outPath) + "\" /Fo:\""
              + toNative(outPath) + ".obj\"" + (libs.empty() ? "" : " /link" + libs) + "\r\n";
     } else {

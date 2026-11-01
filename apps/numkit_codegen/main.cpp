@@ -109,6 +109,7 @@ int main(int argc, char **argv)
         std::string generated;  // the C++ TU to write
         std::string info;       // a one-line note to stderr (keeps -o clean)
         cg::EmittedFunction emittedFn;  // kept for --run's harness (non-plugin path)
+        bool usedBridge = bridge;
         if (!pluginExport.empty()) {
             generated = cg::driver::transpileToPlugin(source, entry, paramTypes, pluginExport,
                                                       "numkit_plugin.h");
@@ -117,7 +118,17 @@ int main(int argc, char **argv)
             cg::BridgeOptions bridgeOpts;
             bridgeOpts.enabled       = bridge;
             bridgeOpts.runtimeHeader = "numkit_codegen_rt.h";
-            emittedFn = cg::driver::transpileSource(source, entry, paramTypes, bridgeOpts);
+            try {
+                emittedFn = cg::driver::transpileSource(source, entry, paramTypes, bridgeOpts);
+            } catch (const std::runtime_error &) {
+                if ((buildFlag || runFlag) && !bridge) {
+                    bridgeOpts.enabled = true;
+                    usedBridge         = true;
+                    emittedFn = cg::driver::transpileSource(source, entry, paramTypes, bridgeOpts);
+                } else {
+                    throw;
+                }
+            }
             generated = emittedFn.source;
             info      = "emitted entry '" + emittedFn.name + "': " + emittedFn.signature;
         }
@@ -125,7 +136,7 @@ int main(int argc, char **argv)
         // --build / --run: wrap the emitted TU in a main() harness, AOT-compile
         // it, and optionally execute it.
         if (buildFlag || runFlag) {
-            if (!bridge && numkit::sys::envGet("NUMKIT_CXX").empty() &&
+            if (!usedBridge && numkit::sys::envGet("NUMKIT_CXX").empty() &&
                 numkit::sys::findZig().found) {
                 numkit::sys::envSet("NUMKIT_USE_ZIG", "1");
             }
@@ -164,7 +175,9 @@ int main(int argc, char **argv)
                 exe += ".exe";
 #endif
             }
-            const auto cr = cg::aot::compileToExecutable(program, exe);
+            const auto compileOpts = usedBridge ? cg::aot::defaultBridgeCompileOptions()
+                                                : cg::aot::CompileOptions{};
+            const auto cr = cg::aot::compileToExecutable(program, exe, compileOpts);
             std::error_code ec;
             fs::remove(exe + ".cpp", ec);
             fs::remove(exe + ".log", ec);

@@ -1123,8 +1123,9 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
                    ? ("numkit_rt::call_dyn(\"" + callee.strValue + "\", {" + args + "})")
                    : ("numkit_rt::call_dynv(\"" + callee.strValue + "\", {" + args + "})");
     }
-    case NodeType::STRING_LITERAL: {
-        // a char literal as a Dynamic value -> box via numkit_box_string (printable
+    case NodeType::STRING_LITERAL:
+    case NodeType::DQSTRING_LITERAL: {
+        // a char/string literal as a Dynamic value -> box via numkit_box_string (printable
         // ASCII only; cEscape refuses a non-printable byte, sound).
         bool              ok  = false;
         const std::string esc = cEscape(e.strValue, ok);
@@ -1242,6 +1243,35 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
             vals  += (vals.empty() ? "" : ", ") + ("numkit_rt::val::scalar(" + id + ")");
         }
         return "numkit_rt::make_closure_captured(\"" + esc + "\", {" + names + "}, {" + vals + "})";
+    }
+    case NodeType::MATRIX_LITERAL: {
+        if (e.children.empty())
+            return "numkit_rt::val::matrix(nullptr, 0, 0)";
+        const std::size_t R = e.children.size();
+        const std::size_t C = e.children[0] ? e.children[0]->children.size() : 0;
+        if (C == 0)
+            return "numkit_rt::val::matrix(nullptr, 0, 0)";
+        for (const auto &rowN : e.children) {
+            if (!rowN || rowN->children.size() != C)
+                unsupported("Dynamic tier: ragged matrix literal");
+            for (const auto &el : rowN->children) {
+                if (!el) unsupported("Dynamic tier: null matrix element");
+                const AbstractValue ev = inferExpr(*el, types_, reg_, classes_);
+                if (!ev.type.isConcrete() || !ev.type.shape.isScalar()
+                    || ev.type.dtype != ValueType::DOUBLE)
+                    unsupported("Dynamic tier: non-double-scalar element in matrix literal");
+            }
+        }
+        std::string elems;
+        for (std::size_t c = 0; c < C; ++c) {
+            for (std::size_t r = 0; r < R; ++r) {
+                if (!elems.empty()) elems += ", ";
+                elems += emitExpr(*e.children[r]->children[c]);
+            }
+        }
+        return "([&]() { const double _numkit_m[] = {" + elems
+               + "}; return numkit_rt::val::matrix(_numkit_m, " + std::to_string(R) + ", "
+               + std::to_string(C) + "); }())";
     }
     default:
         unsupported("Dynamic tier: expression node kind");
@@ -7848,6 +7878,47 @@ void Emitter::emitAssign(const ASTNode &s)
                 return;
             }
         }
+        // Rectangular grid of SCALARS `A = [1 2; 3 4]` -> a KnownDims R x C 2-D matrix local
+        // (or a runtime-dim 2-D local when A is reassigned to different sizes). Stored
+        // column-major: element (r, c) is at flat index c * R + r.
+        if (isArrayVar(name) && arrays_.at(name).isLocal
+            && (arrays_.at(name).is2D
+                || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+            && rhs.type == NodeType::MATRIX_LITERAL && rhs.children.size() > 1
+            && rhs.children[0] && rhs.children[0]->children.size() > 1) {
+            const std::size_t R      = rhs.children.size();
+            const std::size_t C      = rhs.children[0]->children.size();
+            bool              gridOk = true;
+            for (const auto &rowN : rhs.children) {
+                if (!rowN || rowN->children.size() != C) { gridOk = false; break; }
+                for (const auto &el : rowN->children) {
+                    if (!el) { gridOk = false; break; }
+                    const AbstractValue ev = inferExpr(*el, types_, reg_, classes_);
+                    if (!ev.type.isConcrete() || !ev.type.shape.isScalar()) {
+                        gridOk = false;
+                        break;
+                    }
+                }
+                if (!gridOk) break;
+            }
+            const AbstractValue rv = inferExpr(rhs, types_, reg_, classes_);
+            if (gridOk && rv.type.isConcrete()) {
+                const ArrayInfo &M = arrays_.at(name);
+                if (M.ndRuntimeLocal) {
+                    line(M.ndDims[0] + " = " + std::to_string(R) + ";");
+                    line(M.ndDims[1] + " = " + std::to_string(C) + ";");
+                }
+                line(name + ".assign(" + std::to_string(R * C) + ", " + zeroLiteral(M.dtype) + ");");
+                for (std::size_t c = 0; c < C; ++c) {
+                    for (std::size_t r = 0; r < R; ++r) {
+                        line(name + "[" + std::to_string(c * R + r) + "] = "
+                             + emitExpr(*rhs.children[r]->children[c]) + ";");
+                    }
+                }
+                types_.set(name, rv);
+                return;
+            }
+        }
 
         // Whole-array struct-field READ: `y = s.v` where s.v is an array field-local
         // (field-flattening). emitExpr(s.v) yields the field-local vector name, so
@@ -8926,12 +8997,25 @@ void Emitter::emitStmt(const ASTNode &s)
                     }
                     if (arg.type == NodeType::IDENTIFIER && isArrayVar(arg.strValue)) {
                         const ArrayInfo &ai = arrays_.at(arg.strValue);
-                        if (ai.is2D) {
-                            line("numkit_rt::disp_mat(" + ai.dataExpr + ", " + ai.rowsVar + ", "
-                                 + ai.colsVar + ");");
-                        } else {
-                            line("numkit_rt::disp_vec(" + ai.dataExpr + ", " + ai.lenVar + ");");
+                        if (ai.dtype == ValueType::DOUBLE) {
+                            if (ai.is2D || (ai.isND && ai.ndDims.size() == 2)) {
+                                line("numkit_rt::disp_mat(" + ai.dataExpr + ", " + dimExpr(ai, 0) + ", "
+                                     + dimExpr(ai, 1) + ");");
+                                return;
+                            }
+                            if (!ai.is2D && !ai.isND) {
+                                line("numkit_rt::disp_vec(" + ai.dataExpr + ", " + ai.lenVar + ");");
+                                return;
+                            }
                         }
+                        if (bridge_) {
+                            line("numkit_rt::call_void(\"disp\", {" + emitDynamicExpr(arg) + "});");
+                            return;
+                        }
+                    }
+                    const AbstractValue argAv = inferExpr(arg, types_, reg_, classes_);
+                    if (bridge_ && !isUnboxableScalarType(argAv.type)) {
+                        line("numkit_rt::call_void(\"disp\", {" + emitDynamicExpr(arg) + "});");
                         return;
                     }
                     line("numkit_rt::disp(" + emitExpr(arg) + ");");
@@ -9054,8 +9138,26 @@ void Emitter::emitStmt(const ASTNode &s)
             // A call evaluated for effect — a void method/function (e.g. a
             // handle class's in-place mutator), result discarded.
             if (e.type == NodeType::CALL) {
-                line(emitExpr(e) + ";");
-                return;
+                try {
+                    line(emitExpr(e) + ";");
+                    return;
+                } catch (const std::runtime_error &) {
+                    if (bridge_ && !e.children.empty()
+                        && e.children[0]->type == NodeType::IDENTIFIER) {
+                        const std::string &fn = e.children[0]->strValue;
+                        const bool shadowed = types_.has(fn)
+                                              || (ctx_ && ctx_->funcs && ctx_->funcs->has(fn));
+                        if (!shadowed) {
+                            std::string args;
+                            for (std::size_t k = 1; k < e.children.size(); ++k) {
+                                args += (k > 1 ? ", " : "") + emitDynamicExpr(*e.children[k]);
+                            }
+                            line("numkit_rt::call_void(\"" + fn + "\", {" + args + "});");
+                            return;
+                        }
+                    }
+                    throw;
+                }
             }
         }
         unsupported("expression statement (only a void call is supported)");
@@ -9370,6 +9472,14 @@ std::string bridgePrelude(const std::string &runtimeHeader)
            "    numkit_error e; e.code = 0;\n"
            "    numkit_val r = numkit_call(name, argv.data(), argv.size(), 1, nullptr, &e);\n"
            "    return _checked(r, e); }\n"
+           "// Void-return bridged call (0 outputs, e.g. disp on a Dynamic/complex/ND value).\n"
+           "inline void call_void(const char* name, std::initializer_list<val> args) {\n"
+           "    std::vector<numkit_val> argv; argv.reserve(args.size());\n"
+           "    for (const val& a : args) argv.push_back(a.get());\n"
+           "    numkit_error e; e.code = 0;\n"
+           "    numkit_val r = numkit_call(name, argv.data(), argv.size(), 0, nullptr, &e);\n"
+           "    if (r) numkit_release(r);\n"
+           "    if (e.code) throw std::runtime_error(e.message); }\n"
            "// Index a Dynamic value: a(subs) -> a new Dynamic value (A4). subs are\n"
            "// boxed vals (borrowed). The runtime resolves index-vs-call (a handle is\n"
            "// CALLED, an array is INDEXED) — sound whatever `a` is at runtime.\n"

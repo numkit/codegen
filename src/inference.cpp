@@ -452,6 +452,30 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
             }
             if (ok && dt != ValueType::EMPTY)
                 return {InferredType::concrete(dt, Shape::unknown()), ConstVal::unknown()};
+            // Rectangular grid of SCALARS [a b ...; c d ...] -> an R x C 2-D matrix
+            // with compile-time KnownDims(R, C).
+            if (expr.children[0] && expr.children[0]->children.size() > 1) {
+                const std::size_t C   = expr.children[0]->children.size();
+                ValueType         gdt = ValueType::EMPTY;
+                bool              gok = true;
+                for (const auto &rowN : expr.children) {
+                    if (!rowN || rowN->children.size() != C) { gok = false; break; }
+                    for (const auto &el : rowN->children) {
+                        if (!el) { gok = false; break; }
+                        const AbstractValue ev = inferExpr(*el, env, reg, classes);
+                        if (!ev.type.isConcrete() || !ev.type.shape.isScalar()) {
+                            gok = false;
+                            break;
+                        }
+                        if (gdt == ValueType::EMPTY) gdt = ev.type.dtype;
+                        else if (gdt != ev.type.dtype) { gok = false; break; }
+                    }
+                    if (!gok) break;
+                }
+                if (gok && gdt != ValueType::EMPTY)
+                    return {InferredType::concrete(gdt, Shape::dims(expr.children.size(), C)),
+                            ConstVal::unknown()};
+            }
             // Each row a single ROW VECTOR of a common dtype -> a k x n 2-D matrix
             // (vertcat of rows): rows = k (known), cols = n (the rows' length, taken as
             // runtime -> NDims rank-2 ndShape({k, 0}); a runtime-dim 2-D the emitter

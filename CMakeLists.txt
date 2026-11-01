@@ -76,6 +76,9 @@ if(MSVC AND CMAKE_GENERATOR_INSTANCE)
 elseif(NOT MSVC AND CMAKE_CXX_COMPILER)
     set(NUMKIT_CODEGEN_AOT_AVAILABLE 1)
 endif()
+get_filename_component(NUMKIT_CODEGEN_BRIDGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bridge" ABSOLUTE)
+get_filename_component(NUMKIT_CODEGEN_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}" ABSOLUTE)
+get_filename_component(NUMKIT_CODEGEN_PREBUILT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/build" ABSOLUTE)
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/aot_config.hpp.in
     ${CMAKE_CURRENT_BINARY_DIR}/generated/numkit/codegen/aot_config.hpp
@@ -86,6 +89,7 @@ configure_file(
 file(GLOB_RECURSE NUMKIT_CODEGEN_SOURCES
     "src/*.cpp"
 )
+list(APPEND NUMKIT_CODEGEN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/bridge/numkit_codegen_rt.cpp")
 
 add_library(numkit_codegen_core STATIC ${NUMKIT_CODEGEN_SOURCES})
 add_library(numkit::codegen ALIAS numkit_codegen_core)
@@ -214,7 +218,6 @@ if(NUMKIT_BUILD_TESTS AND NOT EMSCRIPTEN)
         tests/driver_test.cpp
         tests/bridge_test.cpp
         tests/tiered_test.cpp
-        bridge/numkit_codegen_rt.cpp
     )
 
     add_executable(numkit_codegen_test ${NUMKIT_CODEGEN_TEST_SOURCES})
