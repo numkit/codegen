@@ -453,17 +453,18 @@ InferredType sumProdMeanTransfer(const std::vector<ArgInfo> &args)
         case ShapeKind::KnownDims:
             if ((s.rows == 1 && s.cols >= 1) || (s.cols == 1 && s.rows >= 1))
                 return InferredType::scalar(args[0].type.dtype);
-            if (is2D) return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            if (is2D) return InferredType::concrete(args[0].type.dtype, Shape::rowVector());
             return InferredType::dynamic();
         case ShapeKind::NDims:
-            if (is2D) return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            if (is2D) return InferredType::concrete(args[0].type.dtype, Shape::rowVector());
             return InferredType::dynamic();
         default: return InferredType::dynamic();
         }
     }
     std::size_t dim = 0;
     if (args.size() == 2 && is2D && args[1].constant.asDim(dim) && (dim == 1 || dim == 2))
-        return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+        return InferredType::concrete(args[0].type.dtype,
+                                      dim == 1 ? Shape::rowVector() : Shape::colVector());
     return InferredType::dynamic();
 }
 
@@ -491,11 +492,11 @@ InferredType maxMinTransfer(const std::vector<ArgInfo> &args)
                 return InferredType::scalar(args[0].type.dtype);
             // a true 2-D matrix max(A) is column-wise -> a 1 x n ROW vector (runtime length).
             if (args[0].type.shape.rows > 1 && args[0].type.shape.cols > 1)
-                return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+                return InferredType::concrete(args[0].type.dtype, Shape::rowVector());
             return InferredType::dynamic();
         case ShapeKind::NDims:  // runtime-dim rank-2 matrix -> column-wise -> 1-D row vector
             if (args[0].type.shape.nd.size() == 2)
-                return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+                return InferredType::concrete(args[0].type.dtype, Shape::rowVector());
             return InferredType::dynamic();
         default: return InferredType::dynamic();
         }
@@ -520,7 +521,8 @@ InferredType maxMinTransfer(const std::vector<ArgInfo> &args)
         const bool   isND3 = s.kind == ShapeKind::NDims && s.nd.size() == 3;
         std::size_t  dim = 0;
         if (is2D && args[2].constant.asDim(dim) && (dim == 1 || dim == 2))
-            return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            return InferredType::concrete(args[0].type.dtype,
+                                          dim == 1 ? Shape::rowVector() : Shape::colVector());
         // rank-3 reduction: dim 1|2 keep the (non-trailing) singleton -> rank-3; dim 3 removes the
         // trailing dim entirely -> rank-2. Both output ranks are deterministic, so sound.
         if (isND3 && args[2].constant.asDim(dim)) {

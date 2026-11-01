@@ -61,18 +61,20 @@ Shape broadcastShape(const Shape &a, const Shape &b)
     if (b.isScalar()) return a;
     auto canBroadcast2DVec = [](const Shape &m, const Shape &v) -> bool {
         if (m.kind == ShapeKind::KnownDims && m.rows > 1 && m.cols > 1) {
-            if (v.kind == ShapeKind::RowVector || v.kind == ShapeKind::ColVector
-                || v.kind == ShapeKind::Unknown)
+            if (v.kind == ShapeKind::RowVector || v.kind == ShapeKind::ColVector)
                 return true;
             if (v.kind == ShapeKind::KnownDims) {
                 if (v.rows == 1 && v.cols == m.cols) return true;
                 if (v.cols == 1 && v.rows == m.rows) return true;
             }
+            if (v.kind == ShapeKind::NDims && v.nd.size() == 2
+                && (v.nd[0] == 0 || v.nd[0] == m.rows)
+                && (v.nd[1] == 0 || v.nd[1] == m.cols))
+                return true;
             return false;
         }
         if (m.kind == ShapeKind::NDims && m.nd.size() == 2) {
-            if (v.kind == ShapeKind::RowVector || v.kind == ShapeKind::ColVector
-                || v.kind == ShapeKind::Unknown)
+            if (v.kind == ShapeKind::RowVector || v.kind == ShapeKind::ColVector)
                 return true;
             if (v.kind == ShapeKind::KnownDims) {
                 if (v.rows == 1 && (m.nd[1] == 0 || v.cols == m.nd[1])) return true;

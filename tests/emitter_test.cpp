@@ -1630,16 +1630,36 @@ TEST(EmitterFn, ImplicitExpansion2D1D)
     const auto reg = stdReg();
     numkit::ASTNodePtr root;
     const numkit::ASTNode *fn = findFunc(
-        "function s = f()\n"
+        "function s = f(m, n)\n"
         "  A = [1 2 3; 4 5 6];\n"
         "  mu = mean(A);\n"
+        "  mx = max(A);\n"
         "  rsum = sum(A, 2);\n"
-        "  B = (A - mu) + rsum;\n"
-        "  s = B(1, 1) + B(2, 3);\n"
+        "  B = (A - mu) + rsum - mx;\n"
+        "  C = (A + 2 * ones(2, 3))';\n"
+        "  D = A + ones(m, n);\n"
+        "  s = B(1, 1) + B(2, 3) + C(3, 2) + D(1, 1);\n"
         "end\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {}, reg).source;
-    EXPECT_TRUE(contains(s, "B.data()[_numkit_i + _numkit_j * 2] = ((A.data()[_numkit_i + _numkit_j * 2] - mu.data()[_numkit_j]) + rsum.data()[_numkit_i]);"));
+    const std::string s = emitFunction(*fn, {{"m", kDoubleScalar}, {"n", kDoubleScalar}}, reg).source;
+    EXPECT_TRUE(contains(s, "B.data()[_numkit_i + _numkit_j * 2] = (((A.data()[_numkit_i + _numkit_j * 2] - mu.data()[_numkit_j]) + rsum.data()[_numkit_i]) - mx.data()[_numkit_j]);"));
+    EXPECT_TRUE(contains(s, "C.data()[_numkit_i + _numkit_j * 3] = (A.data()[_numkit_j + _numkit_i * 2] + (2.0 * 1.0));"));
+    EXPECT_TRUE(contains(s, "if ((numkit_rt::dim(m)) != (2) || (numkit_rt::dim(n)) != (3)) throw std::out_of_range(\"numkit: array dimensions must match\");"));
     EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));
+
+    // Orientation-unknown 1-D vector + 2-D matrix is refused (never guessed on square matrices).
+    numkit::ASTNodePtr root2;
+    const numkit::ASTNode *fn2 = findFunc(
+        "function B = g(A, v)\n"
+        "  B = A + v;\n"
+        "end\n",
+        root2);
+    ASSERT_NE(fn2, nullptr);
+    EXPECT_THROW(
+        emitFunction(*fn2,
+                     {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 3))},
+                      {"v", InferredType::concrete(ValueType::DOUBLE, Shape::unknown())}},
+                     reg),
+        std::runtime_error);
 }
