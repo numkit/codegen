@@ -319,7 +319,7 @@ boxing across the bridge; zero-copy array views; 2-D array box/unbox.
    dllexport when NUMKIT_RT_BUILDING_DLL, dllimport when NUMKIT_RT_USE_DLL, else
    plain — so the static-into-gtest compile is unchanged). `CompileOptions`
    {includeDirs, defines, linkLibs} threads through the AOT harness; a bridged
-   compile adds `/I<bridge>`, `/DNK_RT_USE_DLL`, and links the import lib.
+   compile adds `/I<bridge>`, `/DNUMKIT_RT_USE_DLL`, and links the import lib.
 4. ✅ e2e (CodegenBridge) — `y = sign(x)` (un-lowerable) compiles bridged,
    links numkit_codegen_rt, the runtime DLL is copied beside the artifact, it
    RUNS, and -1/0/1 match the interpreter. The opaque handle design keeps all

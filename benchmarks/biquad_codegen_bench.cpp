@@ -154,7 +154,7 @@ BiquadFn loadGeneratedBiquad()
 #ifdef _WIN32
     const std::string lib = (base / "numkit_biquad_gen.dll").string();
 #else
-    const std::string lib = (base / "libnk_biquad_gen.so").string();
+    const std::string lib = (base / "libnumkit_biquad_gen.so").string();
 #endif
     if (!aot::compileToSharedLibrary(program, lib).ok()) return nullptr;
 
