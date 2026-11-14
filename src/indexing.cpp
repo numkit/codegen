@@ -7,6 +7,7 @@ namespace numkit::codegen {
 bool isBufferArray(const AbstractValue &v)
 {
     if (!v.type.isConcrete()) return false;
+    if (v.type.shape.kind == ShapeKind::Unknown) return false;
     switch (v.type.dtype) {
     case ValueType::DOUBLE:
     case ValueType::SINGLE:

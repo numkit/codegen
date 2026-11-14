@@ -35,6 +35,7 @@ InferredType sizeTransfer(const std::vector<ArgInfo> &args)
     case ShapeKind::Scalar:
     case ShapeKind::RowVector:
     case ShapeKind::ColVector:
+    case ShapeKind::Vector1D:
     case ShapeKind::KnownDims: rank = 2; break;  // scalars / vectors / matrices are 2-D
     case ShapeKind::NDims:     rank = sh.nd.size(); break;
     case ShapeKind::Unknown:   return InferredType::dynamic();  // unknown rank -> sound fallback
@@ -67,18 +68,21 @@ std::vector<InferredType> maxMinMultiTransfer(const std::vector<ArgInfo> &args)
     case ShapeKind::Scalar:
     case ShapeKind::RowVector:
     case ShapeKind::ColVector:
-    case ShapeKind::Unknown:  // a 1-D buffer of unknown length is still a vector
+    case ShapeKind::Vector1D:
         return {InferredType::scalar(ValueType::DOUBLE), InferredType::scalar(ValueType::DOUBLE)};
     case ShapeKind::KnownDims:
+        if ((args[0].type.shape.rows == 1 && args[0].type.shape.cols >= 1)
+            || (args[0].type.shape.cols == 1 && args[0].type.shape.rows >= 1))
+            return {InferredType::scalar(ValueType::DOUBLE), InferredType::scalar(ValueType::DOUBLE)};
         // a true 2-D matrix [m,i]=max(A) is column-wise -> two 1 x n row vectors (value + index).
         if (args[0].type.shape.rows > 1 && args[0].type.shape.cols > 1)
-            return {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                    InferredType::concrete(ValueType::DOUBLE, Shape::unknown())};
+            return {InferredType::concrete(ValueType::DOUBLE, Shape::rowVector()),
+                    InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())};
         return {InferredType::dynamic(), InferredType::dynamic()};
     case ShapeKind::NDims:  // runtime-dim rank-2 matrix -> column-wise -> two 1-D row vectors
         if (args[0].type.shape.nd.size() == 2)
-            return {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                    InferredType::concrete(ValueType::DOUBLE, Shape::unknown())};
+            return {InferredType::concrete(ValueType::DOUBLE, Shape::rowVector()),
+                    InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())};
         return {InferredType::dynamic(), InferredType::dynamic()};
     default: return {InferredType::dynamic(), InferredType::dynamic()};
     }
@@ -97,9 +101,12 @@ std::vector<InferredType> sortMultiTransfer(const std::vector<ArgInfo> &args)
     switch (args[0].type.shape.kind) {
     case ShapeKind::RowVector:
     case ShapeKind::ColVector:
-    case ShapeKind::Unknown:  // a 1-D buffer of unknown length is still a vector
-        return {args[0].type, InferredType::concrete(ValueType::DOUBLE, Shape::unknown())};
+    case ShapeKind::Vector1D:
+        return {args[0].type, InferredType::concrete(ValueType::DOUBLE, args[0].type.shape)};
     case ShapeKind::KnownDims:
+        if ((args[0].type.shape.rows == 1 && args[0].type.shape.cols > 1)
+            || (args[0].type.shape.cols == 1 && args[0].type.shape.rows > 1))
+            return {args[0].type, args[0].type};
         // [s,i]=sort(A) on a matrix sorts each column -> both outputs are the same m x n shape
         // (sorted values + per-column 1-based permutation).
         if (args[0].type.shape.rows > 1 && args[0].type.shape.cols > 1)
@@ -113,18 +120,15 @@ std::vector<InferredType> sortMultiTransfer(const std::vector<ArgInfo> &args)
 }
 
 // Binary set op (union / intersect / setdiff) over two 1-D DOUBLE vectors -> a sorted distinct
-// 1-D DOUBLE result (runtime length -> Unknown). Anything else -> Dynamic. Shared because the
+// 1-D DOUBLE result (runtime length -> Vector1D). Anything else -> Dynamic. Shared because the
 // shape rule is identical; the per-op element selection lives in the emitter.
 InferredType setopBinaryTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
         return InferredType::dynamic();
-    auto isVec = [](ShapeKind k) {
-        return k == ShapeKind::RowVector || k == ShapeKind::ColVector || k == ShapeKind::Unknown;
-    };
-    if (isVec(args[0].type.shape.kind) && isVec(args[1].type.shape.kind))
-        return InferredType::concrete(ValueType::DOUBLE, Shape::unknown());
+    if (args[0].type.shape.isVector1D() && args[1].type.shape.isVector1D())
+        return InferredType::concrete(ValueType::DOUBLE, Shape::vector1D());
     return InferredType::dynamic();
 }
 
@@ -136,11 +140,8 @@ InferredType ismemberTransfer(const std::vector<ArgInfo> &args)
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
         return InferredType::dynamic();
-    auto isVec = [](ShapeKind k) {
-        return k == ShapeKind::RowVector || k == ShapeKind::ColVector || k == ShapeKind::Unknown;
-    };
-    if (isVec(args[0].type.shape.kind) && isVec(args[1].type.shape.kind))
-        return InferredType::concrete(ValueType::LOGICAL, Shape::unknown());
+    if (args[0].type.shape.isVector1D() && args[1].type.shape.isVector1D())
+        return InferredType::concrete(ValueType::LOGICAL, Shape::vector1D());
     return InferredType::dynamic();
 }
 
@@ -155,14 +156,16 @@ InferredType statColumnReduceTransfer(const std::vector<ArgInfo> &args)
     switch (s.kind) {
     case ShapeKind::RowVector:
     case ShapeKind::ColVector:
-    case ShapeKind::Unknown:  // a 1-D buffer of unknown length is still a vector -> scalar
+    case ShapeKind::Vector1D:
         return InferredType::scalar(ValueType::DOUBLE);
     case ShapeKind::KnownDims:
+        if ((s.rows == 1 && s.cols > 1) || (s.cols == 1 && s.rows > 1))
+            return InferredType::scalar(ValueType::DOUBLE);
         if (s.rows > 1 && s.cols > 1)  // a true 2-D matrix -> column-wise -> 1 x n row vector
-            return InferredType::concrete(ValueType::DOUBLE, Shape::unknown());
+            return InferredType::concrete(ValueType::DOUBLE, Shape::rowVector());
         return InferredType::dynamic();
     case ShapeKind::NDims:
-        if (s.nd.size() == 2) return InferredType::concrete(ValueType::DOUBLE, Shape::unknown());
+        if (s.nd.size() == 2) return InferredType::concrete(ValueType::DOUBLE, Shape::rowVector());
         return InferredType::dynamic();
     default: return InferredType::dynamic();
     }
@@ -183,41 +186,34 @@ InferredType sortrowsTransfer(const std::vector<ArgInfo> &args)
 
 // [u, ia, ic] = unique(x): u = sorted distinct values; ia s.t. u = x(ia) (the FIRST occurrence,
 // nk default -- probed); ic s.t. x = u(ic). All three are 1-D DOUBLE vectors (u/ia length =
-// #distinct, ic length = numel(x); all runtime -> Unknown). v1: a 1-D DOUBLE vector; a matrix ->
-// Dynamic (stays bridged -- the bridged-multi-output e2e exemplar uses a matrix unique).
+// #distinct, ic length = numel(x); all runtime -> Vector1D).
 std::vector<InferredType> uniqueMultiTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete() || args[0].type.dtype != ValueType::DOUBLE)
         return {InferredType::dynamic(), InferredType::dynamic(), InferredType::dynamic()};
-    // unique flattens (column-major), so the outputs are 1-D for ANY rank: u/ia (length =
-    // #distinct) and ic (length = numel) are all 1-D DOUBLE (runtime -> Unknown).
     const Shape &sh = args[0].type.shape;
-    const bool   ok = sh.kind == ShapeKind::RowVector || sh.kind == ShapeKind::ColVector
-                    || sh.kind == ShapeKind::Unknown
+    const bool   ok = sh.isVector1D()
                     || (sh.kind == ShapeKind::KnownDims && sh.rows > 1 && sh.cols > 1)
                     || (sh.kind == ShapeKind::NDims && sh.nd.size() == 2);
     if (ok)
-        return {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                InferredType::concrete(ValueType::DOUBLE, Shape::unknown())};
+        return {InferredType::concrete(ValueType::DOUBLE, Shape::vector1D()),
+                InferredType::concrete(ValueType::DOUBLE, Shape::vector1D()),
+                InferredType::concrete(ValueType::DOUBLE, Shape::vector1D())};
     return {InferredType::dynamic(), InferredType::dynamic(), InferredType::dynamic()};
 }
 
 // [c, ia, ib] = intersect(a, b): c = sorted distinct common values; ia s.t. c = a(ia) (FIRST
 // occurrence in a -- probed); ib s.t. c = b(ib) (first occurrence in b). All three 1-D DOUBLE
-// (length = #common, runtime -> Unknown). v1: two 1-D DOUBLE vectors; else Dynamic.
+// (length = #common, runtime -> Vector1D). v1: two 1-D DOUBLE vectors; else Dynamic.
 std::vector<InferredType> intersectMultiTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
         return {InferredType::dynamic(), InferredType::dynamic(), InferredType::dynamic()};
-    auto isVec = [](ShapeKind k) {
-        return k == ShapeKind::RowVector || k == ShapeKind::ColVector || k == ShapeKind::Unknown;
-    };
-    if (isVec(args[0].type.shape.kind) && isVec(args[1].type.shape.kind))
-        return {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                InferredType::concrete(ValueType::DOUBLE, Shape::unknown())};
+    if (args[0].type.shape.isVector1D() && args[1].type.shape.isVector1D())
+        return {InferredType::concrete(ValueType::DOUBLE, Shape::vector1D()),
+                InferredType::concrete(ValueType::DOUBLE, Shape::vector1D()),
+                InferredType::concrete(ValueType::DOUBLE, Shape::vector1D())};
     return {InferredType::dynamic(), InferredType::dynamic(), InferredType::dynamic()};
 }
 
@@ -228,12 +224,9 @@ std::vector<InferredType> setdiffMultiTransfer(const std::vector<ArgInfo> &args)
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
         return {InferredType::dynamic(), InferredType::dynamic()};
-    auto isVec = [](ShapeKind k) {
-        return k == ShapeKind::RowVector || k == ShapeKind::ColVector || k == ShapeKind::Unknown;
-    };
-    if (isVec(args[0].type.shape.kind) && isVec(args[1].type.shape.kind))
-        return {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                InferredType::concrete(ValueType::DOUBLE, Shape::unknown())};
+    if (args[0].type.shape.isVector1D() && args[1].type.shape.isVector1D())
+        return {InferredType::concrete(ValueType::DOUBLE, Shape::vector1D()),
+                InferredType::concrete(ValueType::DOUBLE, Shape::vector1D())};
     return {InferredType::dynamic(), InferredType::dynamic()};
 }
 
@@ -246,13 +239,10 @@ std::vector<InferredType> unionMultiTransfer(const std::vector<ArgInfo> &args)
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
         return {InferredType::dynamic(), InferredType::dynamic(), InferredType::dynamic()};
-    auto isVec = [](ShapeKind k) {
-        return k == ShapeKind::RowVector || k == ShapeKind::ColVector || k == ShapeKind::Unknown;
-    };
-    if (isVec(args[0].type.shape.kind) && isVec(args[1].type.shape.kind))
-        return {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
-                InferredType::concrete(ValueType::DOUBLE, Shape::unknown())};
+    if (args[0].type.shape.isVector1D() && args[1].type.shape.isVector1D())
+        return {InferredType::concrete(ValueType::DOUBLE, Shape::vector1D()),
+                InferredType::concrete(ValueType::DOUBLE, Shape::vector1D()),
+                InferredType::concrete(ValueType::DOUBLE, Shape::vector1D())};
     return {InferredType::dynamic(), InferredType::dynamic(), InferredType::dynamic()};
 }
 
@@ -271,6 +261,7 @@ InferredType transposeTransfer(const std::vector<ArgInfo> &args)
     case ShapeKind::Scalar:    return InferredType::concrete(t.dtype, Shape::scalar());
     case ShapeKind::RowVector: return InferredType::concrete(t.dtype, Shape::colVector());
     case ShapeKind::ColVector: return InferredType::concrete(t.dtype, Shape::rowVector());
+    case ShapeKind::Vector1D:  return InferredType::concrete(t.dtype, Shape::vector1D());
     case ShapeKind::KnownDims:
         return InferredType::concrete(t.dtype, Shape::dims(t.shape.cols, t.shape.rows));
     case ShapeKind::NDims:
@@ -403,9 +394,7 @@ InferredType permuteTransfer(const std::vector<ArgInfo> &args)
     if (args[0].type.shape.kind == ShapeKind::NDims) rank = args[0].type.shape.nd.size();
     else if (args[0].type.shape.kind == ShapeKind::KnownDims) rank = 2;
     else return InferredType::dynamic();  // scalar / vector -> permute is ~no-op, bridge
-    const ShapeKind pk = args[1].type.shape.kind;  // perm must be a vector (literal read at emit)
-    if (pk != ShapeKind::RowVector && pk != ShapeKind::ColVector
-        && pk != ShapeKind::KnownDims && pk != ShapeKind::Unknown)
+    if (!args[1].type.shape.isVector1D() && args[1].type.shape.kind != ShapeKind::KnownDims)
         return InferredType::dynamic();
     return InferredType::concrete(ValueType::DOUBLE,
                                   Shape::ndShape(std::vector<std::size_t>(rank, 0)));
@@ -425,7 +414,7 @@ InferredType vectorReductionTransfer(const std::vector<ArgInfo> &args)
     case ShapeKind::Scalar:
     case ShapeKind::RowVector:
     case ShapeKind::ColVector:
-    case ShapeKind::Unknown:
+    case ShapeKind::Vector1D:
         return InferredType::scalar(args[0].type.dtype);
     case ShapeKind::KnownDims:
         if ((s.rows == 1 && s.cols >= 1) || (s.cols == 1 && s.rows >= 1))
@@ -448,7 +437,7 @@ InferredType sumProdMeanTransfer(const std::vector<ArgInfo> &args)
         case ShapeKind::Scalar:
         case ShapeKind::RowVector:
         case ShapeKind::ColVector:
-        case ShapeKind::Unknown:
+        case ShapeKind::Vector1D:
             return InferredType::scalar(args[0].type.dtype);
         case ShapeKind::KnownDims:
             if ((s.rows == 1 && s.cols >= 1) || (s.cols == 1 && s.rows >= 1))
@@ -484,7 +473,7 @@ InferredType maxMinTransfer(const std::vector<ArgInfo> &args)
         case ShapeKind::Scalar:
         case ShapeKind::RowVector:
         case ShapeKind::ColVector:
-        case ShapeKind::Unknown:
+        case ShapeKind::Vector1D:
             return InferredType::scalar(args[0].type.dtype);  // -> scalar
         case ShapeKind::KnownDims:
             if ((args[0].type.shape.rows == 1 && args[0].type.shape.cols >= 1)
@@ -505,6 +494,8 @@ InferredType maxMinTransfer(const std::vector<ArgInfo> &args)
         if (args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
             return InferredType::dynamic();
         const Shape &sa = args[0].type.shape, &sb = args[1].type.shape;
+        if (sa.kind == ShapeKind::Unknown || sb.kind == ShapeKind::Unknown)
+            return InferredType::dynamic();
         if (sa == sb)      return InferredType::concrete(ValueType::DOUBLE, sa);
         if (sa.isScalar()) return InferredType::concrete(ValueType::DOUBLE, sb);
         if (sb.isScalar()) return InferredType::concrete(ValueType::DOUBLE, sa);
@@ -549,20 +540,21 @@ InferredType anyAllTransfer(const std::vector<ArgInfo> &args)
         case ShapeKind::Scalar:
         case ShapeKind::RowVector:
         case ShapeKind::ColVector:
-        case ShapeKind::Unknown:
+        case ShapeKind::Vector1D:
             return InferredType::scalar(ValueType::LOGICAL);  // -> scalar
         default:
             if ((s.kind == ShapeKind::KnownDims)
                 && ((s.rows == 1 && s.cols >= 1) || (s.cols == 1 && s.rows >= 1)))
                 return InferredType::scalar(ValueType::LOGICAL);
-            if (is2D) return InferredType::concrete(ValueType::LOGICAL, Shape::unknown());  // col-wise
+            if (is2D) return InferredType::concrete(ValueType::LOGICAL, Shape::rowVector());  // col-wise
             return InferredType::dynamic();
         }
     }
     // any(A, dim) / all(A, dim): a 2-D matrix + a literal dim 1|2 -> a LOGICAL 1-D vector.
     std::size_t dim = 0;
     if (args.size() == 2 && is2D && args[1].constant.asDim(dim) && (dim == 1 || dim == 2))
-        return InferredType::concrete(ValueType::LOGICAL, Shape::unknown());
+        return InferredType::concrete(ValueType::LOGICAL,
+                                      dim == 1 ? Shape::rowVector() : Shape::colVector());
     // rank-3 reduction: dim 1|2 keep the (non-trailing) singleton -> a LOGICAL rank-3; dim 3 removes
     // the trailing dim entirely -> a LOGICAL rank-2. Both output ranks are deterministic, so sound.
     const bool isND3 = s.kind == ShapeKind::NDims && s.nd.size() == 3;
@@ -575,31 +567,27 @@ InferredType anyAllTransfer(const std::vector<ArgInfo> &args)
 }
 
 // find(x) -> a 1-D DOUBLE vector of the 1-based positions of the nonzero
-// elements. The length is runtime (-> Unknown shape, still a buffer type); the
-// emitter lowers it to a native filter loop. Single-arg vector form only; a
-// matrix / N-D input or a 2-arg call -> Dynamic.
+// elements. The length is runtime (-> Vector1D shape, still a buffer type); the
+// emitter lowers it to a native filter loop.
 InferredType findTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
-    // find returns a 1-D vector of the 1-based LINEAR (column-major) positions of the
-    // nonzero/true elements, regardless of the operand's rank -- a vector OR a matrix / N-D
-    // array. The emit filters flat over the column-major buffer (the flat index +1 is the
-    // MATLAB linear index), so every ranked shape types to a 1-D DOUBLE result.
     switch (args[0].type.shape.kind) {
     case ShapeKind::Scalar:
     case ShapeKind::RowVector:
     case ShapeKind::ColVector:
-    case ShapeKind::Unknown:  // a 1-D buffer of unknown length is still a vector
+    case ShapeKind::Vector1D:
     case ShapeKind::KnownDims:
     case ShapeKind::NDims:
-        return InferredType::concrete(ValueType::DOUBLE, Shape::unknown());
+        return InferredType::concrete(ValueType::DOUBLE, Shape::vector1D());
+    case ShapeKind::Unknown:
+        return InferredType::dynamic();
     }
     return InferredType::dynamic();
 }
 
 // diff(x) -> consecutive differences, a 1-D vector of length n-1 (runtime ->
-// Unknown shape) preserving the operand dtype. Single-arg vector form only; a
-// scalar (diff -> empty), matrix / N-D input, or a 2-arg call -> Dynamic.
+// RowVector / ColVector / Vector1D) preserving the operand dtype.
 InferredType diffTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.empty() || !args[0].type.isConcrete()) return InferredType::dynamic();
@@ -609,19 +597,20 @@ InferredType diffTransfer(const std::vector<ArgInfo> &args)
     if (args.size() == 1) {
         switch (s.kind) {
         case ShapeKind::RowVector:
+            return InferredType::concrete(args[0].type.dtype, Shape::rowVector());
         case ShapeKind::ColVector:
-        case ShapeKind::Unknown:  // a 1-D buffer of unknown length is still a vector
-            return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            return InferredType::concrete(args[0].type.dtype, Shape::colVector());
+        case ShapeKind::Vector1D:
+            return InferredType::concrete(args[0].type.dtype, Shape::vector1D());
         default:
-            // diff(A) on a 2-D matrix -> a runtime-dim 2-D (the emit drops one row, dim 1). Only
-            // when rows are statically known (the emit refuses a runtime-dim default-dim diff).
+            if (s.kind == ShapeKind::KnownDims && s.rows == 1 && s.cols > 1)
+                return InferredType::concrete(args[0].type.dtype, Shape::rowVector());
+            if (s.kind == ShapeKind::KnownDims && s.cols == 1 && s.rows > 1)
+                return InferredType::concrete(args[0].type.dtype, Shape::colVector());
             if (is2D) return InferredType::concrete(args[0].type.dtype, Shape::ndShape({0, 0}));
             return InferredType::dynamic();
         }
     }
-    // diff(A, 1, dim): 1st-order difference along a literal dim. 2-D matrix dim 1|2 -> runtime 2-D.
-    // Rank-3 dim 1|2 -> runtime rank-3 (the differenced dim is non-trailing, so the rank is kept --
-    // dim 3 is SOUND-REFUSED: it can collapse the trailing dim to extent 1 = MATLAB rank-2).
     const bool   isND3 = s.kind == ShapeKind::NDims && s.nd.size() == 3;
     std::size_t  order = 0, dim = 0;
     if (args.size() == 3 && args[1].constant.asDim(order) && order == 1
@@ -643,11 +632,10 @@ InferredType dotTransfer(const std::vector<ArgInfo> &args)
         return InferredType::dynamic();
     if (args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
         return InferredType::dynamic();
-    auto isVec = [](ShapeKind k) {
-        return k == ShapeKind::RowVector || k == ShapeKind::ColVector
-               || k == ShapeKind::Unknown || k == ShapeKind::Scalar;
+    auto isVec = [](const Shape &s) {
+        return s.isScalar() || s.isVector1D();
     };
-    if (isVec(args[0].type.shape.kind) && isVec(args[1].type.shape.kind))
+    if (isVec(args[0].type.shape) && isVec(args[1].type.shape))
         return InferredType::scalar(ValueType::DOUBLE);
     return InferredType::dynamic();
 }
@@ -659,34 +647,29 @@ InferredType strcmpTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
+    if (args[0].type.shape.kind == ShapeKind::Unknown
+        || args[1].type.shape.kind == ShapeKind::Unknown)
+        return InferredType::dynamic();
     return InferredType::scalar(ValueType::LOGICAL);
 }
 
 // Single-arg type/shape query predicates (isempty / isscalar / isreal): always a
-// LOGICAL scalar for a concrete arg. The emitter computes the boolean VALUE --
-// compile-time for dtype queries (isreal: the dtype is static), a numel compare
-// for shape queries (isempty: ==0, isscalar: ==1), a compile-time constant for a
-// scalar operand. A non-concrete (Dynamic) arg -> Dynamic, the sound fallback.
-// Pure expressions -> the emitter can place them in any context (incl. an `if`).
+// LOGICAL scalar for a concrete arg.
 InferredType logicalQueryTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
+    if (args[0].type.shape.kind == ShapeKind::Unknown) return InferredType::dynamic();
     return InferredType::scalar(ValueType::LOGICAL);
 }
 
-// sort(x) / sort(x, 'ascend'|'descend') -> same shape AND dtype as x (the values
-// reorder; the shape/dtype don't). The optional 2nd arg is a CHAR direction string;
-// only these forms are typed. sort along a numeric dim, or the 2-output [s,i]=sort,
-// are deferred -> Dynamic (the sound fallback).
+// sort(x) / sort(x, 'ascend'|'descend') -> same shape AND dtype as x.
 InferredType sortTransfer(const std::vector<ArgInfo> &args)
 {
-    if (args.empty() || args.size() > 3 || !args[0].type.isConcrete())
+    if (args.empty() || args.size() > 3 || !args[0].type.isConcrete()
+        || args[0].type.shape.kind == ShapeKind::Unknown)
         return InferredType::dynamic();
     if (args.size() == 1) return args[0].type;  // sort(A): shape-preserving
-    // sort(A, 'descend'): a CHAR direction, default dim -> shape-preserving (any rank).
     if (args.size() == 2 && args[1].type.dtype == ValueType::CHAR) return args[0].type;
-    // sort(A, dim) numeric, or sort(A, dim, dir): native only for a rank-3 operand with a literal
-    // dim 1|2|3 (shape-preserving). For <=2-D a numeric dim is deferred -> Dynamic (no producer).
     const bool  isND3 = args[0].type.shape.kind == ShapeKind::NDims
                      && args[0].type.shape.nd.size() == 3;
     std::size_t dim   = 0;
@@ -698,41 +681,31 @@ InferredType sortTransfer(const std::vector<ArgInfo> &args)
 }
 
 // polyval(p, x) -> the polynomial with coefficients p (highest degree first)
-// evaluated at each point of x, a DOUBLE result with the SAME shape as x. v1: x a
-// VECTOR (Horner per element); a scalar / matrix x is deferred -> Dynamic. (p is the
-// coefficient vector; the result tracks x's shape.)
+// evaluated at each point of x, a DOUBLE result with the SAME shape as x.
 InferredType polyvalTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
-    switch (args[1].type.shape.kind) {
-    case ShapeKind::RowVector:
-    case ShapeKind::ColVector:
-    case ShapeKind::Unknown:  // a 1-D buffer of unknown length is still a vector
+    if (!args[0].type.shape.isVector1D() && !args[0].type.shape.isScalar())
+        return InferredType::dynamic();
+    if (args[1].type.shape.isVector1D())
         return InferredType::concrete(ValueType::DOUBLE, args[1].type.shape);
-    default: return InferredType::dynamic();  // scalar / matrix x -> deferred
-    }
+    return InferredType::dynamic();  // scalar / matrix x -> deferred
 }
 
-// cross(a, b): the 3-D vector cross product -> a 3-element vector (1-D DOUBLE). v1:
-// two concrete 1-D DOUBLE vectors (length 3 assumed -- a non-3 operand is a runtime
-// error in MATLAB, not modelled). 2-D operands or a dim arg -> Dynamic.
+// cross(a, b): the 3-D vector cross product -> a 3-element vector (1-D DOUBLE).
 InferredType crossTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
     if (args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
         return InferredType::dynamic();
-    auto isVec = [](ShapeKind k) {
-        return k == ShapeKind::RowVector || k == ShapeKind::ColVector || k == ShapeKind::Unknown;
-    };
-    if (isVec(args[0].type.shape.kind) && isVec(args[1].type.shape.kind))
-        return InferredType::concrete(ValueType::DOUBLE, Shape::unknown());  // 1-D, length 3
+    if (args[0].type.shape.isVector1D() && args[1].type.shape.isVector1D())
+        return InferredType::concrete(ValueType::DOUBLE, Shape::vector1D());
     return InferredType::dynamic();
 }
 
-// trace(A): the sum of the diagonal of a 2-D matrix -> a DOUBLE scalar. v1: a 2-D
-// matrix operand; a non-2-D operand -> Dynamic.
+// trace(A): the sum of the diagonal of a 2-D matrix -> a DOUBLE scalar.
 InferredType traceTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
@@ -740,38 +713,27 @@ InferredType traceTransfer(const std::vector<ArgInfo> &args)
     return InferredType::dynamic();
 }
 
-// diag(A): the diagonal of a 2-D matrix as a 1-D vector (length min(rows,cols),
-// runtime -> Unknown shape). v1: a 2-D matrix operand. diag(v) (a vector -> a
-// diagonal MATRIX) and diag(A,k) (the k-th diagonal) are deferred -> Dynamic.
+// diag(A): the diagonal of a 2-D matrix as a 1-D vector (ColVector), or diag(v[,k]) -> N x N matrix.
 InferredType diagTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.empty() || args.size() > 2 || !args[0].type.isConcrete())
         return InferredType::dynamic();
-    // diag(A) (1-arg matrix) -> its main diagonal (1-D). diag(A,k) on a matrix is deferred
-    // (k-dependent length) -> Dynamic (bridged).
     if (args[0].type.shape.kind == ShapeKind::KnownDims)
-        return args.size() == 1 ? InferredType::concrete(args[0].type.dtype, Shape::unknown())
+        return args.size() == 1 ? InferredType::concrete(args[0].type.dtype, Shape::colVector())
                                 : InferredType::dynamic();
-    // diag(v) / diag(v,k) with v a VECTOR -> a diagonal MATRIX: an N x N runtime-dim 2-D
-    // (N = numel(v) + |k|). Modelled as a rank-2 NDims with both dims runtime (ndShape
-    // ({0,0}) -> a rank-2 ndRuntimeLocal). The emit handles a literal k offset.
     switch (args[0].type.shape.kind) {
     case ShapeKind::RowVector:
     case ShapeKind::ColVector:
-    case ShapeKind::Unknown:
-        // A runtime (non-literal) k stays Dynamic -> bridged (the emit needs a literal k
-        // to size the N x N matrix and decide the diagonal direction at compile time).
+    case ShapeKind::Vector1D:
         if (args.size() == 2 && !args[1].constant.isKnown()) return InferredType::dynamic();
         return InferredType::concrete(args[0].type.dtype, Shape::ndShape({0, 0}));
     default:
-        return InferredType::dynamic();  // scalar / N-D deferred
+        return InferredType::dynamic();
     }
 }
 
-// unique(x) -> the sorted distinct values, a 1-D vector of runtime length (-> Unknown
-// shape) preserving the operand dtype. The emitter sorts a copy then dedups
-// consecutive-equal elements (NaN are KEPT -- MATLAB treats each NaN as distinct --
-// because NaN != NaN). v1: a 1-D vector; a matrix/N-D operand -> Dynamic.
+// unique(x) -> the sorted distinct values, a 1-D vector of runtime length (-> Vector1D
+// shape) preserving the operand dtype.
 InferredType uniqueTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
@@ -779,34 +741,28 @@ InferredType uniqueTransfer(const std::vector<ArgInfo> &args)
     case ShapeKind::Scalar:
     case ShapeKind::RowVector:
     case ShapeKind::ColVector:
-    case ShapeKind::Unknown:
-        return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+    case ShapeKind::Vector1D:
+        return InferredType::concrete(args[0].type.dtype, Shape::vector1D());
     case ShapeKind::KnownDims:
-        // unique(A) on a matrix flattens (column-major) -> a 1-D column of sorted distinct values.
-        if (args[0].type.shape.rows > 1 && args[0].type.shape.cols > 1)
-            return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+        if (args[0].type.shape.rows >= 1 && args[0].type.shape.cols >= 1)
+            return InferredType::concrete(args[0].type.dtype, Shape::vector1D());
         return InferredType::dynamic();
     case ShapeKind::NDims:
         if (args[0].type.shape.nd.size() == 2)
-            return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            return InferredType::concrete(args[0].type.dtype, Shape::vector1D());
         return InferredType::dynamic();
     default: return InferredType::dynamic();
     }
 }
 
-// circshift(x, k) -> same shape AND dtype as x (a circular permutation of the
-// elements; the 2nd arg is the integer shift). v1: the (array, scalar-shift) form;
-// a shift VECTOR (per-dim) or a 2-D/N-D operand is deferred -> Dynamic.
+// circshift(x, k) -> same shape AND dtype as x.
 InferredType circshiftTransfer(const std::vector<ArgInfo> &args)
 {
-    if ((args.size() != 2 && args.size() != 3) || !args[0].type.isConcrete())
+    if ((args.size() != 2 && args.size() != 3) || !args[0].type.isConcrete()
+        || args[0].type.shape.kind == ShapeKind::Unknown)
         return InferredType::dynamic();
     if (args[1].type.isConcrete() && args[1].type.shape.kind != ShapeKind::Scalar)
-        return InferredType::dynamic();  // a per-dim shift vector -> deferred
-    // circshift(A, k, dim): a known literal dim 1 or 2 is native for any operand (the emit needs the
-    // axis at compile time). dim 3 is native only for a rank-3 operand (rotate pages); for a <=2-D
-    // operand dim 3 is a no-op, left to the bridge. A runtime dim, or any other literal, stays
-    // Dynamic (bridged -- the runtime handles dim <= 0 as the MATLAB subscript error).
+        return InferredType::dynamic();
     if (args.size() == 3) {
         if (!args[2].constant.isKnown()) return InferredType::dynamic();
         const double d     = args[2].constant.value;
@@ -818,62 +774,48 @@ InferredType circshiftTransfer(const std::vector<ArgInfo> &args)
     return args[0].type;
 }
 
-// cumsum / cumprod / flip: shape- AND dtype-preserving (one array in, the same
-// array shape out). Single-arg form only. Bridged via the array-result path
-// (the runtime owns the algorithm); the value matches the interpreter exactly.
 InferredType identityShapeTransfer(const std::vector<ArgInfo> &args)
 {
-    if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
+    if (args.size() != 1 || !args[0].type.isConcrete()
+        || args[0].type.shape.kind == ShapeKind::Unknown)
+        return InferredType::dynamic();
     return args[0].type;
 }
 
-// tril / triu: lower / upper triangular part -> SAME shape as A, with an optional
-// diagonal-offset 2nd arg (tril(A,k) / triu(A,k)). Shape is A's regardless of k, so a
-// 1-OR-2-arg identity-shape transfer (identityShapeTransfer is strictly 1-arg).
 InferredType trilTriuTransfer(const std::vector<ArgInfo> &args)
 {
-    if (args.empty() || args.size() > 2 || !args[0].type.isConcrete())
+    if (args.empty() || args.size() > 2 || !args[0].type.isConcrete()
+        || args[0].type.shape.kind == ShapeKind::Unknown)
         return InferredType::dynamic();
     return args[0].type;
 }
 
-// A 1-or-2-arg identity-shape transfer: shape = args[0] regardless of an optional 2nd arg. Used
-// by flip(A[, dim]) and cumsum/cumprod(A[, dim]) -- typing the 2-arg form concrete lets the 2-arg
-// emit producer fire instead of bridging. (The strict-1-arg identityShapeTransfer covers fliplr/
-// flipud/cummax/cummin/gradient, which the codegen handles without a dim arg.)
 InferredType identityShape1or2Transfer(const std::vector<ArgInfo> &args)
 {
-    if (args.empty() || args.size() > 2 || !args[0].type.isConcrete())
+    if (args.empty() || args.size() > 2 || !args[0].type.isConcrete()
+        || args[0].type.shape.kind == ShapeKind::Unknown)
         return InferredType::dynamic();
     return args[0].type;
 }
 
-// num2str(x) -> a CHAR row (1-D, runtime length). v1: a 1-arg scalar/vector x -> a 1-D char
-// row; a matrix / N-D x (-> a 2-D char) is deferred -> Dynamic. The runtime owns the exact
-// format (the call is BRIDGED); the transfer only supplies the CHAR-array result TYPE so the
-// bridge unboxes a char array (bridge_to_vec_char). G3.
 InferredType num2strTransfer(const std::vector<ArgInfo> &args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
-    switch (args[0].type.shape.kind) {
-    case ShapeKind::Scalar:
-    case ShapeKind::RowVector:
-    case ShapeKind::ColVector:
-    case ShapeKind::Unknown:
-        return InferredType::concrete(ValueType::CHAR, Shape::unknown());
-    default:
-        return InferredType::dynamic();  // matrix / N-D x -> 2-D char, deferred
-    }
+    if (args[0].type.shape.isScalar() || args[0].type.shape.isVector1D())
+        return InferredType::concrete(ValueType::CHAR, Shape::rowVector());
+    return InferredType::dynamic();
 }
 
-// sprintf(fmt, args...) -> a CHAR row (1-D). The format (args[0]) must be a CHAR (a string);
-// the result is always a char row. BRIDGED (the runtime owns printf-style formatting); the
-// emit further requires the format to be a STRING_LITERAL (boxed via numkit_box_string). G3b.
 InferredType sprintfTransfer(const std::vector<ArgInfo> &args)
 {
-    if (args.empty() || !args[0].type.isConcrete()) return InferredType::dynamic();
-    if (args[0].type.dtype != ValueType::CHAR) return InferredType::dynamic();  // fmt must be char
-    return InferredType::concrete(ValueType::CHAR, Shape::unknown());
+    if (args.empty() || !args[0].type.isConcrete()
+        || args[0].type.shape.kind == ShapeKind::Unknown)
+        return InferredType::dynamic();
+    if (args[0].type.dtype != ValueType::CHAR) return InferredType::dynamic();
+    for (const auto &a : args)
+        if (a.type.isConcrete() && a.type.shape.kind == ShapeKind::Unknown)
+            return InferredType::dynamic();
+    return InferredType::concrete(ValueType::CHAR, Shape::rowVector());
 }
 
 } // namespace

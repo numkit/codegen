@@ -57,7 +57,7 @@ TEST(Transfer, LinspaceDefaultLength)
     EXPECT_EQ(t.shape.cols, 100u);
 }
 
-// A runtime (non-constant) length keeps the dtype but loses the shape.
+// A runtime (non-constant) length keeps the dtype and 1 x ? row-vector shape.
 TEST(Transfer, LinspaceRuntimeLength)
 {
     const auto reg = makeRegistry();
@@ -68,7 +68,7 @@ TEST(Transfer, LinspaceRuntimeLength)
     });
     ASSERT_TRUE(t.isConcrete());
     EXPECT_EQ(t.dtype, ValueType::DOUBLE);
-    EXPECT_EQ(t.shape.kind, ShapeKind::Unknown);
+    EXPECT_EQ(t.shape.kind, ShapeKind::RowVector);
 }
 
 // zeros(m, n) with constant dims -> KnownDims(m, n); zeros(n) -> n x n;

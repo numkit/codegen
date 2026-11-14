@@ -59,6 +59,24 @@ Shape broadcastShape(const Shape &a, const Shape &b)
     if (a == b) return a;
     if (a.isScalar()) return b;
     if (b.isScalar()) return a;
+    auto is1DRow = [](const Shape &s) {
+        return s.kind == ShapeKind::RowVector
+               || (s.kind == ShapeKind::KnownDims && s.rows == 1 && s.cols > 1);
+    };
+    auto is1DCol = [](const Shape &s) {
+        return s.kind == ShapeKind::ColVector
+               || (s.kind == ShapeKind::KnownDims && s.cols == 1 && s.rows > 1);
+    };
+    if (is1DRow(a) && is1DRow(b) && (a.kind == ShapeKind::RowVector || b.kind == ShapeKind::RowVector))
+        return Shape::rowVector();
+    if (is1DCol(a) && is1DCol(b) && (a.kind == ShapeKind::ColVector || b.kind == ShapeKind::ColVector))
+        return Shape::colVector();
+    if ((a.kind == ShapeKind::Vector1D && b.isVector1D())
+        || (b.kind == ShapeKind::Vector1D && a.isVector1D())) {
+        // When orientation is erased on at least one operand, elementwise vector ops stay
+        // 1-D only when both are orientation-erased (handled above by a == b); a RowVector vs
+        // ColVector could implicit-expand to 2-D, so fall through to Unknown.
+    }
     auto canBroadcast2DVec = [](const Shape &m, const Shape &v) -> bool {
         if (m.kind == ShapeKind::KnownDims && m.rows > 1 && m.cols > 1) {
             if (v.kind == ShapeKind::RowVector || v.kind == ShapeKind::ColVector)

@@ -44,10 +44,11 @@ namespace numkit::codegen {
 // anything it cannot prove equal to Unknown, so adding richer shapes
 // later only refines results, never breaks soundness.
 enum class ShapeKind : std::uint8_t {
-    Unknown,    // top — any shape
+    Unknown,    // top — any rank / shape (not statically provable)
     Scalar,     // 1 x 1
     RowVector,  // 1 x N, N not statically known (e.g. 1:N, runtime linspace)
     ColVector,  // N x 1, N not statically known
+    Vector1D,   // 1-D vector of unknown orientation and runtime length
     KnownDims,  // concrete rows x cols (rank 2, both dims compile-time)
     NDims,      // ranked: rank = nd.size(); each nd[k] is the dim size, 0 = runtime-unknown.
                 // Used for rank >= 3 (true N-D) AND a rank-2 matrix with a runtime dim.
@@ -64,6 +65,7 @@ struct Shape {
     static Shape scalar()    { return {ShapeKind::Scalar, 1, 1, {}}; }
     static Shape rowVector() { return {ShapeKind::RowVector, 0, 0, {}}; }
     static Shape colVector() { return {ShapeKind::ColVector, 0, 0, {}}; }
+    static Shape vector1D()  { return {ShapeKind::Vector1D, 0, 0, {}}; }
     // A 1x1 KnownDims is canonicalised to Scalar so the two never alias.
     static Shape dims(std::size_t r, std::size_t c)
     {
@@ -83,6 +85,15 @@ struct Shape {
     }
 
     bool        isScalar() const { return kind == ShapeKind::Scalar; }
+    bool        isVector1D() const
+    {
+        return kind == ShapeKind::RowVector || kind == ShapeKind::ColVector
+               || kind == ShapeKind::Vector1D
+               || (kind == ShapeKind::KnownDims
+                   && ((rows == 1 && cols > 1) || (cols == 1 && rows > 1)))
+               || (kind == ShapeKind::NDims && nd.size() == 2
+                   && ((nd[0] == 1 && nd[1] == 0) || (nd[1] == 1 && nd[0] == 0)));
+    }
     bool        isNDims() const { return kind == ShapeKind::NDims; }
     std::size_t ndRank() const { return kind == ShapeKind::NDims ? nd.size() : 0; }
     bool        operator==(const Shape &o) const;
@@ -116,27 +127,25 @@ struct InferredType {
     std::shared_ptr<const StructLayout> structLayout;
 
     // ── constructors ──
-    static InferredType dynamic() { return {TypeKind::Dynamic, ValueType::EMPTY, {}}; }
-    static InferredType bottom()  { return {TypeKind::Bottom,  ValueType::EMPTY, {}}; }
+    static InferredType dynamic() { return {TypeKind::Dynamic, ValueType::EMPTY, {}, -1, {}}; }
+    static InferredType bottom()  { return {TypeKind::Bottom,  ValueType::EMPTY, {}, -1, {}}; }
     static InferredType concrete(ValueType dt, Shape s)
     {
-        return {TypeKind::Concrete, dt, s};
+        return {TypeKind::Concrete, dt, std::move(s), -1, {}};
     }
     static InferredType scalar(ValueType dt) { return concrete(dt, Shape::scalar()); }
     // A class instance (value or handle decided by the ClassRegistry, not
     // the lattice). A scalar object in v1 (object arrays are a later tier).
     static InferredType object(int classId)
     {
-        return {TypeKind::Concrete, ValueType::OBJECT, Shape::scalar(), classId};
+        return {TypeKind::Concrete, ValueType::OBJECT, Shape::scalar(), classId, {}};
     }
     // A plain (anonymous) struct value with the given field layout (name -> type).
     // A scalar struct in v1 (struct arrays are a later tier). The layout is shared
     // (cheap copy; null for every non-struct type).
     static InferredType structOf(std::shared_ptr<const StructLayout> layout)
     {
-        InferredType t{TypeKind::Concrete, ValueType::STRUCT, Shape::scalar()};
-        t.structLayout = std::move(layout);
-        return t;
+        return {TypeKind::Concrete, ValueType::STRUCT, Shape::scalar(), -1, std::move(layout)};
     }
 
     bool isDynamic()  const { return kind == TypeKind::Dynamic; }

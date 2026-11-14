@@ -86,7 +86,7 @@ configure_file(
 )
 
 # ── Library: numkit_codegen_core ─────────────────────────────────────────
-file(GLOB_RECURSE NUMKIT_CODEGEN_SOURCES
+file(GLOB_RECURSE NUMKIT_CODEGEN_SOURCES CONFIGURE_DEPENDS
     "src/*.cpp"
 )
 list(APPEND NUMKIT_CODEGEN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/bridge/numkit_codegen_rt.cpp")
@@ -167,8 +167,13 @@ if(NUMKIT_BUILD_TESTS AND NOT EMSCRIPTEN)
         ARCHIVE_OUTPUT_DIRECTORY_DEBUG   ${CMAKE_CURRENT_BINARY_DIR}
         ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set(NUMKIT_RT_IMPORT_LIB
-        "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_IMPORT_LIBRARY_PREFIX}numkit_codegen_rt${CMAKE_IMPORT_LIBRARY_SUFFIX}")
+    if(WIN32)
+        set(NUMKIT_RT_IMPORT_LIB
+            "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_IMPORT_LIBRARY_PREFIX}numkit_codegen_rt${CMAKE_IMPORT_LIBRARY_SUFFIX}")
+    else()
+        set(NUMKIT_RT_IMPORT_LIB
+            "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}numkit_codegen_rt${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    endif()
     set(NUMKIT_RT_SHARED_DLL
         "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}numkit_codegen_rt${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
@@ -193,8 +198,13 @@ if(NUMKIT_BUILD_TESTS AND NOT EMSCRIPTEN)
         ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_BINARY_DIR}
     )
     get_filename_component(NUMKIT_OPS_INCLUDE_DIR "${_numkit_ops_src_dir}/include" ABSOLUTE)
-    set(NUMKIT_OPS_IMPORT_LIB
-        "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_IMPORT_LIBRARY_PREFIX}numkit_ops_kernels${CMAKE_IMPORT_LIBRARY_SUFFIX}")
+    if(WIN32)
+        set(NUMKIT_OPS_IMPORT_LIB
+            "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_IMPORT_LIBRARY_PREFIX}numkit_ops_kernels${CMAKE_IMPORT_LIBRARY_SUFFIX}")
+    else()
+        set(NUMKIT_OPS_IMPORT_LIB
+            "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}numkit_ops_kernels${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    endif()
     set(NUMKIT_OPS_SHARED_DLL
         "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}numkit_ops_kernels${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
@@ -218,6 +228,7 @@ if(NUMKIT_BUILD_TESTS AND NOT EMSCRIPTEN)
         tests/driver_test.cpp
         tests/bridge_test.cpp
         tests/tiered_test.cpp
+        tests/wave5_codegen_safety_test.cpp
     )
 
     add_executable(numkit_codegen_test ${NUMKIT_CODEGEN_TEST_SOURCES})

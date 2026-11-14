@@ -27,7 +27,7 @@ namespace {
 InferredType zerosOnesTransfer(const std::vector<ArgInfo> &args)
 {
     Shape sh;
-    std::size_t a = 0, b = 0;
+    std::size_t a = 0;
     if (args.empty()) {
         sh = Shape::scalar();
     } else if (args.size() == 1) {
@@ -62,13 +62,13 @@ InferredType linspaceTransfer(const std::vector<ArgInfo> &args)
     else if (args.size() == 2)
         sh = Shape::dims(1, 100);
     else
-        sh = Shape::unknown();
+        sh = Shape::rowVector();
     return InferredType::concrete(ValueType::DOUBLE, sh);
 }
 
 // logspace(a, b [, n]) -> 1 x N double row of decade-spaced points (10^linspace).
 // Same shape rule as linspace EXCEPT the 2-arg default is n=50 (MATLAB / nk
-// logspace), not 100. n a known constant -> 1 x n; runtime n -> Unknown shape.
+// logspace), not 100. n a known constant -> 1 x n; runtime n -> RowVector shape.
 InferredType logspaceTransfer(const std::vector<ArgInfo> &args)
 {
     Shape       sh;
@@ -78,7 +78,7 @@ InferredType logspaceTransfer(const std::vector<ArgInfo> &args)
     else if (args.size() == 2)
         sh = Shape::dims(1, 50);  // MATLAB logspace default n=50
     else
-        sh = Shape::unknown();
+        sh = Shape::rowVector();
     return InferredType::concrete(ValueType::DOUBLE, sh);
 }
 
@@ -161,7 +161,7 @@ InferredType repmatTransfer(const std::vector<ArgInfo> &args)
     if (args[0].type.shape.kind == ShapeKind::RowVector && args.size() == 3) {
         std::size_t p = 0, q = 0;
         if (args[1].constant.asDim(p) && p == 1)
-            return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            return InferredType::concrete(args[0].type.dtype, Shape::rowVector());
         if (args[1].constant.asDim(p) && args[2].constant.asDim(q) && p > 1)
             return InferredType::concrete(args[0].type.dtype, Shape::ndShape({p, 0}));
     }
@@ -173,7 +173,7 @@ InferredType repmatTransfer(const std::vector<ArgInfo> &args)
     if (args[0].type.shape.kind == ShapeKind::ColVector && args.size() == 3) {
         std::size_t p = 0, q = 0;
         if (args[2].constant.asDim(q) && q == 1)
-            return InferredType::concrete(args[0].type.dtype, Shape::unknown());
+            return InferredType::concrete(args[0].type.dtype, Shape::colVector());
         if (args[1].constant.asDim(p) && args[2].constant.asDim(q) && q > 1)
             return InferredType::concrete(args[0].type.dtype, Shape::ndShape({0, q}));
     }

@@ -9,8 +9,13 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#include <sys/wait.h>
+#endif
 
 namespace numkit::codegen::aot {
 
@@ -23,6 +28,52 @@ std::string toNative(std::string s)
         if (c == '/') c = '\\';
 #endif
     return s;
+}
+
+std::string shellQuotePosix(const std::string &s)
+{
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += "'";
+    return out;
+}
+
+bool isValidDefine(const std::string &d)
+{
+    if (d.empty()) return false;
+    for (unsigned char c : d) {
+        if (c < 0x20 || c == 0x7f) return false;
+#ifdef _WIN32
+        if (c == '"' || c == '&' || c == '|' || c == '<' || c == '>' || c == '^' || c == '%')
+            return false;
+#endif
+    }
+    return true;
+}
+
+int decodeWaitStatus(int st)
+{
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+    if (st == -1) return -1;
+    if (WIFEXITED(st)) return WEXITSTATUS(st);
+    if (WIFSIGNALED(st)) return 128 + WTERMSIG(st);
+#endif
+    return st;
+}
+
+bool isPosixSharedLibraryPath(const std::string &p)
+{
+    namespace fs = std::filesystem;
+    const fs::path fp(p);
+    if (!fp.has_parent_path()) return false;
+    const std::string fn = fp.filename().string();
+    if (fn.size() >= 3 && fn.compare(fn.size() - 3, 3, ".so") == 0) return true;
+    if (fn.find(".so.") != std::string::npos) return true;
+    if (fn.size() >= 6 && fn.compare(fn.size() - 6, 6, ".dylib") == 0) return true;
+    return false;
 }
 
 bool writeFile(const std::string &path, const std::string &content)
@@ -64,10 +115,7 @@ std::string quoteCompilerCmd(const std::string &cxx, bool winQuote)
     if (winQuote) {
         return "\"" + toNative(exe) + "\"" + subcmd;
     }
-    if (!subcmd.empty()) {
-        return "'" + exe + "'" + subcmd;
-    }
-    return exe;
+    return shellQuotePosix(exe) + subcmd;
 }
 
 // The C++ compiler used at runtime:
@@ -254,6 +302,13 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
 
     const std::string src = outPath + ".cpp";
     const std::string log = outPath + ".log";
+    for (const auto &d : opts.defines) {
+        if (!isValidDefine(d)) {
+            r.status = CompileStatus::CompileError;
+            r.log    = "aot: invalid preprocessor define: " + d;
+            return r;
+        }
+    }
     if (!writeFile(src, cppSource)) {
         r.status = CompileStatus::CompileError;
         r.log    = "aot: failed to write source file " + src;
@@ -299,17 +354,28 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
     // so the inner quoting survives.
     cmd = "\"\"" + toNative(bat) + "\" > \"" + toNative(log) + "\" 2>&1\"";
 #else
+    (void)isMsvc;
     std::string inc, def, libs;
-    for (const auto &d : opts.includeDirs) inc += " -I'" + d + "'";
-    for (const auto &d : opts.defines) def += " -D" + d;
-    for (const auto &l : opts.linkLibs) libs += " '" + l + "'";
+    for (const auto &d : opts.includeDirs) inc += " -I" + shellQuotePosix(d);
+    for (const auto &d : opts.defines) def += " " + shellQuotePosix("-D" + d);
+    std::set<std::string> rpaths;
+    for (const auto &l : opts.linkLibs) {
+        libs += " " + shellQuotePosix(l);
+#  ifndef __EMSCRIPTEN__
+        if (isPosixSharedLibraryPath(l)) {
+            const std::string dir = std::filesystem::path(l).parent_path().string();
+            if (!dir.empty() && rpaths.insert(dir).second)
+                libs += " " + shellQuotePosix("-Wl,-rpath," + dir);
+        }
+#  endif
+    }
     cmd = quoteCompilerCmd(cxx, /*winQuote=*/false) + " -O2 -std=c++17 "
-          + (sharedLib ? "-shared -fPIC " : "") + inc + def + " '" + src + "' -o '" + outPath
-          + "'" + libs + " > '" + log + "' 2>&1";
+          + (sharedLib ? "-shared -fPIC " : "") + inc + def + " " + shellQuotePosix(src)
+          + " -o " + shellQuotePosix(outPath) + libs + " > " + shellQuotePosix(log) + " 2>&1";
 #endif
 
     r.command    = cmd;
-    const int rc = std::system(cmd.c_str());
+    const int rc = decodeWaitStatus(std::system(cmd.c_str()));
     r.log        = readFile(log);
     r.status = (rc == 0 && fileExists(outPath)) ? CompileStatus::Ok
                                                  : CompileStatus::CompileError;
@@ -352,7 +418,7 @@ RunResult runExecutable(const std::string &exePath)
 #  ifdef _WIN32
     cmd = "\"\"" + toNative(exePath) + "\" 2>&1\"";
 #  else
-    cmd = "'" + exePath + "' 2>&1";
+    cmd = shellQuotePosix(exePath) + " 2>&1";
 #  endif
 #  ifdef _WIN32
     FILE *pipe = _popen(cmd.c_str(), "rt");
@@ -370,7 +436,7 @@ RunResult runExecutable(const std::string &exePath)
 #  ifdef _WIN32
     r.exitCode = _pclose(pipe);
 #  else
-    r.exitCode = ::pclose(pipe);
+    r.exitCode = decodeWaitStatus(::pclose(pipe));
 #  endif
     r.log = ss.str();
     return r;

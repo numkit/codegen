@@ -27,12 +27,17 @@
 #include <numkit/sys/env.hpp>
 #include <numkit/sys/toolchain.hpp>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -157,6 +162,15 @@ int main(int argc, char **argv)
             const std::string program = generated + cg::driver::buildHarnessMain(emittedFn);
 
             namespace fs = std::filesystem;
+            struct TempDirGuard {
+                fs::path dir;
+                ~TempDirGuard() {
+                    if (!dir.empty()) {
+                        std::error_code ec;
+                        fs::remove_all(dir, ec);
+                    }
+                }
+            } tempRunDir;
             std::string exe;
             if (buildFlag) {
                 if (!outPath.empty()) {
@@ -171,9 +185,19 @@ int main(int argc, char **argv)
 #endif
                 }
             } else {
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+                std::string tmpl = (fs::temp_directory_path() / "numkit_codegen_run_XXXXXX").string();
+                std::vector<char> buf(tmpl.begin(), tmpl.end());
+                buf.push_back('\0');
+                if (!::mkdtemp(buf.data()))
+                    throw std::runtime_error("failed to create temporary run directory");
+                tempRunDir.dir = fs::path(buf.data());
+#else
                 const auto base = fs::temp_directory_path() / "numkit_codegen_run";
                 fs::create_directories(base);
-                exe = (base / "aot").string();
+                tempRunDir.dir = base;
+#endif
+                exe = (tempRunDir.dir / "aot").string();
 #ifdef _WIN32
                 exe += ".exe";
 #endif

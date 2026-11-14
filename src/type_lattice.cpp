@@ -31,7 +31,26 @@ Shape joinShape(const Shape &a, const Shape &b)
         for (std::size_t i = 0; i < d.size(); ++i) d[i] = (a.nd[i] == b.nd[i]) ? a.nd[i] : 0;
         return Shape::ndShape(std::move(d));
     }
-    // Any other disagreement (Scalar vs KnownDims, two different KnownDims,
+    // Two provably 1-D vector shapes preserve 1-D rank: same orientation joins to
+    // RowVector / ColVector; differing or erased orientation joins to Vector1D.
+    if (a.isVector1D() && b.isVector1D()) {
+        auto isRow = [](const Shape &s) {
+            return s.kind == ShapeKind::RowVector
+                   || (s.kind == ShapeKind::KnownDims && s.rows == 1 && s.cols > 1)
+                   || (s.kind == ShapeKind::NDims && s.nd.size() == 2
+                       && s.nd[0] == 1 && s.nd[1] == 0);
+        };
+        auto isCol = [](const Shape &s) {
+            return s.kind == ShapeKind::ColVector
+                   || (s.kind == ShapeKind::KnownDims && s.cols == 1 && s.rows > 1)
+                   || (s.kind == ShapeKind::NDims && s.nd.size() == 2
+                       && s.nd[1] == 1 && s.nd[0] == 0);
+        };
+        if (isRow(a) && isRow(b)) return Shape::rowVector();
+        if (isCol(a) && isCol(b)) return Shape::colVector();
+        return Shape::vector1D();
+    }
+    // Any other disagreement (Scalar vs KnownDims, two different 2-D KnownDims,
     // mixed rank/kind) collapses to Unknown — no longer statically fixed.
     return Shape::unknown();
 }
@@ -168,6 +187,7 @@ std::string InferredType::str() const
                 case ShapeKind::Scalar:    os << " scalar"; break;
                 case ShapeKind::RowVector: os << " 1x?"; break;
                 case ShapeKind::ColVector: os << " ?x1"; break;
+                case ShapeKind::Vector1D:  os << " vec1d"; break;
                 case ShapeKind::KnownDims: os << ' ' << shape.rows << 'x' << shape.cols; break;
                 case ShapeKind::NDims:
                     os << ' ';

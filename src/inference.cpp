@@ -95,13 +95,174 @@ bool isScalarValue(const AbstractValue &v)
 AbstractValue indexResult(const AbstractValue &var,
                           const std::vector<AbstractValue> &args)
 {
-    if (!var.type.isConcrete())
+    if (!var.type.isConcrete() || var.type.shape.kind == ShapeKind::Unknown)
         return AbstractValue::dynamic();
     bool allScalar = true;
     for (const auto &a : args)
-        if (!isScalarValue(a)) { allScalar = false; break; }
-    const Shape sh = (allScalar && !args.empty()) ? Shape::scalar() : Shape::unknown();
-    return {InferredType::concrete(var.type.dtype, sh), ConstVal::unknown()};
+        if (!isScalarValue(a) || a.type.dtype == ValueType::LOGICAL) { allScalar = false; break; }
+    if (allScalar && !args.empty())
+        return {InferredType::scalar(var.type.dtype), ConstVal::unknown()};
+    if (args.size() == 1) {
+        const InferredType &st = args[0].type;
+        if (st.isConcrete() && (st.shape.isVector1D()
+                                || (st.dtype == ValueType::LOGICAL && !st.shape.isScalar())))
+            return {InferredType::concrete(var.type.dtype, Shape::vector1D()), ConstVal::unknown()};
+    }
+    return {InferredType::concrete(var.type.dtype, Shape::unknown()), ConstVal::unknown()};
+}
+
+AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
+                              const std::vector<AbstractValue> &argVals)
+{
+    if (!base.type.isConcrete() || base.type.shape.kind == ShapeKind::Unknown)
+        return AbstractValue::dynamic();
+    const std::size_t nsub = expr.children.size() - 1;
+    // Bare colon `A(:)` -> column vector; 1-D colon slice `x(a:b)` / `x(a:s:b)` -> Vector1D.
+    if (nsub == 1 && expr.children[1]->type == NodeType::COLON_EXPR) {
+        if (expr.children[1]->children.empty())
+            return {InferredType::concrete(base.type.dtype, Shape::colVector()),
+                    ConstVal::unknown()};
+        return {InferredType::concrete(base.type.dtype, Shape::vector1D()), ConstVal::unknown()};
+    }
+    const bool is2DSrc =
+        (base.type.shape.kind == ShapeKind::KnownDims && base.type.shape.rows >= 1
+         && base.type.shape.cols >= 1)
+        || (base.type.shape.kind == ShapeKind::NDims && base.type.shape.nd.size() == 2);
+    if (is2DSrc && nsub == 2) {
+        const bool c1Bare  = expr.children[1]->type == NodeType::COLON_EXPR
+                             && expr.children[1]->children.empty();
+        const bool c2Bare  = expr.children[2]->type == NodeType::COLON_EXPR
+                             && expr.children[2]->children.empty();
+        const bool c1Range = expr.children[1]->type == NodeType::COLON_EXPR
+                             && expr.children[1]->children.size() == 2;
+        const bool c2Range = expr.children[2]->type == NodeType::COLON_EXPR
+                             && expr.children[2]->children.size() == 2;
+        const bool c1Scal  = expr.children[1]->type != NodeType::COLON_EXPR
+                             && isScalarValue(argVals[0])
+                             && argVals[0].type.dtype != ValueType::LOGICAL;
+        const bool c2Scal  = expr.children[2]->type != NodeType::COLON_EXPR
+                             && isScalarValue(argVals[1])
+                             && argVals[1].type.dtype != ValueType::LOGICAL;
+        if (c1Bare && c2Scal)
+            return {InferredType::concrete(base.type.dtype, Shape::colVector()),
+                    ConstVal::unknown()};
+        if (c1Scal && c2Bare)
+            return {InferredType::concrete(base.type.dtype, Shape::rowVector()),
+                    ConstVal::unknown()};
+        if (c1Range && c2Scal)
+            return {InferredType::concrete(base.type.dtype, Shape::colVector()),
+                    ConstVal::unknown()};
+        if (c1Scal && c2Range)
+            return {InferredType::concrete(base.type.dtype, Shape::rowVector()),
+                    ConstVal::unknown()};
+        if ((c1Bare && c2Range) || (c1Range && c2Bare) || (c1Range && c2Range)) {
+            const bool true2D =
+                (base.type.shape.kind == ShapeKind::KnownDims && base.type.shape.rows > 1
+                 && base.type.shape.cols > 1)
+                || (base.type.shape.kind == ShapeKind::NDims && base.type.shape.nd.size() == 2);
+            if (true2D)
+                return {InferredType::concrete(base.type.dtype, Shape::ndShape({0, 0})),
+                        ConstVal::unknown()};
+        }
+    }
+    if (base.type.shape.kind == ShapeKind::NDims && base.type.shape.nd.size() >= 3
+        && nsub == base.type.shape.nd.size()) {
+        const std::size_t r = base.type.shape.nd.size();
+        bool              pageSlice = true;
+        for (std::size_t i = 1; i < r; ++i)
+            if (expr.children[i]->type != NodeType::COLON_EXPR
+                || !expr.children[i]->children.empty()) {
+                pageSlice = false;
+                break;
+            }
+        if (pageSlice && expr.children[r]->type != NodeType::COLON_EXPR
+            && isScalarValue(argVals[r - 1]))
+            return {InferredType::concrete(
+                        base.type.dtype,
+                        Shape::ndShape(std::vector<std::size_t>(r - 1, 0))),
+                    ConstVal::unknown()};
+        if (pageSlice && expr.children[r]->type == NodeType::COLON_EXPR
+            && expr.children[r]->children.size() == 2)
+            return {InferredType::concrete(
+                        base.type.dtype,
+                        Shape::ndShape(std::vector<std::size_t>(r, 0))),
+                    ConstVal::unknown()};
+        bool leadScalar = expr.children[1]->type != NodeType::COLON_EXPR
+                          && isScalarValue(argVals[0]);
+        for (std::size_t i = 2; i <= r && leadScalar; ++i)
+            if (expr.children[i]->type != NodeType::COLON_EXPR
+                || !expr.children[i]->children.empty())
+                leadScalar = false;
+        if (leadScalar) {
+            std::vector<std::size_t> d(r, 0);
+            d[0] = 1;
+            return {InferredType::concrete(base.type.dtype, Shape::ndShape(d)),
+                    ConstVal::unknown()};
+        }
+        if (r == 3 && expr.children[1]->type == NodeType::COLON_EXPR
+            && expr.children[1]->children.empty()
+            && expr.children[2]->type != NodeType::COLON_EXPR
+            && isScalarValue(argVals[1])
+            && expr.children[3]->type == NodeType::COLON_EXPR
+            && expr.children[3]->children.empty())
+            return {InferredType::concrete(base.type.dtype, Shape::ndShape({0, 1, 0})),
+                    ConstVal::unknown()};
+        if (r == 3 && expr.children[1]->type != NodeType::COLON_EXPR
+            && isScalarValue(argVals[0]) && expr.children[2]->type != NodeType::COLON_EXPR
+            && isScalarValue(argVals[1])
+            && expr.children[3]->type == NodeType::COLON_EXPR
+            && expr.children[3]->children.empty())
+            return {InferredType::concrete(base.type.dtype, Shape::ndShape({1, 1, 0})),
+                    ConstVal::unknown()};
+        if (r == 3 && expr.children[1]->type != NodeType::COLON_EXPR
+            && isScalarValue(argVals[0]) && expr.children[2]->type == NodeType::COLON_EXPR
+            && expr.children[2]->children.empty()
+            && expr.children[3]->type != NodeType::COLON_EXPR
+            && isScalarValue(argVals[2]))
+            return {InferredType::concrete(base.type.dtype, Shape::ndShape({1, 0})),
+                    ConstVal::unknown()};
+        if (r == 3 && expr.children[1]->type == NodeType::COLON_EXPR
+            && expr.children[1]->children.empty()
+            && expr.children[2]->type != NodeType::COLON_EXPR
+            && isScalarValue(argVals[1])
+            && expr.children[3]->type != NodeType::COLON_EXPR
+            && isScalarValue(argVals[2]))
+            return {InferredType::concrete(base.type.dtype, Shape::ndShape({0, 1})),
+                    ConstVal::unknown()};
+        if (r >= 4) {
+            bool allCS   = true;
+            int  lastCol = -1;
+            int  scalarN = 0;
+            for (std::size_t kk = 1; kk <= r; ++kk) {
+                const bool isCol = expr.children[kk]->type == NodeType::COLON_EXPR
+                                   && expr.children[kk]->children.empty();
+                if (isCol)
+                    lastCol = static_cast<int>(kk) - 1;
+                else if (expr.children[kk]->type != NodeType::COLON_EXPR
+                         && isScalarValue(argVals[kk - 1]))
+                    ++scalarN;
+                else {
+                    allCS = false;
+                    break;
+                }
+            }
+            if (allCS && lastCol >= 0 && scalarN > 0) {
+                const std::size_t keptRank =
+                    static_cast<std::size_t>(lastCol) + 1 < 2
+                        ? 2u
+                        : static_cast<std::size_t>(lastCol) + 1;
+                std::vector<std::size_t> d(keptRank, 0);
+                for (std::size_t kk = 0; kk < keptRank; ++kk)
+                    d[kk] = (expr.children[kk + 1]->type == NodeType::COLON_EXPR
+                             && expr.children[kk + 1]->children.empty())
+                                ? 0
+                                : 1;
+                return {InferredType::concrete(base.type.dtype, Shape::ndShape(d)),
+                        ConstVal::unknown()};
+            }
+        }
+    }
+    return indexResult(base, argVals);
 }
 
 // The flattened field-local name for a plain-struct field chain (field-flattening).
@@ -323,165 +484,8 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
             // MATLAB ambiguity: `name(...)` is an indexed read when `name`
             // is a variable in scope, otherwise a function call (or a class
             // constructor, registered as a transfer).
-            if (env.has(name)) {
-                // PAGE-SLICE read A(:,:,k): leading bare colons + a trailing SCALAR on an NDims
-                // rank-r base -> drop the last dim -> rank (r-1) (for r=3 a 2-D m x n page). The
-                // dims are runtime (the emit copies the contiguous page); typed here so the dest
-                // hoists as a (r-1)-D local. r >= 3 only (r=2 A(:,k) is the column slice).
-                const AbstractValue base = env.get(name);
-                const std::size_t   nsub = expr.children.size() - 1;
-                // 2-D COLUMN-RANGE read A(:, j1:j2): a leading bare colon + a trailing step-1
-                // RANGE on a 2-D base -> a runtime-dim 2-D [rows, j2-j1+1] (columns j1..j2 are a
-                // contiguous column-major block). Typed here so the dest hoists as a runtime 2-D
-                // local; the emit copies the block. The rank-3+ trailing range is the page/slab
-                // range below (NDims only); this is its rank-2 sibling (a 2-D may be KnownDims).
-                const bool is2DSrc =
-                    (base.type.shape.kind == ShapeKind::KnownDims && base.type.shape.rows > 1
-                     && base.type.shape.cols > 1)
-                    || (base.type.shape.kind == ShapeKind::NDims && base.type.shape.nd.size() == 2);
-                if (is2DSrc && nsub == 2 && expr.children[1]->type == NodeType::COLON_EXPR
-                    && expr.children[1]->children.empty()
-                    && expr.children[2]->type == NodeType::COLON_EXPR
-                    && expr.children[2]->children.size() == 2)
-                    return {InferredType::concrete(base.type.dtype, Shape::ndShape({0, 0})),
-                            ConstVal::unknown()};
-                // 2-D ROW-RANGE read A(i1:i2, :): a leading step-1 RANGE + a trailing bare colon
-                // on a 2-D base -> a runtime-dim 2-D [(i2-i1+1), cols]. STRIDED (a row block is not
-                // contiguous in column-major); the emit copies per column. Sibling of the column
-                // range above.
-                if (is2DSrc && nsub == 2 && expr.children[1]->type == NodeType::COLON_EXPR
-                    && expr.children[1]->children.size() == 2
-                    && expr.children[2]->type == NodeType::COLON_EXPR
-                    && expr.children[2]->children.empty())
-                    return {InferredType::concrete(base.type.dtype, Shape::ndShape({0, 0})),
-                            ConstVal::unknown()};
-                // 2-D BOTH-RANGE read A(i1:i2, j1:j2): both subscripts step-1 ranges on a 2-D base
-                // -> a runtime-dim 2-D [(i2-i1+1), (j2-j1+1)] (a strided sub-block; the emit gathers
-                // per kept column). Combines the row + column range cases.
-                if (is2DSrc && nsub == 2 && expr.children[1]->type == NodeType::COLON_EXPR
-                    && expr.children[1]->children.size() == 2
-                    && expr.children[2]->type == NodeType::COLON_EXPR
-                    && expr.children[2]->children.size() == 2)
-                    return {InferredType::concrete(base.type.dtype, Shape::ndShape({0, 0})),
-                            ConstVal::unknown()};
-                if (base.type.shape.kind == ShapeKind::NDims && base.type.shape.nd.size() >= 3
-                    && nsub == base.type.shape.nd.size()) {
-                    const std::size_t r = base.type.shape.nd.size();
-                    bool              pageSlice = true;
-                    for (std::size_t i = 1; i < r; ++i)  // children[1..r-1] = bare colons
-                        if (expr.children[i]->type != NodeType::COLON_EXPR
-                            || !expr.children[i]->children.empty()) {
-                            pageSlice = false;
-                            break;
-                        }
-                    if (pageSlice && expr.children[r]->type != NodeType::COLON_EXPR
-                        && isScalarValue(argVals[r - 1]))  // trailing subscript is a scalar
-                        return {InferredType::concrete(
-                                    base.type.dtype,
-                                    Shape::ndShape(std::vector<std::size_t>(r - 1, 0))),
-                                ConstVal::unknown()};
-                    // PAGE-RANGE read A(:,:,k1:k2): a trailing step-1 RANGE (a 2-child COLON_EXPR)
-                    // KEEPS the rank, the last dim becoming the range length (runtime). For r=3 a
-                    // rank-3 m x n x (k2-k1+1) sub-array. (vs the scalar case above which drops it.)
-                    if (pageSlice && expr.children[r]->type == NodeType::COLON_EXPR
-                        && expr.children[r]->children.size() == 2)
-                        return {InferredType::concrete(
-                                    base.type.dtype,
-                                    Shape::ndShape(std::vector<std::size_t>(r, 0))),
-                                ConstVal::unknown()};
-                    // LEADING-scalar slice A(i,:,:): a scalar FIRST subscript + trailing bare colons
-                    // -> the first dim becomes 1 (KEPT; only TRAILING scalar dims drop, per N3), the
-                    // rest runtime. For r=3 a rank-3 [1, n, p]. (Strided -- the emit gathers.)
-                    bool leadScalar = expr.children[1]->type != NodeType::COLON_EXPR
-                                      && isScalarValue(argVals[0]);
-                    for (std::size_t i = 2; i <= r && leadScalar; ++i)
-                        if (expr.children[i]->type != NodeType::COLON_EXPR
-                            || !expr.children[i]->children.empty())
-                            leadScalar = false;
-                    if (leadScalar) {
-                        std::vector<std::size_t> d(r, 0);
-                        d[0] = 1;  // first dim fixed to a single value -> size 1, kept
-                        return {InferredType::concrete(base.type.dtype, Shape::ndShape(d)),
-                                ConstVal::unknown()};
-                    }
-                    // MIDDLE-scalar slice A(:,j,:) (r==3): colon, scalar, colon -> [m, 1, p] (the
-                    // fixed middle dim becomes 1, kept). Strided (the emit gathers).
-                    if (r == 3 && expr.children[1]->type == NodeType::COLON_EXPR
-                        && expr.children[1]->children.empty()
-                        && expr.children[2]->type != NodeType::COLON_EXPR
-                        && isScalarValue(argVals[1])
-                        && expr.children[3]->type == NodeType::COLON_EXPR
-                        && expr.children[3]->children.empty())
-                        return {InferredType::concrete(base.type.dtype, Shape::ndShape({0, 1, 0})),
-                                ConstVal::unknown()};
-                    // FIBER A(i,j,:) (r==3): two leading scalars + trailing colon -> [1, 1, p]
-                    // (both fixed dims kept as singletons; the trailing colon is not droppable).
-                    if (r == 3 && expr.children[1]->type != NodeType::COLON_EXPR
-                        && isScalarValue(argVals[0]) && expr.children[2]->type != NodeType::COLON_EXPR
-                        && isScalarValue(argVals[1])
-                        && expr.children[3]->type == NodeType::COLON_EXPR
-                        && expr.children[3]->children.empty())
-                        return {InferredType::concrete(base.type.dtype, Shape::ndShape({1, 1, 0})),
-                                ConstVal::unknown()};
-                    // A(i,:,k) (r==3): scalar, colon, scalar -> [1, n] (a 2-D ROW; the trailing
-                    // scalar k drops the page dim, the leading scalar i keeps a singleton first
-                    // dim). Strided.
-                    if (r == 3 && expr.children[1]->type != NodeType::COLON_EXPR
-                        && isScalarValue(argVals[0]) && expr.children[2]->type == NodeType::COLON_EXPR
-                        && expr.children[2]->children.empty()
-                        && expr.children[3]->type != NodeType::COLON_EXPR
-                        && isScalarValue(argVals[2]))
-                        return {InferredType::concrete(base.type.dtype, Shape::ndShape({1, 0})),
-                                ConstVal::unknown()};
-                    // A(:,j,k) (r==3): colon, scalar, scalar -> [m, 1] (a 2-D COLUMN: col j of
-                    // page k; the trailing scalar k drops the page dim). CONTIGUOUS.
-                    if (r == 3 && expr.children[1]->type == NodeType::COLON_EXPR
-                        && expr.children[1]->children.empty()
-                        && expr.children[2]->type != NodeType::COLON_EXPR
-                        && isScalarValue(argVals[1])
-                        && expr.children[3]->type != NodeType::COLON_EXPR
-                        && isScalarValue(argVals[2]))
-                        return {InferredType::concrete(base.type.dtype, Shape::ndShape({0, 1})),
-                                ConstVal::unknown()};
-                    // GENERAL scalar/colon slice for rank r >= 4: every subscript a bare colon or
-                    // a scalar, >=1 of each. Output dim per subscript: colon -> size(A,k) (runtime,
-                    // 0), scalar -> 1. Then TRAILING scalar dims drop -> kept rank = max(lastColon
-                    // +1, 2). (Rank 2/3 keep their tested per-pattern cases above.) The emit gathers.
-                    if (r >= 4) {
-                        bool allCS    = true;
-                        int  lastCol  = -1;
-                        int  scalarN  = 0;
-                        for (std::size_t kk = 1; kk <= r; ++kk) {
-                            const bool isCol = expr.children[kk]->type == NodeType::COLON_EXPR
-                                               && expr.children[kk]->children.empty();
-                            if (isCol)
-                                lastCol = static_cast<int>(kk) - 1;
-                            else if (expr.children[kk]->type != NodeType::COLON_EXPR
-                                     && isScalarValue(argVals[kk - 1]))
-                                ++scalarN;
-                            else {
-                                allCS = false;
-                                break;
-                            }
-                        }
-                        if (allCS && lastCol >= 0 && scalarN > 0) {
-                            const std::size_t keptRank =
-                                static_cast<std::size_t>(lastCol) + 1 < 2
-                                    ? 2u
-                                    : static_cast<std::size_t>(lastCol) + 1;
-                            std::vector<std::size_t> d(keptRank, 0);
-                            for (std::size_t kk = 0; kk < keptRank; ++kk)
-                                d[kk] = (expr.children[kk + 1]->type == NodeType::COLON_EXPR
-                                         && expr.children[kk + 1]->children.empty())
-                                            ? 0
-                                            : 1;  // colon -> runtime, scalar -> singleton
-                            return {InferredType::concrete(base.type.dtype, Shape::ndShape(d)),
-                                    ConstVal::unknown()};
-                        }
-                    }
-                }
-                return indexResult(base, argVals);
-            }
+            if (env.has(name))
+                return indexCallResult(env.get(name), expr, argVals);
             InferredType rt = reg.apply(name, argInfos);
             if (rt.isDynamic() && reg.userFunctions() && reg.userFunctions()->has(name)) {
                 const std::vector<InferredType> outs = reg.applyMulti(name, argInfos);
@@ -498,13 +502,13 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
             && !inferExpr(*callee.children[0], env, reg, classes).type.isObject()) {
             const std::string fld = structFieldLocal(callee);
             if (!fld.empty()) {
-                if (env.has(fld)) return indexResult(env.get(fld), argVals);
+                if (env.has(fld)) return indexCallResult(env.get(fld), expr, argVals);
                 std::string              rootVar;
                 std::vector<std::string> path;
                 if (extractStructFieldChain(callee, rootVar, path)) {
                     if (const InferredType *ft =
                             lookupNestedStructField(env.get(rootVar).type, path))
-                        return indexResult({*ft, ConstVal::unknown()}, argVals);
+                        return indexCallResult({*ft, ConstVal::unknown()}, expr, argVals);
                 }
                 return AbstractValue::dynamic();
             }
@@ -548,7 +552,7 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
                 else if (dt != ev.type.dtype) { ok = false; break; }  // no dtype mix
             }
             if (ok && dt != ValueType::EMPTY)
-                return {InferredType::concrete(dt, Shape::unknown()), ConstVal::unknown()};
+                return {InferredType::concrete(dt, Shape::colVector()), ConstVal::unknown()};
             // Rectangular grid of SCALARS [a b ...; c d ...] -> an R x C 2-D matrix
             // with compile-time KnownDims(R, C).
             if (expr.children[0] && expr.children[0]->children.size() > 1) {
@@ -703,19 +707,25 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
             if (blocksOk && bdt != ValueType::EMPTY)
                 return {InferredType::concrete(bdt, Shape::ndShape({0, 0})), ConstVal::unknown()};
         }
-        ValueType dt = ValueType::EMPTY;
+        ValueType dt     = ValueType::EMPTY;
+        bool      allRow = true;
         for (const auto &el : expr.children[0]->children) {
             if (!el) return AbstractValue::dynamic();
             const AbstractValue ev      = inferExpr(*el, env, reg, classes);
             const bool          isMatrix =
                 (ev.type.shape.kind == ShapeKind::KnownDims && ev.type.shape.rows > 1
                  && ev.type.shape.cols > 1)
-                || ev.type.shape.isNDims();
+                || ev.type.shape.isNDims()
+                || ev.type.shape.kind == ShapeKind::Unknown;
             if (!ev.type.isConcrete() || isMatrix) return AbstractValue::dynamic();
+            if (!(ev.type.shape.isScalar() || ev.type.shape.kind == ShapeKind::RowVector
+                  || (ev.type.shape.kind == ShapeKind::KnownDims && ev.type.shape.rows == 1)))
+                allRow = false;
             if (dt == ValueType::EMPTY) dt = ev.type.dtype;
             else if (dt != ev.type.dtype) return AbstractValue::dynamic();  // no dtype mix
         }
-        return {InferredType::concrete(dt, Shape::unknown()), ConstVal::unknown()};
+        return {InferredType::concrete(dt, allRow ? Shape::rowVector() : Shape::vector1D()),
+                ConstVal::unknown()};
     }
 
     default:
@@ -744,6 +754,7 @@ AbstractValue forIterValue(const InferredType &range)
     case ShapeKind::ColVector:
         return {InferredType::concrete(range.dtype, Shape::colVector()),
                 ConstVal::unknown()};  // single column iteration
+    case ShapeKind::Vector1D:
     case ShapeKind::Unknown:
     default:
         return AbstractValue::dynamic();
@@ -844,7 +855,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                 for (const auto &row : rn.children)
                     if (row && !row->children.empty()) { emptyMat = false; break; }
             if (emptyMat)
-                rv = {InferredType::concrete(ValueType::DOUBLE, Shape::unknown()),
+                rv = {InferredType::concrete(ValueType::DOUBLE, Shape::vector1D()),
                       ConstVal::unknown()};
         }
         if (lhs.type == NodeType::IDENTIFIER) {
@@ -866,7 +877,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             if (rhs.type.isConcrete() && rhs.type.shape.isScalar()) {
                 const std::string sv  = lhs.children[0]->children[0]->strValue;
                 const std::string fld = "_numkit_fld_" + sv + "_" + lhs.strValue;
-                const InferredType at = InferredType::concrete(rhs.type.dtype, Shape::unknown());
+                const InferredType at = InferredType::concrete(rhs.type.dtype, Shape::vector1D());
                 env.set(fld, {at, ConstVal::unknown()});
                 recordDecl(declOut, fld, at);
             }
@@ -935,9 +946,21 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                         keepMask = st.isConcrete() && st.dtype == ValueType::LOGICAL
                                    && !st.shape.isScalar();
                     }
-                    const Shape sh = (keep2D || keepND || keepColon || keepMask)
-                                         ? cur.type.shape
-                                         : Shape::unknown();
+                    const Shape &cs    = cur.type.shape;
+                    const bool   isRow = cs.kind == ShapeKind::RowVector
+                                       || (cs.kind == ShapeKind::KnownDims && cs.rows == 1 && cs.cols > 1)
+                                       || (cs.kind == ShapeKind::NDims && cs.nd.size() == 2
+                                           && cs.nd[0] == 1 && cs.nd[1] == 0);
+                    const bool   isCol = cs.kind == ShapeKind::ColVector
+                                       || (cs.kind == ShapeKind::KnownDims && cs.cols == 1 && cs.rows > 1)
+                                       || (cs.kind == ShapeKind::NDims && cs.nd.size() == 2
+                                           && cs.nd[1] == 1 && cs.nd[0] == 0);
+                    const bool   grow1D = nidx == 1 && (cs.isScalar() || cs.isVector1D());
+                    const Shape  vec1D  = isRow ? Shape::rowVector()
+                                                : (isCol ? Shape::colVector() : Shape::vector1D());
+                    const Shape  sh     = (keep2D || keepND || keepColon || keepMask)
+                                              ? cs
+                                              : (grow1D ? vec1D : Shape::unknown());
                     const InferredType newT = InferredType::concrete(cur.type.dtype, sh);
                     env.set(base, {newT, ConstVal::unknown()});
                     recordDecl(declOut, base, newT);
@@ -952,7 +975,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                            && rhs.type.isConcrete() && rhs.type.shape.isScalar()) {
                     // Growable 1-D struct array field built by indexed stores `s.v(i) = val`.
                     const InferredType newT =
-                        InferredType::concrete(rhs.type.dtype, Shape::unknown());
+                        InferredType::concrete(rhs.type.dtype, Shape::vector1D());
                     env.set(base, {newT, ConstVal::unknown()});
                     recordDecl(declOut, base, newT);
                     const InferredType st =
@@ -1033,19 +1056,34 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             inferExpr(*stmt.children[0], env, reg, classes).type);
         const ASTNode &body = *stmt.children[1];
 
-        // Fixpoint: the body may run 0..n times and carry values across
-        // iterations. Start from the entry env; repeatedly run the body
-        // (loop var rebound) and join back until stable. The env only
-        // widens between iterations, so a def-site type recorded into
-        // declOut is monotone — recording on every pass is exact.
-        TypeEnv cur = env;
+        TypeEnv cur       = env;
+        bool    converged = false;
         for (int i = 0; i < kMaxFixpoint; ++i) {
             TypeEnv bodyEnv = cur;
             bodyEnv.set(loopVar, iterVal);
             inferStmt(body, bodyEnv, reg, declOut, classes);
             TypeEnv next = joinEnv(cur, bodyEnv);
-            if (next == cur) break;
+            if (next == cur) {
+                converged = true;
+                break;
+            }
             cur = next;
+        }
+        while (!converged) {
+            TypeEnv bodyEnv = cur;
+            bodyEnv.set(loopVar, iterVal);
+            inferStmt(body, bodyEnv, reg, declOut, classes);
+            TypeEnv next = joinEnv(cur, bodyEnv);
+            if (next == cur) {
+                converged = true;
+                break;
+            }
+            for (const auto &[k, av] : next.entries()) {
+                if (!cur.has(k) || av != cur.get(k)) {
+                    cur.set(k, AbstractValue::dynamic());
+                    recordDecl(declOut, k, InferredType::dynamic());
+                }
+            }
         }
         cur.set(loopVar, iterVal);  // loop var keeps its (last) iteration type
         recordDecl(declOut, loopVar, iterVal.type);
@@ -1057,13 +1095,32 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
         // while children[0]; children[1]; end — fixpoint, no loop var.
         if (stmt.children.size() != 2) { markAssignedDynamic(stmt, env, declOut); return; }
         const ASTNode &body = *stmt.children[1];
-        TypeEnv cur = env;
+        TypeEnv cur       = env;
+        bool    converged = false;
         for (int i = 0; i < kMaxFixpoint; ++i) {
             TypeEnv bodyEnv = cur;
             inferStmt(body, bodyEnv, reg, declOut, classes);
             TypeEnv next = joinEnv(cur, bodyEnv);
-            if (next == cur) break;
+            if (next == cur) {
+                converged = true;
+                break;
+            }
             cur = next;
+        }
+        while (!converged) {
+            TypeEnv bodyEnv = cur;
+            inferStmt(body, bodyEnv, reg, declOut, classes);
+            TypeEnv next = joinEnv(cur, bodyEnv);
+            if (next == cur) {
+                converged = true;
+                break;
+            }
+            for (const auto &[k, av] : next.entries()) {
+                if (!cur.has(k) || av != cur.get(k)) {
+                    cur.set(k, AbstractValue::dynamic());
+                    recordDecl(declOut, k, InferredType::dynamic());
+                }
+            }
         }
         env = cur;
         return;
