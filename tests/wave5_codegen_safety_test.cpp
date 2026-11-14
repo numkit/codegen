@@ -201,7 +201,7 @@ int main() {
     };
     const double nanv = std::numeric_limits<double>::quiet_NaN();
     const double infv = std::numeric_limits<double>::infinity();
-    const double bads[] = {0.0, -1.0, 1.5, nanv, infv, -infv, 4.0};
+    const double bads[] = {0.0, -1.0, 1.5, nanv, infv, -infv, 4.0, 0x1p53, 1e300};
     double outBuf[3] = {};
 
     // Valid baseline calls
@@ -222,12 +222,14 @@ int main() {
         if (!throwsOob([&]{ return call(1, b); })) return 10;
         if (!throwsOob([&]{ fixed_out(b, outBuf, 3); })) return 11;
     }
-    // Growable 1-D locals reject <=0, fractional, NaN, Inf, while allowing integer >len
+    // Growable 1-D locals reject <=0, fractional, NaN, Inf, >=2^53, while allowing integer >len
     if (call(2, 4.0) != 9.0) return 12;
-    for (double b : {0.0, -2.0, 2.25, nanv, infv, -infv}) {
+    for (double b : {0.0, -2.0, 2.25, nanv, infv, -infv, 0x1p53, 1e300}) {
         if (!throwsOob([&]{ return call(2, b); })) return 28;
         if (!throwsOob([&]{ return call(3, b); })) return 13;
     }
+    if (!throwsOob([&]{ return call(9, 1.0, 0x1p53); })) return 29;
+    if (!throwsOob([&]{ return call(9, 1.0, 0x1p63); })) return 30;
     // 2-D and 3-D indexing
     for (double b : {0.0, -1.0, 1.2, nanv, infv, 3.0}) {
         if (!throwsOob([&]{ return call(4, b, 1.0); })) return 14;
