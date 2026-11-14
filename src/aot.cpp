@@ -330,7 +330,7 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
         for (const auto &d : opts.defines) def += " /D" + d;
         for (const auto &l : opts.linkLibs) libs += " \"" + toNative(l) + "\"";
         b += "call \"" + toNative(NUMKIT_CODEGEN_AOT_VCVARS) + "\" >nul 2>&1\r\n";
-        b += std::string("cl /nologo /O2 /EHsc /MD /std:c++17 ") + (sharedLib ? "/LD " : "") + inc
+        b += std::string("cl /nologo /O2 /EHsc /MD /std:c++20 ") + (sharedLib ? "/LD " : "") + inc
              + def + " \"" + toNative(src) + "\" /Fe:\"" + toNative(outPath) + "\" /Fo:\""
              + toNative(outPath) + ".obj\"" + (libs.empty() ? "" : " /link" + libs) + "\r\n";
     } else {
@@ -338,7 +338,7 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
         for (const auto &d : opts.includeDirs) inc += " -I\"" + toNative(d) + "\"";
         for (const auto &d : opts.defines) def += " -D" + d;
         for (const auto &l : opts.linkLibs) libs += " \"" + toNative(l) + "\"";
-        b += quoteCompilerCmd(cxx, /*winQuote=*/true) + " -O2 -std=c++17 "
+        b += quoteCompilerCmd(cxx, /*winQuote=*/true) + " -O2 -std=c++20 "
              + (sharedLib ? "-shared -fPIC " : "") + inc + def + " \"" + toNative(src) + "\" -o \""
              + toNative(outPath) + "\"" + libs + "\r\n";
     }
@@ -369,7 +369,7 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
         }
 #  endif
     }
-    cmd = quoteCompilerCmd(cxx, /*winQuote=*/false) + " -O2 -std=c++17 "
+    cmd = quoteCompilerCmd(cxx, /*winQuote=*/false) + " -O2 -std=c++20 "
           + (sharedLib ? "-shared -fPIC " : "") + inc + def + " " + shellQuotePosix(src)
           + " -o " + shellQuotePosix(outPath) + libs + " > " + shellQuotePosix(log) + " 2>&1";
 #endif
