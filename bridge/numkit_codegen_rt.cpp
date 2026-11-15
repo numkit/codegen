@@ -6,9 +6,11 @@
 
 #include "numkit_plugin.h"
 
+#include <keel/complex.h>
+#include <keel/core.h>
+#include <keel/ref.h>
 #include <numkit/core/standard_engine.hpp>
 #include <numkit/core/engine.hpp>
-#include <numkit/value/span.hpp>
 #include <numkit/value/value.hpp>
 #include <numkit/value/value_type.hpp>
 
@@ -173,9 +175,9 @@ numkit_val numkit_box_complex_array(const double *p, size_t len)
 {
     if (!p && len != 0) return nullptr;  // p: interleaved re,im (2*len doubles)
     try {
-        Value                 m = Value::complexMatrix(1, len, nullptr);
-        std::complex<double> *d = m.complexDataMut();
-        for (size_t i = 0; i < len; ++i) d[i] = std::complex<double>(p[2 * i], p[2 * i + 1]);
+        Value      m = Value::complexMatrix(1, len, nullptr);
+        keel::c64 *d = m.complexDataMut();
+        for (size_t i = 0; i < len; ++i) d[i] = keel::c64(p[2 * i], p[2 * i + 1]);
         return make(std::move(m));
     } catch (...) {
         return nullptr;
@@ -216,9 +218,9 @@ numkit_val numkit_box_complex_matrix(const double *p, size_t rows, size_t cols)
     const size_t n = rows * cols;
     if (!p && n != 0) return nullptr;  // p: interleaved re,im (2*n doubles, column-major)
     try {
-        Value                 m = Value::complexMatrix(rows, cols, nullptr);
-        std::complex<double> *d = m.complexDataMut();
-        for (size_t i = 0; i < n; ++i) d[i] = std::complex<double>(p[2 * i], p[2 * i + 1]);
+        Value      m = Value::complexMatrix(rows, cols, nullptr);
+        keel::c64 *d = m.complexDataMut();
+        for (size_t i = 0; i < n; ++i) d[i] = keel::c64(p[2 * i], p[2 * i + 1]);
         return make(std::move(m));
     } catch (...) {
         return nullptr;
@@ -232,8 +234,8 @@ numkit_val numkit_box_complex_array_nd(const double *p, const size_t *dims, int 
         Value        m = Value::matrixND(dims, nd, numkit::ValueType::COMPLEX, nullptr);
         const size_t n = m.numel();
         if (!p && n != 0) return nullptr;
-        std::complex<double> *d = m.complexDataMut();
-        for (size_t i = 0; i < n; ++i) d[i] = std::complex<double>(p[2 * i], p[2 * i + 1]);
+        keel::c64 *d = m.complexDataMut();
+        for (size_t i = 0; i < n; ++i) d[i] = keel::c64(p[2 * i], p[2 * i + 1]);
         return make(std::move(m));
     } catch (...) {
         return nullptr;
@@ -272,7 +274,7 @@ numkit_val numkit_call(const char *name, const numkit_val *args, size_t nargs,
         }
 
         std::vector<Value> outs = engine().callFunctionHandleMulti(
-            handleFor(name), numkit::Span<const Value>(a.data(), a.size()), nargout);
+            handleFor(name), keel::ArrayRef<Value>(a.data(), a.size()), nargout);
         if (nargout == 0)
             return nullptr;
 
@@ -352,7 +354,7 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
             if (!sv) throw std::runtime_error("numkit_index: null subscript handle");
             args.push_back(*sv);
         }
-        const numkit::Span<const Value> argSpan(args.data(), args.size());
+        const keel::ArrayRef<Value> argSpan(args.data(), args.size());
 
         // `value(subs)` is index/call-AMBIGUOUS — resolve exactly as the
         // interpreter (VM::execCallIndirect), so a Dynamic value behaves
@@ -574,7 +576,7 @@ void numkit_unbox_complex_array(numkit_val v, double *out, size_t len)
         const Value *val = unwrap(v);
         const size_t nm  = val->numel();
         if (val->isComplex()) {  // out: interleaved re,im (2*len doubles)
-            const std::complex<double> *d = val->complexData();
+            const keel::c64 *d = val->complexData();
             for (size_t i = 0; i < len && i < nm; ++i) {
                 out[2 * i]     = d[i].real();
                 out[2 * i + 1] = d[i].imag();
@@ -645,8 +647,8 @@ int numkit_register_fn(const char *name, numkit_fn fn)
         numkit_fn f = fn;
         engine().registerFunction(
             name,
-            [f](numkit::Span<const Value> args, size_t nargout,
-                numkit::Span<Value> outs, numkit::CallContext &) {
+            [f](keel::ArrayRef<Value> args, keel::usize nargout,
+                keel::MutArrayRef<Value> outs, numkit::CallContext &) {
                 std::vector<numkit_val> in;  // owned by us, borrowed by the plugin
                 in.reserve(args.size());
                 for (const Value &a : args) in.push_back(make(a));

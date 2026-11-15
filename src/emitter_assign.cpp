@@ -1247,13 +1247,19 @@ void Emitter::emitAssign(const ASTNode &s)
                     // guarded). The kernel zeroes+accumulates; a LOCAL still needs its
                     // owned vector sized first. DOUBLE -> SIMD matmulDouble; COMPLEX ->
                     // portable matmulComplex (amortised over O(M·N·K), no per-elem cost).
-                    const char *fn =
-                        dst.dtype == ValueType::DOUBLE ? "matmulDouble" : "matmulComplex";
                     if (dst.isLocal)
                         line(cppIdent(name) + ".resize(" + Crows + " * " + Ccols + ");");
-                    line("numkit::ops::" + std::string(fn) + "(" + A.dataExpr + ", "
-                         + B.dataExpr + ", " + dst.dataExpr + ", " + Crows + ", " + Ccols
-                         + ", " + Ak + ");");
+                    if (dst.dtype == ValueType::DOUBLE) {
+                        line("numkit::ops::matmulDouble(" + A.dataExpr + ", "
+                             + B.dataExpr + ", " + dst.dataExpr + ", " + Crows + ", " + Ccols
+                             + ", " + Ak + ");");
+                    } else {
+                        line("numkit::ops::matmulComplex(reinterpret_cast<const keel::c64*>("
+                             + A.dataExpr + "), reinterpret_cast<const keel::c64*>("
+                             + B.dataExpr + "), reinterpret_cast<keel::c64*>("
+                             + dst.dataExpr + "), " + Crows + ", " + Ccols
+                             + ", " + Ak + ");");
+                    }
                 } else {
                     if (dst.isLocal)
                         line(cppIdent(name) + ".assign(" + Crows + " * " + Ccols + ", "

@@ -244,6 +244,24 @@ CompileOptions defaultBridgeCompileOptions()
         }
     }
 
+    // 1c. Locate keel header directory (keel/core.h, required by <numkit/ops/kernels.hpp>)
+    const fs::path keelCandidates[] = {
+#ifdef NUMKIT_CODEGEN_KEEL_INCLUDE_DIR
+        fs::path(NUMKIT_CODEGEN_KEEL_INCLUDE_DIR),
+#endif
+#ifdef NUMKIT_CODEGEN_BRIDGE_DIR
+        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR).parent_path().parent_path().parent_path().parent_path() / "keelcpp" / "keel" / "include",
+        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR).parent_path().parent_path().parent_path() / "keelcpp" / "keel" / "include",
+#endif
+        prefix / "include"
+    };
+    for (const auto &k : keelCandidates) {
+        if (!k.empty() && fs::exists(k / "keel" / "core.h", ec)) {
+            opts.includeDirs.push_back(k.string());
+            break;
+        }
+    }
+
     // 2. Locate static runtime libraries
     std::vector<fs::path> searchRoots;
 #ifdef NUMKIT_CODEGEN_BUILD_DIR
@@ -269,6 +287,10 @@ CompileOptions defaultBridgeCompileOptions()
         "numkit_ops",
         "numkit_sys",
         "numkit_value",
+        "keel_fft",
+        "keel_image",
+        "keel_compress",
+        "keel",
         "hwy",
         "hwy_contrib"
     };

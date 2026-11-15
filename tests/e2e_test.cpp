@@ -8782,7 +8782,7 @@ TEST(CodegenOpsKernel, MatrixProductViaOpsKernelRunsCorrectly)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR};
+    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR, NUMKIT_KEEL_INCLUDE_DIR};
     opts.defines     = {"NUMKIT_OPS_USE_DLL"};
     opts.linkLibs    = {NUMKIT_OPS_IMPORT_LIB};
     const auto r = aot::compileToExecutable(program, exe, opts);
@@ -8847,7 +8847,7 @@ TEST(CodegenOpsKernel, ElementwiseBinaryViaOpsKernelRunsCorrectly)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR};
+    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR, NUMKIT_KEEL_INCLUDE_DIR};
     opts.defines     = {"NUMKIT_OPS_USE_DLL"};
     opts.linkLibs    = {NUMKIT_OPS_IMPORT_LIB};
     const auto r = aot::compileToExecutable(program, exe, opts);
@@ -8914,7 +8914,7 @@ TEST(CodegenOpsKernel, ComplexMatrixProductViaOpsKernelRunsCorrectly)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR};
+    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR, NUMKIT_KEEL_INCLUDE_DIR};
     opts.defines     = {"NUMKIT_OPS_USE_DLL"};
     opts.linkLibs    = {NUMKIT_OPS_IMPORT_LIB};
     const auto r = aot::compileToExecutable(program, exe, opts);
@@ -8978,7 +8978,7 @@ TEST(CodegenOpsKernel, TranscendentalViaOpsKernelMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR};
+    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR, NUMKIT_KEEL_INCLUDE_DIR};
     opts.defines     = {"NUMKIT_OPS_USE_DLL"};
     opts.linkLibs    = {NUMKIT_OPS_IMPORT_LIB};
     const auto r = aot::compileToExecutable(program, exe, opts);
@@ -9075,8 +9075,9 @@ TEST(CodegenBridge, ComplexFftBridgedMatchesInterpreter)
         numkit::Value yv = engine.eval("fft([1 2 3 4]);");
     ASSERT_EQ(yv.numel(), 4u);
     for (int i = 0; i < 4; ++i) {
-        const std::complex<double> ref =
-            yv.isComplex() ? yv.complexData()[i] : std::complex<double>(yv.doubleData()[i], 0.0);
+        const keel::c64 ref =
+            yv.isComplex() ? yv.complexData()[i]
+                           : keel::c64(yv.doubleData()[i], 0.0);
         EXPECT_NEAR(got[2 * i], ref.real(), 1e-9) << "re at " << i;
         EXPECT_NEAR(got[2 * i + 1], ref.imag(), 1e-9) << "im at " << i;
     }

@@ -79,6 +79,25 @@ endif()
 get_filename_component(NUMKIT_CODEGEN_BRIDGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bridge" ABSOLUTE)
 get_filename_component(NUMKIT_CODEGEN_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}" ABSOLUTE)
 get_filename_component(NUMKIT_CODEGEN_PREBUILT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../numkit/build" ABSOLUTE)
+set(NUMKIT_KEEL_INCLUDE_DIR "")
+if(TARGET keel)
+    get_target_property(_keel_src_dir keel SOURCE_DIR)
+    if(_keel_src_dir AND EXISTS "${_keel_src_dir}/include/keel/core.h")
+        get_filename_component(NUMKIT_KEEL_INCLUDE_DIR "${_keel_src_dir}/include" ABSOLUTE)
+    endif()
+endif()
+if(NOT NUMKIT_KEEL_INCLUDE_DIR)
+    foreach(_keel_cand
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../../keelcpp/keel/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../keelcpp/keel/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../keelcpp/keel/include"
+    )
+        if(EXISTS "${_keel_cand}/keel/core.h")
+            get_filename_component(NUMKIT_KEEL_INCLUDE_DIR "${_keel_cand}" ABSOLUTE)
+            break()
+        endif()
+    endforeach()
+endif()
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/aot_config.hpp.in
     ${CMAKE_CURRENT_BINARY_DIR}/generated/numkit/codegen/aot_config.hpp

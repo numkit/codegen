@@ -20,6 +20,7 @@
  * (so a generated TU resolves <numkit/ops/kernels.hpp>), the import lib to LINK
  * an ops-using artifact against, and the DLL to copy beside it (CodegenOpsKernel). */
 #define NUMKIT_OPS_INCLUDE_DIR "@NUMKIT_OPS_INCLUDE_DIR@"
+#define NUMKIT_KEEL_INCLUDE_DIR "@NUMKIT_KEEL_INCLUDE_DIR@"
 #define NUMKIT_OPS_IMPORT_LIB  "@NUMKIT_OPS_IMPORT_LIB@"
 #define NUMKIT_OPS_SHARED_DLL  "@NUMKIT_OPS_SHARED_DLL@"
 
