@@ -28,7 +28,9 @@
 
 #include <gtest/gtest.h>
 
-#include <filesystem>
+#include <keel/fs.h>
+#include <keel/interop_std.h>
+
 #include <string>
 #include <vector>
 
@@ -36,6 +38,15 @@ using numkit::ValueType;
 using namespace numkit::codegen;
 
 namespace {
+
+keel::String aotTmpBase()
+{
+    auto tmp = keel::fs_temp_dir();
+    keel::String base = keel::path_join(
+        tmp.is_ok() ? tmp.value().as_ref() : keel::StringRef("/tmp"), "numkit_codegen_aot");
+    (void)keel::fs_create_dirs(base);
+    return base;
+}
 
 // Find the single FUNCTION_DEF in a parsed program.
 const numkit::ASTNode *onlyFunction(const numkit::ASTNode &root)
@@ -78,9 +89,7 @@ TEST(CodegenTiered, ScalarFunctionAsPluginMatchesInterpreter)
         emitScalarPlugin(*fn, params, reg, "numkit_tiered_hot", abiHeader);
 
     // 3. Compile it to a shared library.
-    auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
-    std::filesystem::create_directories(base);
-    const std::string lib = (base / "numkit_tiered_hot.dll").string();
+    const std::string lib = keel::to_std_string(keel::path_join(aotTmpBase(), "numkit_tiered_hot.dll"));
     const auto        cr  = aot::compileToSharedLibrary(pluginSrc, lib);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok)
         << "log:\n" << cr.log << "\n--- generated source ---\n" << pluginSrc;
@@ -141,9 +150,7 @@ TEST(CodegenTiered, ArrayInputScalarOutputMatchesInterpreter)
     const std::string pluginSrc =
         emitScalarPlugin(*fn, params, reg, "numkit_tiered_sum", abiHeader);
 
-    auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
-    std::filesystem::create_directories(base);
-    const std::string lib = (base / "numkit_tiered_sum.dll").string();
+    const std::string lib = keel::to_std_string(keel::path_join(aotTmpBase(), "numkit_tiered_sum.dll"));
     const auto        cr  = aot::compileToSharedLibrary(pluginSrc, lib);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok)
         << "log:\n" << cr.log << "\n--- generated source ---\n" << pluginSrc;
@@ -211,9 +218,7 @@ TEST(CodegenTiered, DriverPluginPathMatchesInterpreter)
         src, "", driver::parseTypeSpec("double[]"), "numkit_drv_sum", abiHeader);
     ASSERT_NE(pluginSrc.find("register_fn(\"numkit_drv_sum\""), std::string::npos);
 
-    auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
-    std::filesystem::create_directories(base);
-    const std::string lib = (base / "numkit_drv_sum.dll").string();
+    const std::string lib = keel::to_std_string(keel::path_join(aotTmpBase(), "numkit_drv_sum.dll"));
     const auto        cr  = aot::compileToSharedLibrary(pluginSrc, lib);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok)
         << "log:\n" << cr.log << "\n--- generated source ---\n" << pluginSrc;

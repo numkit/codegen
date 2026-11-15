@@ -27,8 +27,10 @@
 #include <numkit/sys/env.hpp>
 #include <numkit/sys/toolchain.hpp>
 
+#include <keel/fs.h>
+#include <keel/interop_std.h>
+
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -161,13 +163,11 @@ int main(int argc, char **argv)
                     "own main() harness.");
             const std::string program = generated + cg::driver::buildHarnessMain(emittedFn);
 
-            namespace fs = std::filesystem;
             struct TempDirGuard {
-                fs::path dir;
+                std::string dir;
                 ~TempDirGuard() {
                     if (!dir.empty()) {
-                        std::error_code ec;
-                        fs::remove_all(dir, ec);
+                        (void)keel::fs_remove_all(dir);
                     }
                 }
             } tempRunDir;
@@ -176,28 +176,30 @@ int main(int argc, char **argv)
                 if (!outPath.empty()) {
                     exe = outPath;
 #ifdef _WIN32
-                    if (fs::path(exe).extension().empty()) exe += ".exe";
+                    if (keel::path_extension(exe).empty()) exe += ".exe";
 #endif
                 } else {
-                    exe = fs::path(file).stem().string();
+                    exe = keel::to_std_string(keel::path_stem(file));
 #ifdef _WIN32
                     exe += ".exe";
 #endif
                 }
             } else {
+                auto tmpRes = keel::fs_temp_dir();
+                const keel::StringRef tmpRoot =
+                    tmpRes.is_ok() ? tmpRes.value().as_ref() : keel::StringRef("/tmp");
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
-                std::string tmpl = (fs::temp_directory_path() / "numkit_codegen_run_XXXXXX").string();
-                std::vector<char> buf(tmpl.begin(), tmpl.end());
-                buf.push_back('\0');
-                if (!::mkdtemp(buf.data()))
+                keel::String tmpl = keel::path_join(tmpRoot, "numkit_codegen_run_XXXXXX");
+                if (!::mkdtemp(tmpl.data()))
                     throw std::runtime_error("failed to create temporary run directory");
-                tempRunDir.dir = fs::path(buf.data());
+                tempRunDir.dir = keel::to_std_string(tmpl);
 #else
-                const auto base = fs::temp_directory_path() / "numkit_codegen_run";
-                fs::create_directories(base);
-                tempRunDir.dir = base;
+                const keel::String base = keel::path_join(tmpRoot, "numkit_codegen_run");
+                if (keel::fs_create_dirs(base).is_err())
+                    throw std::runtime_error("failed to create temporary run directory");
+                tempRunDir.dir = keel::to_std_string(base);
 #endif
-                exe = (tempRunDir.dir / "aot").string();
+                exe = keel::to_std_string(keel::path_join(tempRunDir.dir, "aot"));
 #ifdef _WIN32
                 exe += ".exe";
 #endif
@@ -206,12 +208,11 @@ int main(int argc, char **argv)
                                          ? cg::aot::defaultBridgeCompileOptions()
                                          : cg::aot::CompileOptions{};
             const auto cr = cg::aot::compileToExecutable(program, exe, compileOpts);
-            std::error_code ec;
-            fs::remove(exe + ".cpp", ec);
-            fs::remove(exe + ".log", ec);
+            (void)keel::fs_remove(exe + ".cpp");
+            (void)keel::fs_remove(exe + ".log");
 #ifdef _WIN32
-            fs::remove(exe + ".obj", ec);
-            fs::remove(exe + ".build.bat", ec);
+            (void)keel::fs_remove(exe + ".obj");
+            (void)keel::fs_remove(exe + ".build.bat");
 #endif
             if (!cr.ok())
                 throw std::runtime_error("compilation failed.\n--- compiler log ---\n" +
@@ -221,7 +222,7 @@ int main(int argc, char **argv)
 
             const auto rr = cg::aot::runExecutable(exe);
             if (!buildFlag) {
-                fs::remove(exe, ec);
+                (void)keel::fs_remove(exe);
             }
             std::cout << rr.log;
             if (rr.exitCode != 0) {

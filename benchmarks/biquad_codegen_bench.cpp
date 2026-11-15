@@ -49,9 +49,11 @@
 
 #include <benchmark/benchmark.h>
 
+#include <keel/fs.h>
+#include <keel/interop_std.h>
+
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -149,12 +151,14 @@ BiquadFn loadGeneratedBiquad()
         "                     double b2, double a1, double a2, double* y, std::size_t yl) {\n"
         "  biquad(x, xl, b0, b1, b2, a1, a2, y, yl);\n}\n";
 
-    auto base = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
-    std::filesystem::create_directories(base);
+    auto tmpDir = keel::fs_temp_dir();
+    if (!tmpDir.is_ok()) return nullptr;
+    const keel::String base = keel::path_join(tmpDir.value(), "numkit_codegen_aot");
+    if (keel::fs_create_dirs(base).is_err()) return nullptr;
 #ifdef _WIN32
-    const std::string lib = (base / "numkit_biquad_gen.dll").string();
+    const std::string lib = keel::to_std_string(keel::path_join(base, "numkit_biquad_gen.dll"));
 #else
-    const std::string lib = (base / "libnumkit_biquad_gen.so").string();
+    const std::string lib = keel::to_std_string(keel::path_join(base, "libnumkit_biquad_gen.so"));
 #endif
     if (!aot::compileToSharedLibrary(program, lib).ok()) return nullptr;
 

@@ -36,9 +36,11 @@
 
 #include <gtest/gtest.h>
 
+#include <keel/fs.h>
+#include <keel/interop_std.h>
+
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -50,10 +52,13 @@ using namespace numkit::codegen;
 
 namespace {
 
-std::filesystem::path wave5TmpDir()
+keel::String wave5TmpDir()
 {
-    auto p = std::filesystem::temp_directory_path() / "numkit_wave5_codegen_safety";
-    std::filesystem::create_directories(p);
+    auto tmp = keel::fs_temp_dir();
+    keel::String p = keel::path_join(
+        tmp.is_ok() ? tmp.value().as_ref() : keel::StringRef("/tmp"),
+        "numkit_wave5_codegen_safety");
+    (void)keel::fs_create_dirs(p);
     return p;
 }
 
@@ -257,7 +262,7 @@ int main() {
 }
 )CPP";
 
-    const std::string exe = (wave5TmpDir() / "wave5_bounds").string();
+    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_bounds"));
     const auto        cr  = aot::compileToExecutable(program, exe);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
@@ -316,7 +321,7 @@ TEST(Wave5CodegenSafety, CallInputOutputArrayAliasingSafeOnRealloc)
     std::string program = ef.source + "\nint main() {\n    const double got = " + ef.name
                         + "(10.0);\n    return (got == 16736.0) ? 0 : 1;\n}\n";
 
-    const std::string exe = (wave5TmpDir() / "wave5_alias").string();
+    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_alias"));
     const auto        cr  = aot::compileToExecutable(program, exe);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
@@ -366,7 +371,7 @@ TEST(Wave5CodegenSafety, LogicalArrayInterprocAndMultiOutputReturn)
                           "    const double got = " + ef.name + "(x, 4);\n"
                           "    return (got == 207.0) ? 0 : 1;\n}\n";
 
-    const std::string exe = (wave5TmpDir() / "wave5_logical_ret").string();
+    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_logical_ret"));
     const auto        cr  = aot::compileToExecutable(program, exe);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
@@ -453,7 +458,7 @@ int main() {
 }
 )CPP";
 
-    const std::string exe = (wave5TmpDir() / "wave5_empty_minmax").string();
+    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_empty_minmax"));
     const auto        cr  = aot::compileToExecutable(program, exe);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
@@ -511,7 +516,7 @@ int main() {
 }
 )CPP";
 
-    const std::string exe = (wave5TmpDir() / "wave5_keywords").string();
+    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_keywords"));
     const auto        cr  = aot::compileToExecutable(program, exe);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
@@ -580,7 +585,7 @@ int main() {
 }
 )CPP";
 
-    const std::string exe = (wave5TmpDir() / "wave5_rank_unknown_bridged").string();
+    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_rank_unknown_bridged"));
     aot::CompileOptions opts;
     opts.includeDirs = {NUMKIT_BRIDGE_DIR};
     opts.defines     = {"NUMKIT_RT_USE_DLL"};
@@ -647,7 +652,7 @@ int main() {
 }
 )CPP";
 
-    const std::string exe = (wave5TmpDir() / "wave5_loop_widen").string();
+    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_loop_widen"));
     aot::CompileOptions opts;
     opts.includeDirs = {NUMKIT_BRIDGE_DIR};
     opts.defines     = {"NUMKIT_RT_USE_DLL"};
@@ -666,22 +671,22 @@ TEST(Wave5CodegenSafety, AotShellQuotingWaitStatusAndDefineValidation)
     {
         aot::CompileOptions badOpts;
         badOpts.defines = {"SAFE=1", "INJECT=1\necho pwned"};
-        const std::string exe = (wave5TmpDir() / "wave5_never_built").string();
+        const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_never_built"));
         const auto        r   = aot::compileToExecutable("int main(){return 0;}\n", exe, badOpts);
         EXPECT_EQ(r.status, aot::CompileStatus::CompileError);
-        EXPECT_FALSE(std::filesystem::exists(exe));
+        EXPECT_FALSE(keel::fs_exists(exe));
     }
     {
         aot::CompileOptions badOpts;
         badOpts.defines = {"123BAD"};
-        const std::string exe = (wave5TmpDir() / "wave5_never_built2").string();
+        const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_never_built2"));
         const auto        r   = aot::compileToExecutable("int main(){return 0;}\n", exe, badOpts);
         EXPECT_EQ(r.status, aot::CompileStatus::CompileError);
     }
 
-    const auto trickyDir = wave5TmpDir() / "dir with space and 'quote'";
-    std::filesystem::create_directories(trickyDir);
-    const std::string exe = (trickyDir / "ret42 bin").string();
+    const keel::String trickyDir = keel::path_join(wave5TmpDir(), "dir with space and 'quote'");
+    (void)keel::fs_create_dirs(trickyDir);
+    const std::string exe = keel::to_std_string(keel::path_join(trickyDir, "ret42 bin"));
 
     aot::CompileOptions okOpts;
     okOpts.defines = {"RET_CODE=42"};

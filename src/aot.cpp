@@ -5,9 +5,11 @@
 #include <numkit/sys/toolchain.hpp>
 #include <numkit/sys/env.hpp>
 
+#include <keel/fs.h>
+#include <keel/interop_std.h>
+
 #include <cstdlib>
 #include <cstdio>
-#include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -66,13 +68,12 @@ int decodeWaitStatus(int st)
 
 bool isPosixSharedLibraryPath(const std::string &p)
 {
-    namespace fs = std::filesystem;
-    const fs::path fp(p);
-    if (!fp.has_parent_path()) return false;
-    const std::string fn = fp.filename().string();
-    if (fn.size() >= 3 && fn.compare(fn.size() - 3, 3, ".so") == 0) return true;
-    if (fn.find(".so.") != std::string::npos) return true;
-    if (fn.size() >= 6 && fn.compare(fn.size() - 6, 6, ".dylib") == 0) return true;
+    if (p.empty() || p.back() == '/' || p.back() == '\\') return false;
+    if (p.find('/') == std::string::npos && p.find('\\') == std::string::npos) return false;
+    const keel::StringRef fn = keel::path_basename(p);
+    if (fn.ends_with(".so")) return true;
+    if (fn.contains(".so.")) return true;
+    if (fn.ends_with(".dylib")) return true;
     return false;
 }
 
@@ -167,32 +168,35 @@ bool available() { return !resolveCxx().empty(); }
 
 namespace {
 
-std::string findStaticLibInRoots(const std::vector<std::filesystem::path> &roots,
+std::string findStaticLibInRoots(const std::vector<std::string> &roots,
                                  const std::string &baseName)
 {
-    namespace fs = std::filesystem;
-    std::error_code ec;
     const std::string winName   = baseName + ".lib";
     const std::string posixName = "lib" + baseName + ".a";
 
     for (const auto &root : roots) {
-        if (root.empty() || !fs::exists(root, ec)) continue;
-        const fs::path directCandidates[] = {
-            root / "Release" / winName,
-            root / winName,
-            root / "Release" / posixName,
-            root / posixName
+        if (root.empty() || !keel::fs_exists(root)) continue;
+        const keel::String directCandidates[] = {
+            keel::path_join(root, "Release", winName),
+            keel::path_join(root, winName),
+            keel::path_join(root, "Release", posixName),
+            keel::path_join(root, posixName)
         };
         for (const auto &p : directCandidates) {
-            if (fs::exists(p, ec) && fs::is_regular_file(p, ec))
-                return p.string();
+            if (keel::fs_is_file(p))
+                return keel::to_std_string(p);
         }
-        for (const auto &entry : fs::recursive_directory_iterator(root, ec)) {
-            if (!entry.is_regular_file(ec)) continue;
-            const std::string fn = entry.path().filename().string();
-            if (fn == winName || fn == posixName)
-                return entry.path().string();
-        }
+        std::string match;
+        (void)keel::fs_walk_dir(root, [&](const keel::DirEntry &entry) -> bool {
+            if (!entry.is_file) return true;
+            if (entry.name == winName || entry.name == posixName) {
+                match = keel::to_std_string(entry.full_path);
+                return false;
+            }
+            return true;
+        });
+        if (!match.empty())
+            return match;
     }
     return {};
 }
@@ -201,85 +205,96 @@ std::string findStaticLibInRoots(const std::vector<std::filesystem::path> &roots
 
 CompileOptions defaultBridgeCompileOptions()
 {
-    namespace fs = std::filesystem;
     CompileOptions opts;
-    std::error_code ec;
 
 #ifdef _WIN32
     std::string home = sys::envGet("USERPROFILE");
 #else
     std::string home = sys::envGet("HOME");
 #endif
-    fs::path prefix = sys::envGet("NUMKIT_PREFIX").empty()
-                          ? (home.empty() ? fs::path(".numkit") : (fs::path(home) / ".numkit"))
-                          : fs::path(sys::envGet("NUMKIT_PREFIX"));
+    const std::string envPrefix = sys::envGet("NUMKIT_PREFIX");
+    const keel::String prefix = envPrefix.empty()
+                                    ? (home.empty() ? keel::String::from(".numkit")
+                                                    : keel::path_join(home, ".numkit"))
+                                    : keel::String::from(envPrefix);
 
     // 1. Locate bridge header directory (numkit_codegen_rt.h)
-    const fs::path bridgeCandidates[] = {
+    const keel::String bridgeCandidates[] = {
 #ifdef NUMKIT_CODEGEN_BRIDGE_DIR
-        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR),
+        keel::String::from(NUMKIT_CODEGEN_BRIDGE_DIR),
 #endif
-        prefix / "src" / "codegen" / "bridge"
+        keel::path_join(prefix, "src", "codegen", "bridge")
     };
     for (const auto &b : bridgeCandidates) {
-        if (!b.empty() && fs::exists(b / "numkit_codegen_rt.h", ec)) {
-            opts.includeDirs.push_back(b.string());
+        if (!b.empty() && keel::fs_exists(keel::path_join(b, "numkit_codegen_rt.h"))) {
+            opts.includeDirs.push_back(keel::to_std_string(b));
             break;
         }
     }
 
-    // 1b. Locate ops kernels header directory (numkit/ops/kernels.hpp)
-    const fs::path opsCandidates[] = {
 #ifdef NUMKIT_CODEGEN_BRIDGE_DIR
-        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR).parent_path().parent_path() / "ops" / "include",
-        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR).parent_path().parent_path() / "numkit" / "build" / "_deps" / "numkit_ops-src" / "include",
+    const keel::StringRef bridgeDirRef(NUMKIT_CODEGEN_BRIDGE_DIR);
+    const keel::StringRef bridgeUp2 = bridgeDirRef.empty()
+                                          ? keel::StringRef{}
+                                          : keel::path_dirname(keel::path_dirname(bridgeDirRef));
+    const keel::StringRef bridgeUp3 = bridgeUp2.empty() ? keel::StringRef{} : keel::path_dirname(bridgeUp2);
+    const keel::StringRef bridgeUp4 = bridgeUp3.empty() ? keel::StringRef{} : keel::path_dirname(bridgeUp3);
 #endif
-        prefix / "src" / "ops" / "include",
-        prefix / "src" / "numkit" / "build" / "_deps" / "numkit_ops-src" / "include"
+
+    // 1b. Locate ops kernels header directory (numkit/ops/kernels.hpp)
+    const keel::String opsCandidates[] = {
+#ifdef NUMKIT_CODEGEN_BRIDGE_DIR
+        bridgeUp2.empty() ? keel::String{} : keel::path_join(bridgeUp2, "ops", "include"),
+        bridgeUp2.empty() ? keel::String{}
+                          : keel::path_join(bridgeUp2, "numkit/build/_deps/numkit_ops-src/include"),
+#endif
+        keel::path_join(prefix, "src", "ops", "include"),
+        keel::path_join(prefix, "src/numkit/build/_deps/numkit_ops-src/include")
     };
     for (const auto &o : opsCandidates) {
-        if (!o.empty() && fs::exists(o / "numkit" / "ops" / "kernels.hpp", ec)) {
-            opts.includeDirs.push_back(o.string());
+        if (!o.empty() && keel::fs_exists(keel::path_join(o, "numkit", "ops", "kernels.hpp"))) {
+            opts.includeDirs.push_back(keel::to_std_string(o));
             break;
         }
     }
 
     // 1c. Locate keel header directory (keel/core.h, required by <numkit/ops/kernels.hpp>)
-    const fs::path keelCandidates[] = {
+    const keel::String keelCandidates[] = {
 #ifdef NUMKIT_CODEGEN_KEEL_INCLUDE_DIR
-        fs::path(NUMKIT_CODEGEN_KEEL_INCLUDE_DIR),
+        keel::String::from(NUMKIT_CODEGEN_KEEL_INCLUDE_DIR),
 #endif
 #ifdef NUMKIT_CODEGEN_BRIDGE_DIR
-        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR).parent_path().parent_path().parent_path().parent_path() / "keelcpp" / "keel" / "include",
-        fs::path(NUMKIT_CODEGEN_BRIDGE_DIR).parent_path().parent_path().parent_path() / "keelcpp" / "keel" / "include",
+        bridgeUp4.empty() ? keel::String{} : keel::path_join(bridgeUp4, "keelcpp", "keel", "include"),
+        bridgeUp3.empty() ? keel::String{} : keel::path_join(bridgeUp3, "keelcpp", "keel", "include"),
 #endif
-        prefix / "include"
+        keel::path_join(prefix, "include")
     };
     for (const auto &k : keelCandidates) {
-        if (!k.empty() && fs::exists(k / "keel" / "core.h", ec)) {
-            opts.includeDirs.push_back(k.string());
+        if (!k.empty() && keel::fs_exists(keel::path_join(k, "keel", "core.h"))) {
+            opts.includeDirs.push_back(keel::to_std_string(k));
             break;
         }
     }
 
     // 2. Locate static runtime libraries
-    std::vector<fs::path> searchRoots;
+    std::vector<std::string> searchRoots;
 #ifdef NUMKIT_CODEGEN_BUILD_DIR
-    if (std::string(NUMKIT_CODEGEN_BUILD_DIR).size() > 0) {
-        fs::path bdir(NUMKIT_CODEGEN_BUILD_DIR);
-        searchRoots.push_back(bdir);
-        if (bdir.has_parent_path() && bdir.parent_path().filename() == "modules") {
-            searchRoots.push_back(bdir.parent_path().parent_path());
+    if (!keel::StringRef(NUMKIT_CODEGEN_BUILD_DIR).empty()) {
+        const keel::StringRef bdir(NUMKIT_CODEGEN_BUILD_DIR);
+        searchRoots.push_back(keel::to_std_string(bdir));
+        const keel::StringRef bparent = keel::path_dirname(bdir);
+        if (bparent != "." && bparent != bdir && keel::path_basename(bparent) == "modules") {
+            searchRoots.push_back(keel::to_std_string(keel::path_dirname(bparent)));
         }
     }
 #endif
 #ifdef NUMKIT_CODEGEN_PREBUILT_DIR
-    if (std::string(NUMKIT_CODEGEN_PREBUILT_DIR).size() > 0) {
-        searchRoots.push_back(fs::path(NUMKIT_CODEGEN_PREBUILT_DIR));
+    if (!keel::StringRef(NUMKIT_CODEGEN_PREBUILT_DIR).empty()) {
+        searchRoots.push_back(NUMKIT_CODEGEN_PREBUILT_DIR);
     }
 #endif
-    searchRoots.push_back(prefix / "src" / "codegen" / "build");
-    searchRoots.push_back(prefix / "src" / "numkit" / "build");
+    searchRoots.push_back(keel::to_std_string(keel::path_join(prefix, "src", "codegen", "build")));
+    searchRoots.push_back(keel::to_std_string(keel::path_join(prefix, "src", "numkit", "build")));
 
     const char *requiredLibs[] = {
         "numkit_codegen_core",
@@ -385,7 +400,7 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
         libs += " " + shellQuotePosix(l);
 #  ifndef __EMSCRIPTEN__
         if (isPosixSharedLibraryPath(l)) {
-            const std::string dir = std::filesystem::path(l).parent_path().string();
+            const std::string dir = keel::to_std_string(keel::path_dirname(l));
             if (!dir.empty() && rpaths.insert(dir).second)
                 libs += " " + shellQuotePosix("-Wl,-rpath," + dir);
         }

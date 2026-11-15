@@ -11,15 +11,20 @@
 
 #include <gtest/gtest.h>
 
+#include <keel/fs.h>
+#include <keel/interop_std.h>
+
 #include <cstdlib>
-#include <filesystem>
+#include <string>
 
 namespace {
 
-std::filesystem::path tmpBase()
+keel::String tmpBase()
 {
-    auto p = std::filesystem::temp_directory_path() / "numkit_codegen_aot";
-    std::filesystem::create_directories(p);
+    auto tmp = keel::fs_temp_dir();
+    keel::String p = keel::path_join(
+        tmp.is_ok() ? tmp.value().as_ref() : keel::StringRef("/tmp"), "numkit_codegen_aot");
+    (void)keel::fs_create_dirs(p);
     return p;
 }
 
@@ -30,7 +35,7 @@ TEST(Aot, TrivialCompileAndRun)
     if (!numkit::codegen::aot::available())
         GTEST_SKIP() << "no external compiler configured for this build";
 
-    const std::string exe = (tmpBase() / "numkit_trivial.exe").string();
+    const std::string exe = keel::to_std_string(keel::path_join(tmpBase(), "numkit_trivial.exe"));
     const char       *src =
         "#include <cstdio>\n"
         "int main() { std::printf(\"ok\\n\"); return 0; }\n";
@@ -38,7 +43,7 @@ TEST(Aot, TrivialCompileAndRun)
     const auto r = numkit::codegen::aot::compileToExecutable(src, exe);
     ASSERT_EQ(r.status, numkit::codegen::aot::CompileStatus::Ok)
         << "log:\n" << r.log << "\ncmd: " << r.command;
-    ASSERT_TRUE(std::filesystem::exists(exe));
+    ASSERT_TRUE(keel::fs_exists(exe));
     EXPECT_EQ(std::system(("\"" + exe + "\"").c_str()), 0);
 }
 
@@ -47,7 +52,7 @@ TEST(Aot, CompileErrorReported)
     if (!numkit::codegen::aot::available())
         GTEST_SKIP() << "no external compiler configured for this build";
 
-    const std::string exe = (tmpBase() / "numkit_broken.exe").string();
+    const std::string exe = keel::to_std_string(keel::path_join(tmpBase(), "numkit_broken.exe"));
     const auto        r =
         numkit::codegen::aot::compileToExecutable("@ this is not valid c++ @\n", exe);
 
