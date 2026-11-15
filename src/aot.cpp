@@ -126,14 +126,14 @@ std::string quoteCompilerCmd(const std::string &cxx, bool winQuote)
 //   4. Runtime toolchain discovery (`~/.numkit/toolchain/zig`, clang++, g++)
 std::string resolveCxx()
 {
-    std::string env = sys::envGet("NUMKIT_CXX");
+    keel::String env = sys::envGet("NUMKIT_CXX");
     if (!env.empty())
-        return env;
+        return keel::to_std_string(env);
 
     if (sys::envGet("NUMKIT_USE_ZIG") == "1") {
         auto zig = sys::findZig();
         if (zig.found)
-            return zig.path + " c++";
+            return keel::to_std_string(zig.path) + " c++";
     }
 
     if (NUMKIT_CODEGEN_AOT_AVAILABLE != 0) {
@@ -148,8 +148,8 @@ std::string resolveCxx()
     auto discovered = sys::findCxxCompiler();
     if (discovered.found && discovered.name != "msvc") {
         if (!discovered.extraArgs.empty())
-            return discovered.path + " " + discovered.extraArgs;
-        return discovered.path;
+            return keel::to_std_string(discovered.path) + " " + keel::to_std_string(discovered.extraArgs);
+        return keel::to_std_string(discovered.path);
     }
     return {};
 }
@@ -208,15 +208,15 @@ CompileOptions defaultBridgeCompileOptions()
     CompileOptions opts;
 
 #ifdef _WIN32
-    std::string home = sys::envGet("USERPROFILE");
+    keel::String home = sys::envGet("USERPROFILE");
 #else
-    std::string home = sys::envGet("HOME");
+    keel::String home = sys::envGet("HOME");
 #endif
-    const std::string envPrefix = sys::envGet("NUMKIT_PREFIX");
+    keel::String envPrefix = sys::envGet("NUMKIT_PREFIX");
     const keel::String prefix = envPrefix.empty()
                                     ? (home.empty() ? keel::String::from(".numkit")
                                                     : keel::path_join(home, ".numkit"))
-                                    : keel::String::from(envPrefix);
+                                    : keel::move(envPrefix);
 
     // 1. Locate bridge header directory (numkit_codegen_rt.h)
     const keel::String bridgeCandidates[] = {

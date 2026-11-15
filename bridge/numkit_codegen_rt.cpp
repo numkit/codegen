@@ -273,7 +273,7 @@ numkit_val numkit_call(const char *name, const numkit_val *args, size_t nargs,
             a.push_back(*av);
         }
 
-        std::vector<Value> outs = engine().callFunctionHandleMulti(
+        keel::Array<Value> outs = engine().callFunctionHandleMulti(
             handleFor(name), keel::ArrayRef<Value>(a.data(), a.size()), nargout);
         if (nargout == 0)
             return nullptr;
@@ -361,7 +361,7 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
         // identically whatever it turns out to be at runtime.
         // 1. function handle -> CALL (captures resolved inside).
         if (av->isFuncHandle()) {
-            std::vector<Value> outs = engine().callFunctionHandleMulti(*av, argSpan, 1);
+            keel::Array<Value> outs = engine().callFunctionHandleMulti(*av, argSpan, 1);
             return make(outs.empty() ? Value() : outs[0]);
         }
         // 2. object -> custom subsref overload, else builtin object-array indexing.
@@ -371,7 +371,7 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
                 return make(std::move(out));
             if (nsubs != 1)
                 throw std::runtime_error("numkit_index: multi-subscript object indexing not supported (v1)");
-            const std::vector<std::size_t> ids = Value::resolveIndices(args[0], av->objectCount());
+            const keel::Array<keel::usize> ids = Value::resolveIndices(args[0], av->objectCount());
             return make(av->objectSubArray(ids, nullptr));
         }
         // 3. array / numeric -> indexing. resolveIndices is the interpreter's
@@ -379,7 +379,7 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
         //    logical / colon).
         if (nsubs == 1) {
             // 1-D linear (a vector subscript yields a sub-array).
-            const std::vector<std::size_t> ids = Value::resolveIndices(args[0], av->numel());
+            const keel::Array<keel::usize> ids = Value::resolveIndices(args[0], av->numel());
             return make(av->indexGet(ids.data(), ids.size()));
         }
         // Multi-subscript A(i,j[,k…]) — resolve each subscript against its own
@@ -391,7 +391,7 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
         if (static_cast<int>(nsubs) != dd.ndim())
             throw std::runtime_error(
                 "numkit_index: multi-subscript count must match array rank (v1)");
-        std::vector<std::vector<std::size_t>> lists(nsubs);
+        std::vector<keel::Array<keel::usize>> lists(nsubs);
         std::vector<const std::size_t *>      ptrs(nsubs);
         std::vector<std::size_t>              counts(nsubs);
         for (std::size_t k = 0; k < nsubs; ++k) {
