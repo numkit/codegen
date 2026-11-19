@@ -8,9 +8,9 @@
 #include <keel/format.h>
 #include <keel/fs.h>
 #include <keel/hash_set.h>
+#include <keel/process.h>
 
 #include <cstdlib>
-#include <cstdio>
 
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #include <sys/wait.h>
@@ -449,35 +449,19 @@ RunResult runExecutable(keel::StringRef exePath)
         r.log = keel::format("aot: executable not found: {}", exePath);
         return r;
     }
-    // Capture combined stdout+stderr via a pipe. popen returns the child's
-    // stdout; `2>&1` merges stderr into that stream. Quote the exe path on
-    // Windows (cmd /c strips the outer quotes, so wrap once more — same
-    // trick as compileImpl).
-    keel::String cmd;
-#  ifdef _WIN32
-    cmd = keel::format("\"\"{}\" 2>&1\"", toNative(exePath));
-#  else
-    cmd = keel::format("{} 2>&1", shellQuotePosix(exePath));
-#  endif
-#  ifdef _WIN32
-    FILE *pipe = _popen(cmd.c_str(), "rt");
-#  else
-    FILE *pipe = ::popen(cmd.c_str(), "r");
-#  endif
-    if (!pipe) {
-        r.log = keel::format("aot: failed to launch executable: {}", exePath);
+    const keel::StringRef argv[] = {exePath};
+    keel::ProcessOptions opts;
+    opts.capture_stdout = true;
+    opts.capture_stderr = true;
+    opts.merge_stderr = true;
+    auto res = keel::process_run(keel::ArrayRef<keel::StringRef>(argv, 1), opts);
+    if (res.is_err()) {
+        r.log = keel::format("aot: failed to launch executable: {} ({})",
+                             exePath, keel::error_message(res.error()));
         return r;
     }
-    keel::String ss;
-    char buf[4096];
-    while (std::fgets(buf, sizeof(buf), pipe))
-        ss.append(buf);
-#  ifdef _WIN32
-    r.exitCode = _pclose(pipe);
-#  else
-    r.exitCode = decodeWaitStatus(::pclose(pipe));
-#  endif
-    r.log = keel::move(ss);
+    r.exitCode = res->exit_code;
+    r.log = keel::move(res->stdout_text);
     return r;
 #endif
 }

@@ -9,6 +9,7 @@
 #include <keel/array.h>
 #include <keel/complex.h>
 #include <keel/core.h>
+#include <keel/dynlib.h>
 #include <keel/format.h>
 #include <keel/hash_map.h>
 #include <keel/hash_set.h>
@@ -25,14 +26,6 @@
 #include <exception>
 #include <limits>
 #include <stdexcept>
-
-#if defined(_WIN32)
-#  define WIN32_LEAN_AND_MEAN
-#  define NOMINMAX
-#  include <windows.h>
-#else
-#  include <dlfcn.h>
-#endif
 
 namespace {
 
@@ -703,32 +696,24 @@ int numkit_load_plugin(const char *path, numkit_error *err)
         using version_fn  = int (*)();
         using register_fn = int (*)(const numkit_host_api *);
 
-#if defined(_WIN32)
-        HMODULE lib = ::LoadLibraryA(path);
-        if (!lib) { setError(err, "LoadLibrary failed (plugin not found or bad)"); return 1; }
-        auto closeLib = [&] { ::FreeLibrary(lib); };
-        auto ver = reinterpret_cast<version_fn>(
-            reinterpret_cast<void *>(::GetProcAddress(lib, "numkit_plugin_abi_version")));
-        auto reg = reinterpret_cast<register_fn>(
-            reinterpret_cast<void *>(::GetProcAddress(lib, "numkit_plugin_register")));
-#else
-        void *lib = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
-        if (!lib) { setError(err, ::dlerror()); return 1; }
-        auto closeLib = [&] { ::dlclose(lib); };
-        auto ver = reinterpret_cast<version_fn>(::dlsym(lib, "numkit_plugin_abi_version"));
-        auto reg = reinterpret_cast<register_fn>(::dlsym(lib, "numkit_plugin_register"));
-#endif
+        keel::String dlErr;
+        auto libRes = keel::DynLib::open(path, keel::DynLibFlags::Local, &dlErr);
+        if (libRes.is_err()) {
+            setError(err, dlErr.empty() ? keel::error_message(libRes.error()).data() : dlErr.c_str());
+            return 1;
+        }
+        keel::DynLib lib = keel::move(*libRes);
+        auto ver = lib.symbol<version_fn>("numkit_plugin_abi_version");
+        auto reg = lib.symbol<register_fn>("numkit_plugin_register");
 
-        // On any failure below, unmap the module (only a SUCCESSFUL load keeps
-        // it resident, since its registered function pointers must stay live).
+        // On any failure below, RAII `lib` unmaps the module (only a SUCCESSFUL
+        // load keeps it resident, since its registered function pointers must stay live).
         if (!ver || !reg) {
-            closeLib();
             setError(err, "plugin missing required entry points "
                           "(numkit_plugin_abi_version / numkit_plugin_register)");
             return 1;
         }
         if (ver() != NUMKIT_PLUGIN_ABI_VERSION) {
-            closeLib();
             setError(err, "plugin ABI version mismatch");
             return 1;
         }
@@ -755,7 +740,6 @@ int numkit_load_plugin(const char *path, numkit_error *err)
 
         const int rc = reg(&host);
         if (rc != 0) {
-            closeLib();
             setError(err, "plugin registration hook returned an error");
             return rc;
         }
@@ -763,6 +747,7 @@ int numkit_load_plugin(const char *path, numkit_error *err)
         // `lib` is intentionally left loaded: its registered function pointers
         // must stay live for the process lifetime. (A proper unload API would
         // first unregister those names; deferred.)
+        (void)lib.release();
         return 0;
     } catch (const std::exception &e) {
         setError(err, e.what());
