@@ -12,8 +12,7 @@
 
 #include <keel/format.h>
 #include <keel/smart_ptr.h>
-
-#include <cctype>
+#include <keel/utf8.h>
 #include <stdexcept>
 
 namespace numkit::codegen::driver {
@@ -23,8 +22,8 @@ namespace {
 keel::StringRef trim(keel::StringRef s)
 {
     keel::usize a = 0, b = s.size();
-    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
-    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+    while (a < b && keel::is_ascii_space(s[a])) ++a;
+    while (b > a && keel::is_ascii_space(s[b - 1])) --b;
     return s.substr(a, b - a);
 }
 
