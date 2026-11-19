@@ -5,26 +5,39 @@
 #include <numkit/codegen/classinfo.hpp>
 #include <numkit/codegen/monomorphize.hpp>  // FunctionTable (user-fn lookup for `c = f(x)`)
 
+#include <keel/array.h>
+#include <keel/format.h>
+#include <keel/smart_ptr.h>
+
 #include <algorithm>
-#include <vector>
 
 namespace numkit::codegen {
 
 // ── TypeEnv ───────────────────────────────────────────────────────────
-void TypeEnv::set(const std::string &name, AbstractValue v)
+void TypeEnv::set(keel::StringRef name, AbstractValue v)
 {
-    vars_.insert_or_assign(name, v);
+    vars_.put(keel::String::from(name), keel::move(v));
 }
 
-AbstractValue TypeEnv::get(const std::string &name) const
+AbstractValue TypeEnv::get(keel::StringRef name) const
 {
-    const auto it = vars_.find(name);
-    return it == vars_.end() ? AbstractValue::dynamic() : it->second;
+    const AbstractValue *v = vars_.get(name);
+    return v ? *v : AbstractValue::dynamic();
 }
 
-bool TypeEnv::has(const std::string &name) const
+bool TypeEnv::has(keel::StringRef name) const
 {
-    return vars_.find(name) != vars_.end();
+    return vars_.contains(name);
+}
+
+bool TypeEnv::operator==(const TypeEnv &o) const
+{
+    if (vars_.size() != o.vars_.size()) return false;
+    for (auto [name, val] : vars_) {
+        const AbstractValue *other = o.vars_.get(name);
+        if (!other || *other != val) return false;
+    }
+    return true;
 }
 
 // ── Lattice joins for control-flow merges ─────────────────────────────
@@ -36,12 +49,14 @@ AbstractValue join(const AbstractValue &a, const AbstractValue &b)
 TypeEnv joinEnv(const TypeEnv &a, const TypeEnv &b)
 {
     TypeEnv out;
-    for (const auto &[name, va] : a.entries()) {
+    for (auto [name, va] : a.entries()) {
         if (b.has(name)) out.set(name, join(va, b.get(name)));
         else             out.set(name, AbstractValue::dynamic());  // maybe-undef on b
     }
-    for (const auto &[name, vb] : b.entries())
+    for (auto [name, vb] : b.entries()) {
+        (void)vb;
         if (!a.has(name)) out.set(name, AbstractValue::dynamic());  // maybe-undef on a
+    }
     return out;
 }
 
@@ -50,7 +65,7 @@ namespace {
 // MATLAB operator -> its function name (the key transfer rules register
 // under). Returns empty for an unhandled operator (-> Dynamic). The
 // short-circuit operators && / || are intentionally left unmapped.
-std::string opFuncName(const std::string &op, bool unary)
+keel::StringRef opFuncName(keel::StringRef op, bool unary)
 {
     if (unary) {
         if (op == "-")  return "uminus";
@@ -93,7 +108,7 @@ bool isScalarValue(const AbstractValue &v)
 //   * otherwise (sub-array / non-concrete) -> concrete dtype, Unknown
 //     shape, or Dynamic if the variable's type isn't known.
 AbstractValue indexResult(const AbstractValue &var,
-                          const std::vector<AbstractValue> &args)
+                          keel::ArrayRef<AbstractValue> args)
 {
     if (!var.type.isConcrete() || var.type.shape.kind == ShapeKind::Unknown)
         return AbstractValue::dynamic();
@@ -112,7 +127,7 @@ AbstractValue indexResult(const AbstractValue &var,
 }
 
 AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
-                              const std::vector<AbstractValue> &argVals)
+                              keel::ArrayRef<AbstractValue> argVals)
 {
     if (!base.type.isConcrete() || base.type.shape.kind == ShapeKind::Unknown)
         return AbstractValue::dynamic();
@@ -179,22 +194,22 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
             && isScalarValue(argVals[r - 1]))
             return {InferredType::concrete(
                         base.type.dtype,
-                        Shape::ndShape(std::vector<std::size_t>(r - 1, 0))),
+                        Shape::ndShape(keel::Array<keel::usize>(r - 1, keel::usize{0}))),
                     ConstVal::unknown()};
         if (pageSlice && expr.children[r]->type == NodeType::COLON_EXPR
             && expr.children[r]->children.size() == 2)
             return {InferredType::concrete(
                         base.type.dtype,
-                        Shape::ndShape(std::vector<std::size_t>(r, 0))),
+                        Shape::ndShape(keel::Array<keel::usize>(r, keel::usize{0}))),
                     ConstVal::unknown()};
         bool leadScalar = expr.children[1]->type != NodeType::COLON_EXPR
                           && isScalarValue(argVals[0]);
-        for (std::size_t i = 2; i <= r && leadScalar; ++i)
+        for (keel::usize i = 2; i <= r && leadScalar; ++i)
             if (expr.children[i]->type != NodeType::COLON_EXPR
                 || !expr.children[i]->children.empty())
                 leadScalar = false;
         if (leadScalar) {
-            std::vector<std::size_t> d(r, 0);
+            keel::Array<keel::usize> d(r, keel::usize{0});
             d[0] = 1;
             return {InferredType::concrete(base.type.dtype, Shape::ndShape(d)),
                     ConstVal::unknown()};
@@ -251,8 +266,8 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
                     static_cast<std::size_t>(lastCol) + 1 < 2
                         ? 2u
                         : static_cast<std::size_t>(lastCol) + 1;
-                std::vector<std::size_t> d(keptRank, 0);
-                for (std::size_t kk = 0; kk < keptRank; ++kk)
+                keel::Array<keel::usize> d(keptRank, keel::usize{0});
+                for (keel::usize kk = 0; kk < keptRank; ++kk)
                     d[kk] = (expr.children[kk + 1]->type == NodeType::COLON_EXPR
                              && expr.children[kk + 1]->children.empty())
                                 ? 0
@@ -270,15 +285,15 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
 // plain identifier (a call/expression base) -> not a flattenable struct field. A
 // single-level `s.a` gives "_numkit_fld_s_a" (unchanged), so this generalises the old
 // hardcoded name to nested access. MUST match emitter.cpp's copy.
-std::string structFieldLocal(const ASTNode &fa)
+keel::String structFieldLocal(const ASTNode &fa)
 {
-    std::string    suffix;
+    keel::String   suffix;
     const ASTNode *n = &fa;
     // Walk FIELD_ACCESS (s.a) AND DYNAMIC_FIELD_ACCESS with a CONSTANT string name (s.('a')
     // folds to the same field-local; a runtime name s.(var) -> "" = not flattenable). G2.6.
     // MUST match emitter.cpp's copy.
     for (;;) {
-        std::string field;
+        keel::StringRef field;
         if (n->type == NodeType::FIELD_ACCESS) {
             field = n->strValue;
         } else if (n->type == NodeType::DYNAMIC_FIELD_ACCESS && n->children.size() == 2
@@ -287,21 +302,21 @@ std::string structFieldLocal(const ASTNode &fa)
         } else {
             break;
         }
-        if (n->children.empty() || !n->children[0]) return "";
-        suffix = "_" + field + suffix;
+        if (n->children.empty() || !n->children[0]) return {};
+        suffix = keel::format("_{}{}", field, suffix);
         n      = n->children[0].get();
     }
-    if (n->type != NodeType::IDENTIFIER) return "";
-    return "_numkit_fld_" + n->strValue + suffix;
+    if (n->type != NodeType::IDENTIFIER) return {};
+    return keel::format("_numkit_fld_{}{}", n->strValue, suffix);
 }
 
-bool extractStructFieldChain(const ASTNode &fa, std::string &rootVar,
-                             std::vector<std::string> &path)
+bool extractStructFieldChain(const ASTNode &fa, keel::String &rootVar,
+                             keel::Array<keel::String> &path)
 {
     path.clear();
     const ASTNode *n = &fa;
     for (;;) {
-        std::string field;
+        keel::StringRef field;
         if (n->type == NodeType::FIELD_ACCESS) {
             field = n->strValue;
         } else if (n->type == NodeType::DYNAMIC_FIELD_ACCESS && n->children.size() == 2
@@ -311,26 +326,26 @@ bool extractStructFieldChain(const ASTNode &fa, std::string &rootVar,
             break;
         }
         if (n->children.empty() || !n->children[0]) return false;
-        path.push_back(field);
+        path.push_back(keel::String::from(field));
         n = n->children[0].get();
     }
     if (n->type != NodeType::IDENTIFIER || path.empty()) return false;
     std::reverse(path.begin(), path.end());
-    rootVar = n->strValue;
+    rootVar = n->strValue.clone();
     return true;
 }
 
 InferredType setNestedStructField(const InferredType &curStruct,
-                                  const std::vector<std::string> &path,
-                                  std::size_t depth,
+                                  keel::ArrayRef<keel::String> path,
+                                  keel::usize depth,
                                   const InferredType &leafType)
 {
-    auto layout = std::make_shared<StructLayout>();
+    auto layout = keel::make_arc<StructLayout>();
     if (curStruct.isStruct() && curStruct.structLayout)
-        layout->fields = curStruct.structLayout->fields;
-    const std::string &fname  = path[depth];
-    const bool         isLast = (depth + 1 == path.size());
-    bool               found  = false;
+        layout->fields = curStruct.structLayout->fields.clone();
+    const keel::String &fname  = path[depth];
+    const bool          isLast = (depth + 1 == path.size());
+    bool                found  = false;
     for (auto &fp : layout->fields) {
         if (fp.first == fname) {
             fp.second = isLast ? leafType
@@ -345,14 +360,14 @@ InferredType setNestedStructField(const InferredType &curStruct,
                    : setNestedStructField(InferredType::dynamic(), path, depth + 1, leafType);
         layout->fields.emplace_back(fname, childType);
     }
-    return InferredType::structOf(std::move(layout));
+    return InferredType::structOf(keel::move(layout));
 }
 
 const InferredType *lookupNestedStructField(const InferredType &rootStruct,
-                                            const std::vector<std::string> &path)
+                                            keel::ArrayRef<keel::String> path)
 {
     const InferredType *cur = &rootStruct;
-    for (const std::string &fname : path) {
+    for (const keel::String &fname : path) {
         if (!cur->isStruct() || !cur->structLayout) return nullptr;
         cur = cur->structLayout->field(fname);
         if (!cur) return nullptr;
@@ -403,7 +418,7 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
 
     case NodeType::BINARY_OP: {
         if (expr.children.size() != 2) return AbstractValue::dynamic();
-        const std::string fn = opFuncName(expr.strValue, /*unary=*/false);
+        const keel::StringRef fn = opFuncName(expr.strValue, /*unary=*/false);
         if (fn.empty()) return AbstractValue::dynamic();
         const AbstractValue a = inferExpr(*expr.children[0], env, reg, classes);
         const AbstractValue b = inferExpr(*expr.children[1], env, reg, classes);
@@ -412,7 +427,7 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
 
     case NodeType::UNARY_OP: {
         if (expr.children.size() != 1) return AbstractValue::dynamic();
-        const std::string fn = opFuncName(expr.strValue, /*unary=*/true);
+        const keel::StringRef fn = opFuncName(expr.strValue, /*unary=*/true);
         if (fn.empty()) return AbstractValue::dynamic();
         const AbstractValue a = inferExpr(*expr.children[0], env, reg, classes);
         return {reg.apply(fn, {a.asArg()}), ConstVal::unknown()};
@@ -427,8 +442,8 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
         // exist), so this is matched BEFORE inferring the base as a normal expression.
         if (expr.children[0]->type == NodeType::CALL && !expr.children[0]->children.empty()
             && expr.children[0]->children[0]->type == NodeType::IDENTIFIER) {
-            const std::string sv  = expr.children[0]->children[0]->strValue;
-            const std::string fld = "_numkit_fld_" + sv + "_" + expr.strValue;
+            const keel::StringRef sv  = expr.children[0]->children[0]->strValue;
+            const keel::String    fld = keel::format("_numkit_fld_{}_{}", sv, expr.strValue);
             if (env.has(fld)) {
                 const InferredType at = env.get(fld).type;  // the field-array (1-D)
                 if (at.isConcrete())
@@ -442,11 +457,11 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
         // every level (a sub-struct s.a is itself Dynamic, not a value). Before the
         // classdef path.
         if (!base.type.isObject()) {
-            const std::string fld = structFieldLocal(expr);
+            const keel::String fld = structFieldLocal(expr);
             if (!fld.empty()) {
                 if (env.has(fld)) return env.get(fld);
-                std::string              rootVar;
-                std::vector<std::string> path;
+                keel::String              rootVar;
+                keel::Array<keel::String> path;
                 if (extractStructFieldChain(expr, rootVar, path)) {
                     if (const InferredType *ft =
                             lookupNestedStructField(env.get(rootVar).type, path))
@@ -470,17 +485,17 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
         const ASTNode &callee = *expr.children[0];
 
         // Evaluate the arguments (children[1..]).
-        std::vector<AbstractValue> argVals;
-        std::vector<ArgInfo>       argInfos;
+        keel::Array<AbstractValue> argVals;
+        keel::Array<ArgInfo>       argInfos;
         argVals.reserve(expr.children.size() - 1);
         argInfos.reserve(expr.children.size() - 1);
-        for (std::size_t i = 1; i < expr.children.size(); ++i) {
+        for (keel::usize i = 1; i < expr.children.size(); ++i) {
             argVals.push_back(inferExpr(*expr.children[i], env, reg, classes));
             argInfos.push_back(argVals.back().asArg());
         }
 
         if (callee.type == NodeType::IDENTIFIER) {
-            const std::string &name = callee.strValue;
+            const keel::String &name = callee.strValue;
             // MATLAB ambiguity: `name(...)` is an indexed read when `name`
             // is a variable in scope, otherwise a function call (or a class
             // constructor, registered as a transfer).
@@ -488,7 +503,7 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
                 return indexCallResult(env.get(name), expr, argVals);
             InferredType rt = reg.apply(name, argInfos);
             if (rt.isDynamic() && reg.userFunctions() && reg.userFunctions()->has(name)) {
-                const std::vector<InferredType> outs = reg.applyMulti(name, argInfos);
+                const keel::Array<InferredType> outs = reg.applyMulti(name, argInfos);
                 if (outs.size() > 1) rt = outs[0];
             }
             return {rt, ConstVal::unknown()};
@@ -500,11 +515,11 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
              || callee.type == NodeType::DYNAMIC_FIELD_ACCESS)
             && !callee.children.empty()
             && !inferExpr(*callee.children[0], env, reg, classes).type.isObject()) {
-            const std::string fld = structFieldLocal(callee);
+            const keel::String fld = structFieldLocal(callee);
             if (!fld.empty()) {
                 if (env.has(fld)) return indexCallResult(env.get(fld), expr, argVals);
-                std::string              rootVar;
-                std::vector<std::string> path;
+                keel::String              rootVar;
+                keel::Array<keel::String> path;
                 if (extractStructFieldChain(callee, rootVar, path)) {
                     if (const InferredType *ft =
                             lookupNestedStructField(env.get(rootVar).type, path))
@@ -521,14 +536,14 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
             if (!base.type.isObject()) return AbstractValue::dynamic();
             const ClassInfo *ci = classes->byId(base.type.classId);
             if (!ci || !ci->method(callee.strValue)) return AbstractValue::dynamic();
-            std::vector<ArgInfo> withSelf;
+            keel::Array<ArgInfo> withSelf;
             withSelf.reserve(argInfos.size() + 1);
             withSelf.push_back(base.asArg());
             for (const auto &ai : argInfos) withSelf.push_back(ai);
-            const std::string mkey = ci->name + "::" + callee.strValue;
-            InferredType      rt   = reg.apply(mkey, withSelf);
+            const keel::String mkey = keel::format("{}::{}", ci->name, callee.strValue);
+            InferredType       rt   = reg.apply(mkey, withSelf);
             if (rt.isDynamic()) {
-                const std::vector<InferredType> outs = reg.applyMulti(mkey, withSelf);
+                const keel::Array<InferredType> outs = reg.applyMulti(mkey, withSelf);
                 if (outs.size() > 1) rt = outs[0];
             }
             return {rt, ConstVal::unknown()};
@@ -768,19 +783,22 @@ constexpr int kMaxFixpoint = 16;
 
 // Join `t` into a decl-type recorder at variable `name` (Bottom identity
 // for a not-yet-present variable). No-op when `declOut` is null.
-void recordDecl(DeclTypeRecorder *declOut, const std::string &name,
+void recordDecl(DeclTypeRecorder *declOut, keel::StringRef name,
                 const InferredType &t)
 {
     if (!declOut) return;
-    auto it = declOut->find(name);
-    (*declOut)[name] = (it == declOut->end()) ? t : join(it->second, t);
+    if (InferredType *existing = declOut->get(name)) {
+        *existing = join(*existing, t);
+    } else {
+        declOut->put(keel::String::from(name), t);
+    }
 }
 
-void seedStructFields(const std::string &prefix, const StructLayout &layout,
+void seedStructFields(keel::StringRef prefix, const StructLayout &layout,
                       TypeEnv &env, DeclTypeRecorder *declOut)
 {
     for (const auto &f : layout.fields) {
-        const std::string fld = prefix + "_" + f.first;
+        const keel::String fld = keel::format("{}_{}", prefix, f.first);
         env.set(fld, {f.second, ConstVal::unknown()});
         recordDecl(declOut, fld, f.second);
         if (f.second.isStruct() && f.second.structLayout)
@@ -788,18 +806,19 @@ void seedStructFields(const std::string &prefix, const StructLayout &layout,
     }
 }
 
-void syncIntermediateStructLocals(const std::string &rootVar,
-                                  const std::vector<std::string> &path,
+void syncIntermediateStructLocals(keel::StringRef rootVar,
+                                  keel::ArrayRef<keel::String> path,
                                   const InferredType &rootType,
                                   TypeEnv &env, DeclTypeRecorder *declOut)
 {
-    std::string         prefix = "_numkit_fld_" + rootVar;
+    keel::String        prefix = keel::format("_numkit_fld_{}", rootVar);
     const InferredType *cur    = &rootType;
-    for (std::size_t d = 0; d + 1 < path.size(); ++d) {
+    for (keel::usize d = 0; d + 1 < path.size(); ++d) {
         if (!cur->isStruct() || !cur->structLayout) break;
         cur = cur->structLayout->field(path[d]);
         if (!cur) break;
-        prefix += "_" + path[d];
+        prefix.push_back('_');
+        prefix.append(path[d].as_ref());
         env.set(prefix, {*cur, ConstVal::unknown()});
         recordDecl(declOut, prefix, *cur);
     }
@@ -826,8 +845,8 @@ void markAssignedDynamic(const ASTNode &node, TypeEnv &env,
     for (const auto &c : node.children)
         if (c) markAssignedDynamic(*c, env, declOut);
     for (const auto &br : node.branches) {
-        if (br.first)  markAssignedDynamic(*br.first, env, declOut);
-        if (br.second) markAssignedDynamic(*br.second, env, declOut);
+        if (br.cond) markAssignedDynamic(*br.cond, env, declOut);
+        if (br.body) markAssignedDynamic(*br.body, env, declOut);
     }
     if (node.elseBranch) markAssignedDynamic(*node.elseBranch, env, declOut);
 }
@@ -864,9 +883,10 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             // A struct-valued assignment (t = structReturningCall() or t = s) also DECLARES
             // all leaf per-field locals (_numkit_fld_t_<f>...) recursively so they hoist and
             // field reads work.
-            if (rv.type.isStruct() && rv.type.structLayout)
-                seedStructFields("_numkit_fld_" + lhs.strValue, *rv.type.structLayout, env,
-                                 declOut);
+            if (rv.type.isStruct() && rv.type.structLayout) {
+                const keel::String pref = keel::format("_numkit_fld_{}", lhs.strValue);
+                seedStructFields(pref, *rv.type.structLayout, env, declOut);
+            }
         } else if (lhs.type == NodeType::FIELD_ACCESS && !lhs.children.empty()
                    && lhs.children[0]->type == NodeType::CALL
                    && !lhs.children[0]->children.empty()
@@ -875,9 +895,9 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             // a 1-D vector of rhs's dtype, GROWABLE via the growth tier (s(i).a=v in a loop
             // builds it). v1: a concrete scalar rhs, a plain-identifier struct-array base s(i).
             if (rhs.type.isConcrete() && rhs.type.shape.isScalar()) {
-                const std::string sv  = lhs.children[0]->children[0]->strValue;
-                const std::string fld = "_numkit_fld_" + sv + "_" + lhs.strValue;
-                const InferredType at = InferredType::concrete(rhs.type.dtype, Shape::vector1D());
+                const keel::StringRef sv  = lhs.children[0]->children[0]->strValue;
+                const keel::String    fld = keel::format("_numkit_fld_{}_{}", sv, lhs.strValue);
+                const InferredType    at  = InferredType::concrete(rhs.type.dtype, Shape::vector1D());
                 env.set(fld, {at, ConstVal::unknown()});
                 recordDecl(declOut, fld, at);
             }
@@ -895,9 +915,9 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                 // nested chain `s.a.b = rhs`): flatten to `_numkit_fld_...` and update the root
                 // struct's nested StructLayout so wholesale struct passing/returning sees all
                 // scalar, array, and nested struct fields.
-                std::string              rootVar;
-                std::vector<std::string> path;
-                const std::string        fld = structFieldLocal(lhs);
+                keel::String              rootVar;
+                keel::Array<keel::String> path;
+                const keel::String        fld = structFieldLocal(lhs);
                 if (!fld.empty() && extractStructFieldChain(lhs, rootVar, path)
                     && !env.get(rootVar).type.isObject()) {
                     env.set(fld, rv);
@@ -914,12 +934,12 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
         } else if (!lhs.children.empty()) {
             // Indexed assign: either `x(i) = rhs` on an identifier or `s.v(i) = rhs` / `s.a.v(i,j) = rhs`
             // on a flattened struct array field.
-            std::string              base;
-            std::string              structRoot;
-            std::vector<std::string> structPath;
-            bool                     isStructFld = false;
+            keel::String              base;
+            keel::String              structRoot;
+            keel::Array<keel::String> structPath;
+            bool                      isStructFld = false;
             if (lhs.children[0]->type == NodeType::IDENTIFIER) {
-                base = lhs.children[0]->strValue;
+                base = lhs.children[0]->strValue.clone();
             } else if ((lhs.children[0]->type == NodeType::FIELD_ACCESS
                         || lhs.children[0]->type == NodeType::DYNAMIC_FIELD_ACCESS)
                        && extractStructFieldChain(*lhs.children[0], structRoot, structPath)
@@ -1010,7 +1030,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
         };
         for (const auto &br : stmt.branches) {
             TypeEnv branchEnv = env;
-            if (br.second) inferStmt(*br.second, branchEnv, reg, declOut, classes);
+            if (br.body) inferStmt(*br.body, branchEnv, reg, declOut, classes);
             mergeIn(branchEnv);
         }
         if (stmt.elseBranch) {
@@ -1034,7 +1054,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
         };
         for (const auto &br : stmt.branches) {
             TypeEnv caseEnv = env;
-            if (br.second) inferStmt(*br.second, caseEnv, reg, declOut, classes);
+            if (br.body) inferStmt(*br.body, caseEnv, reg, declOut, classes);
             mergeIn(caseEnv);
         }
         if (stmt.elseBranch) {
@@ -1051,7 +1071,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
     case NodeType::FOR_STMT: {
         // for <strValue> = children[0]; children[1]; end
         if (stmt.children.size() != 2) { markAssignedDynamic(stmt, env, declOut); return; }
-        const std::string &loopVar = stmt.strValue;
+        const keel::String &loopVar = stmt.strValue;
         const AbstractValue iterVal = forIterValue(
             inferExpr(*stmt.children[0], env, reg, classes).type);
         const ASTNode &body = *stmt.children[1];
@@ -1078,7 +1098,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                 converged = true;
                 break;
             }
-            for (const auto &[k, av] : next.entries()) {
+            for (auto [k, av] : next.entries()) {
                 if (!cur.has(k) || av != cur.get(k)) {
                     cur.set(k, AbstractValue::dynamic());
                     recordDecl(declOut, k, InferredType::dynamic());
@@ -1115,7 +1135,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                 converged = true;
                 break;
             }
-            for (const auto &[k, av] : next.entries()) {
+            for (auto [k, av] : next.entries()) {
                 if (!cur.has(k) || av != cur.get(k)) {
                     cur.set(k, AbstractValue::dynamic());
                     recordDecl(declOut, k, InferredType::dynamic());
@@ -1134,13 +1154,13 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             markAssignedDynamic(stmt, env, declOut);
             return;
         }
-        const ASTNode           &rhs = *stmt.children[0];
-        std::vector<InferredType> outs;
+        const ASTNode            &rhs = *stmt.children[0];
+        keel::Array<InferredType> outs;
         if (rhs.type == NodeType::CALL && !rhs.children.empty()
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && !env.has(rhs.children[0]->strValue)) {
-            std::vector<ArgInfo> argInfos;
-            for (std::size_t i = 1; i < rhs.children.size(); ++i)
+            keel::Array<ArgInfo> argInfos;
+            for (keel::usize i = 1; i < rhs.children.size(); ++i)
                 argInfos.push_back(inferExpr(*rhs.children[i], env, reg, classes).asArg());
             outs = reg.applyMulti(rhs.children[0]->strValue, argInfos);
         } else if (rhs.type == NodeType::CALL && !rhs.children.empty()
@@ -1150,23 +1170,26 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
             if (base.type.isObject()) {
                 const ClassInfo *ci = classes->byId(base.type.classId);
                 if (ci && ci->method(rhs.children[0]->strValue)) {
-                    std::vector<ArgInfo> withSelf;
+                    keel::Array<ArgInfo> withSelf;
                     withSelf.reserve(rhs.children.size());
                     withSelf.push_back(base.asArg());
-                    for (std::size_t i = 1; i < rhs.children.size(); ++i)
+                    for (keel::usize i = 1; i < rhs.children.size(); ++i)
                         withSelf.push_back(inferExpr(*rhs.children[i], env, reg, classes).asArg());
-                    outs = reg.applyMulti(ci->name + "::" + rhs.children[0]->strValue, withSelf);
+                    const keel::String mkey = keel::format("{}::{}", ci->name, rhs.children[0]->strValue);
+                    outs = reg.applyMulti(mkey, withSelf);
                 }
             }
         }
-        for (std::size_t i = 0; i < stmt.returnNames.size(); ++i) {
-            const std::string &rn = stmt.returnNames[i];
+        for (keel::usize i = 0; i < stmt.returnNames.size(); ++i) {
+            const keel::String &rn = stmt.returnNames[i];
             if (rn.empty() || rn == "~") continue;  // ignored output
             const InferredType t = (i < outs.size()) ? outs[i] : InferredType::dynamic();
             env.set(rn, {t, ConstVal::unknown()});
             recordDecl(declOut, rn, t);
-            if (t.isStruct() && t.structLayout)
-                seedStructFields("_numkit_fld_" + rn, *t.structLayout, env, declOut);
+            if (t.isStruct() && t.structLayout) {
+                const keel::String pref = keel::format("_numkit_fld_{}", rn);
+                seedStructFields(pref, *t.structLayout, env, declOut);
+            }
         }
         return;
     }

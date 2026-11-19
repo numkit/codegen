@@ -10,8 +10,9 @@
 #include <numkit/codegen/emitter.hpp>
 #include <numkit/codegen/type_lattice.hpp>
 
-#include <string>
-#include <vector>
+#include <keel/array.h>
+#include <keel/ref.h>
+#include <keel/string.h>
 
 namespace numkit::codegen::driver {
 
@@ -23,15 +24,15 @@ namespace numkit::codegen::driver {
 // dtype is one of double/single/complex/logical/int8..int64/uint8..uint64.
 // An empty spec yields no parameters (a nullary entry). Throws
 // std::runtime_error on a malformed token.
-std::vector<InferredType> parseTypeSpec(const std::string &spec);
+keel::Array<InferredType> parseTypeSpec(keel::StringRef spec);
 
 // Transpile the entry function of `source` to a C++ TU (the emit step of
 // `numkit build`). `entry` empty -> the sole top-level function (error if
 // there is not exactly one). `paramTypes` (from parseTypeSpec) must match the
 // entry's arity. Bridges uncompiled builtins when `bridge.enabled`. Throws
 // std::runtime_error on parse / arity / unsupported-construct errors.
-EmittedFunction transpileSource(const std::string &source, const std::string &entry,
-                                const std::vector<InferredType> &paramTypes,
+EmittedFunction transpileSource(keel::StringRef source, keel::StringRef entry,
+                                keel::ArrayRef<InferredType> paramTypes,
                                 const BridgeOptions &bridge = {},
                                 const OpsKernelOptions &opsKernels = {});
 
@@ -43,10 +44,10 @@ EmittedFunction transpileSource(const std::string &source, const std::string &en
 // to numkit_plugin.h the TU will #include. Requires a SCALAR-output function whose
 // params are scalars / double vectors (emitScalarPlugin's contract); throws
 // std::runtime_error otherwise. Returns the TU source.
-std::string transpileToPlugin(const std::string &source, const std::string &entry,
-                              const std::vector<InferredType> &paramTypes,
-                              const std::string &exportName,
-                              const std::string &abiHeaderPath);
+keel::String transpileToPlugin(keel::StringRef source, keel::StringRef entry,
+                               keel::ArrayRef<InferredType> paramTypes,
+                               keel::StringRef exportName,
+                               keel::StringRef abiHeaderPath);
 
 // Build a `int main() {...}` that calls the emitted function and prints its
 // scalar return value, suitable for appending to the EmittedFunction source to
@@ -55,6 +56,6 @@ std::string transpileToPlugin(const std::string &source, const std::string &entr
 // intN / uintN / bool / std::complex<double>) or void; throws std::runtime_error
 // for an unsupported return type or a non-nullary entry (the harness does not
 // marshal input values). The returned string #includes <cstdio> and <complex>.
-std::string buildHarnessMain(const EmittedFunction &em);
+keel::String buildHarnessMain(const EmittedFunction &em);
 
 } // namespace numkit::codegen::driver

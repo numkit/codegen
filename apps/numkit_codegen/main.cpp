@@ -27,15 +27,13 @@
 #include <numkit/sys/env.hpp>
 #include <numkit/sys/toolchain.hpp>
 
+#include <keel/format.h>
 #include <keel/fs.h>
-#include <keel/interop_std.h>
+#include <keel/string.h>
 
+#include <cstdio>
 #include <cstdlib>
-#include <fstream>
-#include <iostream>
-#include <sstream>
-#include <string>
-#include <vector>
+#include <stdexcept>
 
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #include <unistd.h>
@@ -43,28 +41,19 @@
 
 namespace {
 
-[[noreturn]] void usage(const char *argv0, const std::string &err)
+[[noreturn]] void usage(const char *argv0, keel::StringRef err)
 {
-    std::cerr << "error: " << err << "\n\n"
-              << "usage: " << argv0 << " <file.m> [--args \"<spec>\"] [--entry <name>]"
-              << " [--bridge | --plugin <name>] [--ops-kernels] [--build] [--run] [-o <file>]\n";
+    keel::eprintln("error: {}\n", err);
+    keel::eprintln("usage: {} <file.m> [--args \"<spec>\"] [--entry <name>]"
+                   " [--bridge | --plugin <name>] [--ops-kernels] [--build] [--run] [-o <file>]",
+                   argv0);
     std::exit(2);
 }
 
-std::string readFile(const std::string &path, bool &ok)
-{
-    std::ifstream is(path, std::ios::binary);
-    if (!is) { ok = false; return {}; }
-    std::ostringstream ss;
-    ss << is.rdbuf();
-    ok = true;
-    return ss.str();
-}
-
-bool hasBinaryExtension(const std::string &p)
+bool hasBinaryExtension(keel::StringRef p)
 {
     if (p.size() >= 4) {
-        const std::string ext = p.substr(p.size() - 4);
+        const keel::StringRef ext = p.substr(p.size() - 4);
         if (ext == ".exe" || ext == ".EXE" || ext == ".out") return true;
     }
     return false;
@@ -74,14 +63,14 @@ bool hasBinaryExtension(const std::string &p)
 
 int main(int argc, char **argv)
 {
-    std::string file, argsSpec, entry, outPath, pluginExport;
-    bool        bridge = false, opsKernels = false, runFlag = false, buildFlag = false;
+    keel::String file, argsSpec, entry, outPath, pluginExport;
+    bool         bridge = false, opsKernels = false, runFlag = false, buildFlag = false;
 
     for (int i = 1; i < argc; ++i) {
-        const std::string a = argv[i];
-        auto              next = [&](const char *flag) -> std::string {
-            if (i + 1 >= argc) usage(argv[0], std::string("missing value for ") + flag);
-            return argv[++i];
+        const keel::StringRef a(argv[i]);
+        auto                  next = [&](const char *flag) -> keel::String {
+            if (i + 1 >= argc) usage(argv[0], keel::format("missing value for {}", flag));
+            return keel::String::from(argv[++i]);
         };
         if (a == "--args") argsSpec = next("--args");
         else if (a == "--entry") entry = next("--entry");
@@ -92,9 +81,9 @@ int main(int argc, char **argv)
         else if (a == "--build") buildFlag = true;
         else if (a == "--run") runFlag = true;
         else if (a == "-h" || a == "--help") usage(argv[0], "help");
-        else if (!a.empty() && a[0] == '-') usage(argv[0], "unknown option " + a);
-        else if (file.empty()) file = a;
-        else usage(argv[0], "unexpected extra argument " + a);
+        else if (!a.empty() && a[0] == '-') usage(argv[0], keel::format("unknown option {}", a));
+        else if (file.empty()) file = keel::String::from(a);
+        else usage(argv[0], keel::format("unexpected extra argument {}", a));
     }
     if (file.empty()) usage(argv[0], "no input file");
     if (!outPath.empty() && hasBinaryExtension(outPath)) buildFlag = true;
@@ -102,9 +91,12 @@ int main(int argc, char **argv)
         usage(argv[0], "--build/--run and --plugin are mutually exclusive (a plugin TU is "
                        "a shared lib, not a runnable program)");
 
-    bool ok = false;
-    const std::string source = readFile(file, ok);
-    if (!ok) { std::cerr << "error: cannot read " << file << "\n"; return 1; }
+    auto srcRes = keel::fs_read_text(file);
+    if (srcRes.is_err()) {
+        keel::eprintln("error: cannot read {}", file);
+        return 1;
+    }
+    const keel::String source = keel::move(srcRes.value());
 
     if (bridge && !pluginExport.empty())
         usage(argv[0], "--plugin and --bridge are mutually exclusive (a plugin TU is "
@@ -114,18 +106,18 @@ int main(int argc, char **argv)
         namespace cg = numkit::codegen;
         const auto  paramTypes = cg::driver::parseTypeSpec(argsSpec);
 
-        std::string generated;  // the C++ TU to write
-        std::string info;       // a one-line note to stderr (keeps -o clean)
+        keel::String        generated;  // the C++ TU to write
+        keel::String        info;       // a one-line note to stderr (keeps -o clean)
         cg::EmittedFunction emittedFn;  // kept for --run's harness (non-plugin path)
         bool usedBridge = bridge;
         if (!pluginExport.empty()) {
             generated = cg::driver::transpileToPlugin(source, entry, paramTypes, pluginExport,
                                                       "numkit_plugin.h");
-            info      = "emitted plugin registering '" + pluginExport + "'";
+            info      = keel::format("emitted plugin registering '{}'", pluginExport);
         } else {
             cg::BridgeOptions bridgeOpts;
             bridgeOpts.enabled       = bridge;
-            bridgeOpts.runtimeHeader = "numkit_codegen_rt.h";
+            bridgeOpts.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
             cg::OpsKernelOptions opsOpts;
             opsOpts.enabled = opsKernels;
             try {
@@ -139,8 +131,8 @@ int main(int argc, char **argv)
                     throw;
                 }
             }
-            generated = emittedFn.source;
-            info      = "emitted entry '" + emittedFn.name + "': " + emittedFn.signature;
+            generated = emittedFn.source.clone();
+            info      = keel::format("emitted entry '{}': {}", emittedFn.name, emittedFn.signature);
         }
 
         // --build / --run: wrap the emitted TU in a main() harness, AOT-compile
@@ -161,27 +153,28 @@ int main(int argc, char **argv)
                     "--build/--run: v1 supports only a nullary entry (no --args). For "
                     "functions with args, emit the C++ with -o and write your "
                     "own main() harness.");
-            const std::string program = generated + cg::driver::buildHarnessMain(emittedFn);
+            keel::String program = generated.clone();
+            program.append(cg::driver::buildHarnessMain(emittedFn).as_ref());
 
             struct TempDirGuard {
-                std::string dir;
+                keel::String dir;
                 ~TempDirGuard() {
                     if (!dir.empty()) {
                         (void)keel::fs_remove_all(dir);
                     }
                 }
             } tempRunDir;
-            std::string exe;
+            keel::String exe;
             if (buildFlag) {
                 if (!outPath.empty()) {
-                    exe = outPath;
+                    exe = outPath.clone();
 #ifdef _WIN32
-                    if (keel::path_extension(exe).empty()) exe += ".exe";
+                    if (keel::path_extension(exe).empty()) exe.append(".exe");
 #endif
                 } else {
-                    exe = keel::to_std_string(keel::path_stem(file));
+                    exe = keel::String::from(keel::path_stem(file));
 #ifdef _WIN32
-                    exe += ".exe";
+                    exe.append(".exe");
 #endif
                 }
             } else {
@@ -192,59 +185,61 @@ int main(int argc, char **argv)
                 keel::String tmpl = keel::path_join(tmpRoot, "numkit_codegen_run_XXXXXX");
                 if (!::mkdtemp(tmpl.data()))
                     throw std::runtime_error("failed to create temporary run directory");
-                tempRunDir.dir = keel::to_std_string(tmpl);
+                tempRunDir.dir = keel::move(tmpl);
 #else
                 const keel::String base = keel::path_join(tmpRoot, "numkit_codegen_run");
                 if (keel::fs_create_dirs(base).is_err())
                     throw std::runtime_error("failed to create temporary run directory");
-                tempRunDir.dir = keel::to_std_string(base);
+                tempRunDir.dir = keel::move(base);
 #endif
-                exe = keel::to_std_string(keel::path_join(tempRunDir.dir, "aot"));
+                exe = keel::path_join(tempRunDir.dir, "aot");
 #ifdef _WIN32
-                exe += ".exe";
+                exe.append(".exe");
 #endif
             }
             const auto compileOpts = (usedBridge || opsKernels)
                                          ? cg::aot::defaultBridgeCompileOptions()
                                          : cg::aot::CompileOptions{};
             const auto cr = cg::aot::compileToExecutable(program, exe, compileOpts);
-            (void)keel::fs_remove(exe + ".cpp");
-            (void)keel::fs_remove(exe + ".log");
+            (void)keel::fs_remove(keel::format("{}.cpp", exe));
+            (void)keel::fs_remove(keel::format("{}.log", exe));
 #ifdef _WIN32
-            (void)keel::fs_remove(exe + ".obj");
-            (void)keel::fs_remove(exe + ".build.bat");
+            (void)keel::fs_remove(keel::format("{}.obj", exe));
+            (void)keel::fs_remove(keel::format("{}.build.bat", exe));
 #endif
             if (!cr.ok())
-                throw std::runtime_error("compilation failed.\n--- compiler log ---\n" +
-                                         cr.log + "\n--- end log ---");
-            std::cerr << "numkit-codegen: compiled -> " << exe << "\n";
+                throw std::runtime_error(
+                    keel::format("compilation failed.\n--- compiler log ---\n{}\n--- end log ---",
+                                 cr.log).c_str());
+            keel::eprintln("numkit-codegen: compiled -> {}", exe);
             if (!runFlag) return 0;
 
             const auto rr = cg::aot::runExecutable(exe);
             if (!buildFlag) {
                 (void)keel::fs_remove(exe);
             }
-            std::cout << rr.log;
+            if (!rr.log.empty())
+                std::fwrite(rr.log.data(), 1, rr.log.size(), stdout);
             if (rr.exitCode != 0) {
-                std::cerr << "numkit-codegen: program exited with code " << rr.exitCode << "\n";
+                keel::eprintln("numkit-codegen: program exited with code {}", rr.exitCode);
                 return rr.exitCode;
             }
             return 0;
         }
 
         if (outPath.empty()) {
-            std::cout << generated;
+            if (!generated.empty())
+                std::fwrite(generated.data(), 1, generated.size(), stdout);
         } else {
-            std::ofstream os(outPath, std::ios::binary);
-            if (!os) { std::cerr << "error: cannot open " << outPath << "\n"; return 1; }
-            os << generated;
-            os.flush();
-            if (!os) { std::cerr << "error: failed writing " << outPath << "\n"; return 1; }
+            if (keel::fs_write_text(outPath, generated).is_err()) {
+                keel::eprintln("error: failed writing {}", outPath);
+                return 1;
+            }
         }
-        std::cerr << "numkit-codegen: " << info << "\n";  // stderr, so -o stays clean
+        keel::eprintln("numkit-codegen: {}", info);  // stderr, so -o stays clean
         return 0;
     } catch (const std::exception &e) {
-        std::cerr << "error: " << e.what() << "\n";
+        keel::eprintln("error: {}", e.what());
         return 1;
     }
 }

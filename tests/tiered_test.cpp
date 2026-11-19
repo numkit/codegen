@@ -85,14 +85,14 @@ TEST(CodegenTiered, ScalarFunctionAsPluginMatchesInterpreter)
         {"a", InferredType::scalar(ValueType::DOUBLE)},
         {"b", InferredType::scalar(ValueType::DOUBLE)}};
     const std::string abiHeader = std::string(NUMKIT_BRIDGE_DIR) + "/numkit_plugin.h";
-    const std::string pluginSrc =
-        emitScalarPlugin(*fn, params, reg, "numkit_tiered_hot", abiHeader);
+    const std::string pluginSrc = keel::to_std_string(
+        emitScalarPlugin(*fn, params, reg, "numkit_tiered_hot", abiHeader));
 
     // 3. Compile it to a shared library.
     const std::string lib = keel::to_std_string(keel::path_join(aotTmpBase(), "numkit_tiered_hot.dll"));
     const auto        cr  = aot::compileToSharedLibrary(pluginSrc, lib);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok)
-        << "log:\n" << cr.log << "\n--- generated source ---\n" << pluginSrc;
+        << "log:\n" << cr.log.c_str() << "\n--- generated source ---\n" << pluginSrc;
 
     // 4. Load it into the runtime and call it through engine dispatch.
     numkit_error err;
@@ -147,13 +147,13 @@ TEST(CodegenTiered, ArrayInputScalarOutputMatchesInterpreter)
     const std::vector<ParamSpec> params = {
         {"v", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}};
     const std::string abiHeader = std::string(NUMKIT_BRIDGE_DIR) + "/numkit_plugin.h";
-    const std::string pluginSrc =
-        emitScalarPlugin(*fn, params, reg, "numkit_tiered_sum", abiHeader);
+    const std::string pluginSrc = keel::to_std_string(
+        emitScalarPlugin(*fn, params, reg, "numkit_tiered_sum", abiHeader));
 
     const std::string lib = keel::to_std_string(keel::path_join(aotTmpBase(), "numkit_tiered_sum.dll"));
     const auto        cr  = aot::compileToSharedLibrary(pluginSrc, lib);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok)
-        << "log:\n" << cr.log << "\n--- generated source ---\n" << pluginSrc;
+        << "log:\n" << cr.log.c_str() << "\n--- generated source ---\n" << pluginSrc;
 
     numkit_error err;
     err.code = 0;
@@ -214,14 +214,14 @@ TEST(CodegenTiered, DriverPluginPathMatchesInterpreter)
     const char *src = "function s = numkit_drv_sum(v)\n  n = numel(v);\n  s = 0;\n"
                       "  for k = 1:n\n    s = s + v(k);\n  end\nend\n";
     const std::string abiHeader = std::string(NUMKIT_BRIDGE_DIR) + "/numkit_plugin.h";
-    const std::string pluginSrc = driver::transpileToPlugin(
-        src, "", driver::parseTypeSpec("double[]"), "numkit_drv_sum", abiHeader);
+    const std::string pluginSrc = keel::to_std_string(driver::transpileToPlugin(
+        src, "", driver::parseTypeSpec("double[]"), "numkit_drv_sum", abiHeader));
     ASSERT_NE(pluginSrc.find("register_fn(\"numkit_drv_sum\""), std::string::npos);
 
     const std::string lib = keel::to_std_string(keel::path_join(aotTmpBase(), "numkit_drv_sum.dll"));
     const auto        cr  = aot::compileToSharedLibrary(pluginSrc, lib);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok)
-        << "log:\n" << cr.log << "\n--- generated source ---\n" << pluginSrc;
+        << "log:\n" << cr.log.c_str() << "\n--- generated source ---\n" << pluginSrc;
 
     numkit_error err;
     err.code = 0;

@@ -29,12 +29,11 @@
 
 #include <numkit/value/value_type.hpp>
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
+#include <keel/array.h>
+#include <keel/core.h>
+#include <keel/ref.h>
+#include <keel/smart_ptr.h>
+#include <keel/string.h>
 
 namespace numkit::codegen {
 
@@ -43,7 +42,7 @@ namespace numkit::codegen {
 // beyond 2-D are deliberately deferred; the join already collapses
 // anything it cannot prove equal to Unknown, so adding richer shapes
 // later only refines results, never breaks soundness.
-enum class ShapeKind : std::uint8_t {
+enum class ShapeKind : keel::u8 {
     Unknown,    // top — any rank / shape (not statically provable)
     Scalar,     // 1 x 1
     RowVector,  // 1 x N, N not statically known (e.g. 1:N, runtime linspace)
@@ -57,30 +56,51 @@ enum class ShapeKind : std::uint8_t {
 
 struct Shape {
     ShapeKind                kind = ShapeKind::Unknown;
-    std::size_t              rows = 0;  // meaningful only when kind == KnownDims
-    std::size_t              cols = 0;
-    std::vector<std::size_t> nd;        // meaningful only when kind == NDims (0 = unknown dim)
+    keel::usize              rows = 0;  // meaningful only when kind == KnownDims
+    keel::usize              cols = 0;
+    keel::Array<keel::usize> nd;        // meaningful only when kind == NDims (0 = unknown dim)
 
-    static Shape unknown()   { return {ShapeKind::Unknown, 0, 0, {}}; }
-    static Shape scalar()    { return {ShapeKind::Scalar, 1, 1, {}}; }
-    static Shape rowVector() { return {ShapeKind::RowVector, 0, 0, {}}; }
-    static Shape colVector() { return {ShapeKind::ColVector, 0, 0, {}}; }
-    static Shape vector1D()  { return {ShapeKind::Vector1D, 0, 0, {}}; }
+    Shape() noexcept = default;
+    Shape(ShapeKind k, keel::usize r, keel::usize c, keel::Array<keel::usize> n = {}) noexcept
+        : kind(k), rows(r), cols(c), nd(keel::move(n))
+    {}
+    Shape(const Shape &o) : kind(o.kind), rows(o.rows), cols(o.cols), nd(o.nd.clone()) {}
+    Shape &operator=(const Shape &o)
+    {
+        if (this != &o) {
+            kind = o.kind;
+            rows = o.rows;
+            cols = o.cols;
+            nd   = o.nd.clone();
+        }
+        return *this;
+    }
+    Shape(Shape &&) noexcept = default;
+    Shape &operator=(Shape &&) noexcept = default;
+    ~Shape() noexcept = default;
+
+    Shape clone() const { return *this; }
+
+    static Shape unknown()   { return Shape(ShapeKind::Unknown, 0, 0); }
+    static Shape scalar()    { return Shape(ShapeKind::Scalar, 1, 1); }
+    static Shape rowVector() { return Shape(ShapeKind::RowVector, 0, 0); }
+    static Shape colVector() { return Shape(ShapeKind::ColVector, 0, 0); }
+    static Shape vector1D()  { return Shape(ShapeKind::Vector1D, 0, 0); }
     // A 1x1 KnownDims is canonicalised to Scalar so the two never alias.
-    static Shape dims(std::size_t r, std::size_t c)
+    static Shape dims(keel::usize r, keel::usize c)
     {
         if (r == 1 && c == 1) return scalar();
-        return {ShapeKind::KnownDims, r, c, {}};
+        return Shape(ShapeKind::KnownDims, r, c);
     }
     // A ranked shape (column-major). A fully-known rank-2 collapses to
     // KnownDims so static matrices keep their existing single representation;
     // everything else (rank >= 3, or a rank-2 with a runtime dim) is NDims.
-    static Shape ndShape(std::vector<std::size_t> d)
+    static Shape ndShape(keel::ArrayRef<keel::usize> d)
     {
         if (d.size() == 2 && d[0] >= 1 && d[1] >= 1) return dims(d[0], d[1]);
         Shape s;
         s.kind = ShapeKind::NDims;
-        s.nd   = std::move(d);
+        s.nd   = keel::Array<keel::usize>::from(d);
         return s;
     }
 
@@ -95,7 +115,7 @@ struct Shape {
                    && ((nd[0] == 1 && nd[1] == 0) || (nd[1] == 1 && nd[0] == 0)));
     }
     bool        isNDims() const { return kind == ShapeKind::NDims; }
-    std::size_t ndRank() const { return kind == ShapeKind::NDims ? nd.size() : 0; }
+    keel::usize ndRank() const { return kind == ShapeKind::NDims ? nd.size() : 0; }
     bool        operator==(const Shape &o) const;
     bool        operator!=(const Shape &o) const { return !(*this == o); }
 };
@@ -106,7 +126,7 @@ Shape joinShape(const Shape &a, const Shape &b);
 struct StructLayout;  // an anonymous struct's field layout (defined below InferredType)
 
 // ── Type lattice ──────────────────────────────────────────────────────
-enum class TypeKind : std::uint8_t {
+enum class TypeKind : keel::u8 {
     Bottom,    // no value reaches here (identity of join)
     Concrete,  // a definite dtype + shape
     Dynamic,   // top — statically unknown -> boxed numkit::Value
@@ -124,28 +144,55 @@ struct InferredType {
     // null for every non-struct type, so it never perturbs the numeric path's
     // equality / join. Shared + immutable (cheap to copy across the lattice). A
     // field type may itself be a STRUCT, so the recursion goes through InferredType.
-    std::shared_ptr<const StructLayout> structLayout;
+    keel::Arc<const StructLayout> structLayout;
+
+    InferredType() noexcept = default;
+    InferredType(TypeKind k, ValueType dt, Shape s, int cid,
+                 keel::Arc<const StructLayout> sl = {}) noexcept
+        : kind(k), dtype(dt), shape(keel::move(s)), classId(cid), structLayout(keel::move(sl))
+    {}
+    InferredType(const InferredType &o)
+        : kind(o.kind), dtype(o.dtype), shape(o.shape.clone()), classId(o.classId),
+          structLayout(o.structLayout)
+    {}
+    InferredType &operator=(const InferredType &o)
+    {
+        if (this != &o) {
+            kind         = o.kind;
+            dtype        = o.dtype;
+            shape        = o.shape.clone();
+            classId      = o.classId;
+            structLayout = o.structLayout;
+        }
+        return *this;
+    }
+    InferredType(InferredType &&) noexcept = default;
+    InferredType &operator=(InferredType &&) noexcept = default;
+    ~InferredType() noexcept = default;
+
+    InferredType clone() const { return *this; }
 
     // ── constructors ──
-    static InferredType dynamic() { return {TypeKind::Dynamic, ValueType::EMPTY, {}, -1, {}}; }
-    static InferredType bottom()  { return {TypeKind::Bottom,  ValueType::EMPTY, {}, -1, {}}; }
+    static InferredType dynamic() { return InferredType(TypeKind::Dynamic, ValueType::EMPTY, {}, -1); }
+    static InferredType bottom()  { return InferredType(TypeKind::Bottom,  ValueType::EMPTY, {}, -1); }
     static InferredType concrete(ValueType dt, Shape s)
     {
-        return {TypeKind::Concrete, dt, std::move(s), -1, {}};
+        return InferredType(TypeKind::Concrete, dt, keel::move(s), -1);
     }
     static InferredType scalar(ValueType dt) { return concrete(dt, Shape::scalar()); }
     // A class instance (value or handle decided by the ClassRegistry, not
     // the lattice). A scalar object in v1 (object arrays are a later tier).
     static InferredType object(int classId)
     {
-        return {TypeKind::Concrete, ValueType::OBJECT, Shape::scalar(), classId, {}};
+        return InferredType(TypeKind::Concrete, ValueType::OBJECT, Shape::scalar(), classId);
     }
     // A plain (anonymous) struct value with the given field layout (name -> type).
     // A scalar struct in v1 (struct arrays are a later tier). The layout is shared
     // (cheap copy; null for every non-struct type).
-    static InferredType structOf(std::shared_ptr<const StructLayout> layout)
+    static InferredType structOf(keel::Arc<const StructLayout> layout)
     {
-        return {TypeKind::Concrete, ValueType::STRUCT, Shape::scalar(), -1, std::move(layout)};
+        return InferredType(TypeKind::Concrete, ValueType::STRUCT, Shape::scalar(), -1,
+                            keel::move(layout));
     }
 
     bool isDynamic()  const { return kind == TypeKind::Dynamic; }
@@ -162,7 +209,37 @@ struct InferredType {
     bool operator==(const InferredType &o) const;
     bool operator!=(const InferredType &o) const { return !(*this == o); }
 
-    std::string str() const;  // human-readable, for debug / diagnostics
+    keel::String str() const;  // human-readable, for debug / diagnostics
+};
+
+struct StructField {
+    keel::String first;
+    InferredType second;
+
+    StructField() noexcept = default;
+    StructField(keel::StringRef name, InferredType type)
+        : first(keel::String::from(name)), second(keel::move(type))
+    {}
+    StructField(const StructField &o) : first(o.first.clone()), second(o.second.clone()) {}
+    StructField &operator=(const StructField &o)
+    {
+        if (this != &o) {
+            first  = o.first.clone();
+            second = o.second.clone();
+        }
+        return *this;
+    }
+    StructField(StructField &&) noexcept = default;
+    StructField &operator=(StructField &&) noexcept = default;
+    ~StructField() noexcept = default;
+
+    StructField clone() const { return *this; }
+
+    bool operator==(const StructField &o) const
+    {
+        return first == o.first && second == o.second;
+    }
+    bool operator!=(const StructField &o) const { return !(*this == o); }
 };
 
 // An anonymous struct's field layout: ordered (name -> type) pairs in MATLAB field order.
@@ -170,9 +247,22 @@ struct InferredType {
 // itself be a STRUCT (nested s.a.b), so the recursion goes through InferredType. Two layouts
 // are equal iff they have the same fields (name AND type) in the same order.
 struct StructLayout {
-    std::vector<std::pair<std::string, InferredType>> fields;
+    keel::Array<StructField> fields;
 
-    const InferredType *field(const std::string &name) const;  // nullptr if absent
+    StructLayout() noexcept = default;
+    StructLayout(const StructLayout &o) : fields(o.fields.clone()) {}
+    StructLayout &operator=(const StructLayout &o)
+    {
+        if (this != &o) fields = o.fields.clone();
+        return *this;
+    }
+    StructLayout(StructLayout &&) noexcept = default;
+    StructLayout &operator=(StructLayout &&) noexcept = default;
+    ~StructLayout() noexcept = default;
+
+    StructLayout clone() const { return *this; }
+
+    const InferredType *field(keel::StringRef name) const;  // nullptr if absent
     bool                operator==(const StructLayout &o) const;
     bool                operator!=(const StructLayout &o) const { return !(*this == o); }
 };
@@ -197,7 +287,7 @@ InferredType join(const InferredType &a, const InferredType &b);
 //  unreachable value's type is already Bottom.) Only real scalar
 // constants are tracked for now; that covers the size arguments that
 // drive shape inference.
-enum class ConstKind : std::uint8_t {
+enum class ConstKind : keel::u8 {
     Unknown,    // top — not a known compile-time constant
     KnownReal,  // a known real scalar value
 };
@@ -209,6 +299,8 @@ struct ConstVal {
     static ConstVal unknown()       { return {ConstKind::Unknown, 0.0}; }
     static ConstVal known(double v) { return {ConstKind::KnownReal, v}; }
 
+    ConstVal clone() const noexcept { return *this; }
+
     bool isKnown() const { return kind == ConstKind::KnownReal; }
 
     // Read the constant as an array dimension: a known non-negative
@@ -217,12 +309,12 @@ struct ConstVal {
     // Returns nullopt for Unknown, non-integral, or negative values.
     // (Out param keeps the header free of <optional> in hot include
     //  paths; returns true on success.)
-    bool asDim(std::size_t &out) const;
+    bool asDim(keel::usize &out) const;
 
     bool operator==(const ConstVal &o) const;
     bool operator!=(const ConstVal &o) const { return !(*this == o); }
 
-    std::string str() const;
+    keel::String str() const;
 };
 
 // Lattice join for constants: equal Known values stay Known; anything

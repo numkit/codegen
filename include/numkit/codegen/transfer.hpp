@@ -19,11 +19,12 @@
 
 #include <numkit/codegen/type_lattice.hpp>
 
-#include <cstddef>
-#include <functional>
-#include <string>
-#include <unordered_map>
-#include <vector>
+#include <keel/array.h>
+#include <keel/core.h>
+#include <keel/function.h>
+#include <keel/hash_map.h>
+#include <keel/ref.h>
+#include <keel/string.h>
 
 namespace numkit::codegen {
 
@@ -34,12 +35,26 @@ struct ArgInfo {
     InferredType type;
     ConstVal     constant;
 
-    ArgInfo() = default;
-    ArgInfo(InferredType t, ConstVal c) : type(t), constant(c) {}
+    ArgInfo() noexcept = default;
+    ArgInfo(InferredType t, ConstVal c) noexcept : type(keel::move(t)), constant(c) {}
+    ArgInfo(const ArgInfo &o) : type(o.type.clone()), constant(o.constant) {}
+    ArgInfo &operator=(const ArgInfo &o)
+    {
+        if (this != &o) {
+            type     = o.type.clone();
+            constant = o.constant;
+        }
+        return *this;
+    }
+    ArgInfo(ArgInfo &&) noexcept = default;
+    ArgInfo &operator=(ArgInfo &&) noexcept = default;
+    ~ArgInfo() noexcept = default;
+
+    ArgInfo clone() const { return *this; }
 
     static ArgInfo of(InferredType t, ConstVal c = ConstVal::unknown())
     {
-        return ArgInfo(t, c);
+        return ArgInfo(keel::move(t), c);
     }
     // Convenience: a scalar of dtype `dt` with a known constant value `v`
     // (the common literal-argument case, e.g. the `64` in linspace).
@@ -51,12 +66,12 @@ struct ArgInfo {
 
 // A transfer function: abstract args -> inferred type of the (first)
 // result.
-using TransferFn = std::function<InferredType(const std::vector<ArgInfo> &)>;
+using TransferFn = keel::Function<InferredType(keel::ArrayRef<ArgInfo>)>;
 
 // A multi-output transfer: abstract args -> all result types (one per
 // output), for `[a,b] = f(...)`. Registered alongside the single-output
 // TransferFn for functions/methods that can produce several outputs.
-using MultiTransferFn = std::function<std::vector<InferredType>(const std::vector<ArgInfo> &)>;
+using MultiTransferFn = keel::Function<keel::Array<InferredType>(keel::ArrayRef<ArgInfo>)>;
 
 class FunctionTable;  // monomorphize.hpp — the co-compiled user functions
 
@@ -64,11 +79,16 @@ class FunctionTable;  // monomorphize.hpp — the co-compiled user functions
 // (the sound fallback: unknown builtin -> boxed Value).
 class TransferRegistry {
 public:
-    void add(std::string name, TransferFn fn);
-    void addMulti(std::string name, MultiTransferFn fn);
+    TransferRegistry() noexcept = default;
+    TransferRegistry(TransferRegistry &&) noexcept = default;
+    TransferRegistry &operator=(TransferRegistry &&) noexcept = default;
+    ~TransferRegistry() noexcept = default;
 
-    bool         has(const std::string &name) const;
-    std::size_t  size() const;
+    void add(keel::StringRef name, TransferFn fn);
+    void addMulti(keel::StringRef name, MultiTransferFn fn);
+
+    bool        has(keel::StringRef name) const;
+    keel::usize size() const;
 
     // The co-compiled user-function table (set by registerUserFunctions), so the
     // inference can tell a USER function from a builtin -- e.g. to type a bare
@@ -80,18 +100,17 @@ public:
 
     // Result type for a call to `name` with `args`; Dynamic if `name`
     // has no registered transfer.
-    InferredType apply(const std::string &name,
-                       const std::vector<ArgInfo> &args) const;
+    InferredType apply(keel::StringRef name, keel::ArrayRef<ArgInfo> args) const;
 
     // All result types for a multi-output call to `name`; empty if `name`
     // has no registered multi-output transfer.
-    std::vector<InferredType> applyMulti(const std::string &name,
-                                         const std::vector<ArgInfo> &args) const;
+    keel::Array<InferredType> applyMulti(keel::StringRef name,
+                                         keel::ArrayRef<ArgInfo> args) const;
 
 private:
-    std::unordered_map<std::string, TransferFn>      table_;
-    std::unordered_map<std::string, MultiTransferFn> multiTable_;
-    const FunctionTable                             *userFuncs_ = nullptr;  // borrowed
+    keel::HashMap<keel::String, TransferFn>      table_;
+    keel::HashMap<keel::String, MultiTransferFn> multiTable_;
+    const FunctionTable                         *userFuncs_ = nullptr;  // borrowed
 };
 
 // Populate a registry with every standard transfer (dispatches to the

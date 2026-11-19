@@ -25,18 +25,18 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && rhs.children[1]->type == NodeType::IDENTIFIER
         && isArrayVar(rhs.children[1]->strValue) && s.returnNames.size() == 2
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has("size"))) {
-        const std::string &rn0 = s.returnNames[0];
-        const std::string &rn1 = s.returnNames[1];
+        const keel::String &rn0 = s.returnNames[0];
+        const keel::String &rn1 = s.returnNames[1];
         if (rn0.empty() || rn0 == "~" || rn1.empty() || rn1 == "~")
             unsupported("[r,c]=size with an ignored (~) output (v1)");
         if (isArrayVar(rn0) || isArrayVar(rn1))
             unsupported("[r,c]=size into a non-scalar target");
-        const ArrayInfo &aai = arrays_.at(rhs.children[1]->strValue);
+        const ArrayInfo &aai = arrayAt(rhs.children[1]->strValue);
         if (!aai.is2D && !aai.isND && aai.orient == VecOrient::Unknown)
             unsupported("[r,c]=size of an orientation-unknown vector");
-        const std::size_t rank = aai.isND ? aai.ndDims.size() : 2;
-        std::string       cols = dimExpr(aai, 1);  // fold dims 1..rank-1 into c
-        for (std::size_t k = 2; k < rank; ++k) cols += " * " + dimExpr(aai, k);
+        const keel::usize rank = aai.isND ? aai.ndDims.size() : 2;
+        keel::String      cols = dimExpr(aai, 1);  // fold dims 1..rank-1 into c
+        for (keel::usize k = 2; k < rank; ++k) cols += " * " + dimExpr(aai, k);
         line(cppIdent(rn0) + " = static_cast<double>(" + dimExpr(aai, 0) + ");");
         line(cppIdent(rn1) + " = static_cast<double>(" + cols + ");");
         types_.set(rn0, {InferredType::scalar(ValueType::DOUBLE), ConstVal::unknown()});
@@ -58,18 +58,18 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && (rhs.children[0]->strValue == "max" || rhs.children[0]->strValue == "min")
         && rhs.children[1]->type == NodeType::IDENTIFIER
         && isArrayVar(rhs.children[1]->strValue) && s.returnNames.size() == 2
-        && !arrays_.at(rhs.children[1]->strValue).is2D
-        && !arrays_.at(rhs.children[1]->strValue).isND
-        && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+        && !arrayAt(rhs.children[1]->strValue).is2D
+        && !arrayAt(rhs.children[1]->strValue).isND
+        && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {
-        const std::string &rn0 = s.returnNames[0];  // value
-        const std::string &rn1 = s.returnNames[1];  // 1-based index
+        const keel::String &rn0 = s.returnNames[0];  // value
+        const keel::String &rn1 = s.returnNames[1];  // 1-based index
         if (rn0.empty() || rn0 == "~" || rn1.empty() || rn1 == "~")
             unsupported("[m,i]=max/min with an ignored (~) output (v1)");
         if (isArrayVar(rn0) || isArrayVar(rn1))
             unsupported("[m,i]=max/min into a non-scalar target");
-        const ArrayInfo  &xa  = arrays_.at(rhs.children[1]->strValue);
-        const std::string cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
+        const ArrayInfo    &xa  = arrayAt(rhs.children[1]->strValue);
+        const keel::StringRef cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
         line("{");
         ++indent_;
         line("const std::size_t _numkit_n = " + xa.lenVar + ";");
@@ -103,17 +103,17 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && (rhs.children[0]->strValue == "max" || rhs.children[0]->strValue == "min")
         && rhs.children[1]->type == NodeType::IDENTIFIER
         && isArrayVar(rhs.children[1]->strValue) && s.returnNames.size() == 2
-        && (arrays_.at(rhs.children[1]->strValue).is2D
-            || (arrays_.at(rhs.children[1]->strValue).isND
-                && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-        && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+        && (arrayAt(rhs.children[1]->strValue).is2D
+            || (arrayAt(rhs.children[1]->strValue).isND
+                && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+        && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {
-        const std::string &rn0 = s.returnNames[0];  // value row vector
-        const std::string &rn1 = s.returnNames[1];  // 1-based index row vector
+        const keel::String &rn0 = s.returnNames[0];  // value row vector
+        const keel::String &rn1 = s.returnNames[1];  // 1-based index row vector
         if (rn0.empty() || rn0 == "~" || rn1.empty() || rn1 == "~")
             unsupported("[m,i]=max/min(matrix) with an ignored (~) output (v1)");
-        const ArrayInfo  &A   = arrays_.at(rhs.children[1]->strValue);
-        const std::string cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
+        const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+        const keel::StringRef cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
         line("{");
         ++indent_;
         line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -149,15 +149,15 @@ void Emitter::emitMultiAssign(const ASTNode &s)
             || (rhs.children.size() == 3 && rhs.children[2]->type == NodeType::STRING_LITERAL))
         && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "sort"
         && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-        && s.returnNames.size() == 2 && !arrays_.at(rhs.children[1]->strValue).is2D
-        && !arrays_.at(rhs.children[1]->strValue).isND
-        && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+        && s.returnNames.size() == 2 && !arrayAt(rhs.children[1]->strValue).is2D
+        && !arrayAt(rhs.children[1]->strValue).isND
+        && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {
-        const std::string &rn0 = s.returnNames[0];  // sorted values
-        const std::string &rn1 = s.returnNames[1];  // 1-based permutation indices
+        const keel::String &rn0 = s.returnNames[0];  // sorted values
+        const keel::String &rn1 = s.returnNames[1];  // 1-based permutation indices
         if (rn0.empty() || rn0 == "~" || rn1.empty() || rn1 == "~")
             unsupported("[s,i]=sort with an ignored (~) output (v1)");
-        const ArrayInfo &xa      = arrays_.at(rhs.children[1]->strValue);
+        const ArrayInfo &xa      = arrayAt(rhs.children[1]->strValue);
         const bool       descend = rhs.children.size() == 3 && rhs.children[2]->strValue == "descend";
         line("{");
         ++indent_;
@@ -197,18 +197,18 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "sort"
         && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
         && s.returnNames.size() == 2
-        && (arrays_.at(rhs.children[1]->strValue).is2D
-            || (arrays_.at(rhs.children[1]->strValue).isND
-                && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-        && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+        && (arrayAt(rhs.children[1]->strValue).is2D
+            || (arrayAt(rhs.children[1]->strValue).isND
+                && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+        && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {
-        const std::string &rn0 = s.returnNames[0];  // sorted values
-        const std::string &rn1 = s.returnNames[1];  // per-column 1-based permutation
+        const keel::String &rn0 = s.returnNames[0];  // sorted values
+        const keel::String &rn1 = s.returnNames[1];  // per-column 1-based permutation
         if (rn0.empty() || rn0 == "~" || rn1.empty() || rn1 == "~")
             unsupported("[s,i]=sort(matrix) with an ignored (~) output (v1)");
-        const ArrayInfo &A       = arrays_.at(rhs.children[1]->strValue);
-        const ArrayInfo &Ms      = arrays_.at(rn0);
-        const ArrayInfo &Mi      = arrays_.at(rn1);
+        const ArrayInfo &A       = arrayAt(rhs.children[1]->strValue);
+        const ArrayInfo &Ms      = arrayAt(rn0);
+        const ArrayInfo &Mi      = arrayAt(rn1);
         const bool       descend = rhs.children.size() == 3 && rhs.children[2]->strValue == "descend";
         line("{");
         ++indent_;
@@ -262,21 +262,21 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
         && (s.returnNames.size() == 2 || s.returnNames.size() == 3)
         // 1-D OR 2-D source (unique flattens column-major); reject only rank >= 3.
-        && !(arrays_.at(rhs.children[1]->strValue).isND
-             && arrays_.at(rhs.children[1]->strValue).ndDims.size() != 2)
-        && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+        && !(arrayAt(rhs.children[1]->strValue).isND
+             && arrayAt(rhs.children[1]->strValue).ndDims.size() != 2)
+        && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {
-        const bool         wantIc = s.returnNames.size() == 3;
-        const std::string &rnU    = s.returnNames[0];  // sorted distinct values
-        const std::string &rnIa   = s.returnNames[1];  // first-occurrence indices (u = x(ia))
-        const std::string  rnIc   = wantIc ? s.returnNames[2] : std::string();  // map (x = u(ic))
+        const bool            wantIc = s.returnNames.size() == 3;
+        const keel::String   &rnU    = s.returnNames[0];  // sorted distinct values
+        const keel::String   &rnIa   = s.returnNames[1];  // first-occurrence indices (u = x(ia))
+        const keel::StringRef rnIc   = wantIc ? s.returnNames[2].as_ref() : keel::StringRef();  // map (x = u(ic))
         if (rnU.empty() || rnU == "~" || rnIa.empty() || rnIa == "~"
             || (wantIc && (rnIc.empty() || rnIc == "~")))
             unsupported("[u,ia,ic]=unique with an ignored (~) output (v1)");
-        const ArrayInfo  &xa  = arrays_.at(rhs.children[1]->strValue);
+        const ArrayInfo  &xa  = arrayAt(rhs.children[1]->strValue);
         // numel: a 2-D source flattens column-major (rows*cols); a 1-D source uses its length.
-        const std::string cnt =
-            (xa.is2D || xa.isND) ? (dimExpr(xa, 0) + " * " + dimExpr(xa, 1)) : xa.lenVar;
+        const keel::String cnt =
+            (xa.is2D || xa.isND) ? (dimExpr(xa, 0) + " * " + dimExpr(xa, 1)) : xa.lenVar.clone();
         line("{");
         ++indent_;
         line("const std::size_t _numkit_n = " + cnt + ";");
@@ -323,20 +323,20 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
         && rhs.children[2]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[2]->strValue)
         && (s.returnNames.size() == 2 || s.returnNames.size() == 3) && !bridge_
-        && !arrays_.at(rhs.children[1]->strValue).is2D && !arrays_.at(rhs.children[1]->strValue).isND
-        && !arrays_.at(rhs.children[2]->strValue).is2D && !arrays_.at(rhs.children[2]->strValue).isND
-        && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
-        && arrays_.at(rhs.children[2]->strValue).dtype == ValueType::DOUBLE
+        && !arrayAt(rhs.children[1]->strValue).is2D && !arrayAt(rhs.children[1]->strValue).isND
+        && !arrayAt(rhs.children[2]->strValue).is2D && !arrayAt(rhs.children[2]->strValue).isND
+        && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+        && arrayAt(rhs.children[2]->strValue).dtype == ValueType::DOUBLE
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {
-        const bool         wantIb = s.returnNames.size() == 3;
-        const std::string &rnC    = s.returnNames[0];  // common values
-        const std::string &rnIa   = s.returnNames[1];  // first index in a
-        const std::string  rnIb   = wantIb ? s.returnNames[2] : std::string();  // first index in b
+        const bool            wantIb = s.returnNames.size() == 3;
+        const keel::String   &rnC    = s.returnNames[0];  // common values
+        const keel::String   &rnIa   = s.returnNames[1];  // first index in a
+        const keel::StringRef rnIb   = wantIb ? s.returnNames[2].as_ref() : keel::StringRef();  // first index in b
         if (rnC.empty() || rnC == "~" || rnIa.empty() || rnIa == "~"
             || (wantIb && (rnIb.empty() || rnIb == "~")))
             unsupported("[c,ia,ib]=intersect with an ignored (~) output (v1)");
-        const ArrayInfo &aa = arrays_.at(rhs.children[1]->strValue);
-        const ArrayInfo &bb = arrays_.at(rhs.children[2]->strValue);
+        const ArrayInfo &aa = arrayAt(rhs.children[1]->strValue);
+        const ArrayInfo &bb = arrayAt(rhs.children[2]->strValue);
         line("{");
         ++indent_;
         line("auto _numkit_cmp = [](double _a, double _b){ return _a < _b || (_b != _b && _a == _a); };");
@@ -386,17 +386,17 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
         && rhs.children[2]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[2]->strValue)
         && s.returnNames.size() == 2 && !bridge_
-        && !arrays_.at(rhs.children[1]->strValue).is2D && !arrays_.at(rhs.children[1]->strValue).isND
-        && !arrays_.at(rhs.children[2]->strValue).is2D && !arrays_.at(rhs.children[2]->strValue).isND
-        && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
-        && arrays_.at(rhs.children[2]->strValue).dtype == ValueType::DOUBLE
+        && !arrayAt(rhs.children[1]->strValue).is2D && !arrayAt(rhs.children[1]->strValue).isND
+        && !arrayAt(rhs.children[2]->strValue).is2D && !arrayAt(rhs.children[2]->strValue).isND
+        && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+        && arrayAt(rhs.children[2]->strValue).dtype == ValueType::DOUBLE
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {
-        const std::string &rnC  = s.returnNames[0];  // a-not-in-b values
-        const std::string &rnIa = s.returnNames[1];  // first index in a
+        const keel::String &rnC  = s.returnNames[0];  // a-not-in-b values
+        const keel::String &rnIa = s.returnNames[1];  // first index in a
         if (rnC.empty() || rnC == "~" || rnIa.empty() || rnIa == "~")
             unsupported("[c,ia]=setdiff with an ignored (~) output (v1)");
-        const ArrayInfo &aa = arrays_.at(rhs.children[1]->strValue);
-        const ArrayInfo &bb = arrays_.at(rhs.children[2]->strValue);
+        const ArrayInfo &aa = arrayAt(rhs.children[1]->strValue);
+        const ArrayInfo &bb = arrayAt(rhs.children[2]->strValue);
         line("{");
         ++indent_;
         line("auto _numkit_cmp = [](double _a, double _b){ return _a < _b || (_b != _b && _a == _a); };");
@@ -443,20 +443,20 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
         && rhs.children[2]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[2]->strValue)
         && (s.returnNames.size() == 2 || s.returnNames.size() == 3) && !bridge_
-        && !arrays_.at(rhs.children[1]->strValue).is2D && !arrays_.at(rhs.children[1]->strValue).isND
-        && !arrays_.at(rhs.children[2]->strValue).is2D && !arrays_.at(rhs.children[2]->strValue).isND
-        && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
-        && arrays_.at(rhs.children[2]->strValue).dtype == ValueType::DOUBLE
+        && !arrayAt(rhs.children[1]->strValue).is2D && !arrayAt(rhs.children[1]->strValue).isND
+        && !arrayAt(rhs.children[2]->strValue).is2D && !arrayAt(rhs.children[2]->strValue).isND
+        && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+        && arrayAt(rhs.children[2]->strValue).dtype == ValueType::DOUBLE
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {
-        const bool         wantIb = s.returnNames.size() == 3;
-        const std::string &rnU    = s.returnNames[0];  // sorted distinct union
-        const std::string &rnIa   = s.returnNames[1];  // a-sourced first-occurrence indices
-        const std::string  rnIb   = wantIb ? s.returnNames[2] : std::string();  // b-sourced indices
+        const bool            wantIb = s.returnNames.size() == 3;
+        const keel::String   &rnU    = s.returnNames[0];  // sorted distinct union
+        const keel::String   &rnIa   = s.returnNames[1];  // a-sourced first-occurrence indices
+        const keel::StringRef rnIb   = wantIb ? s.returnNames[2].as_ref() : keel::StringRef();  // b-sourced indices
         if (rnU.empty() || rnU == "~" || rnIa.empty() || rnIa == "~"
             || (wantIb && (rnIb.empty() || rnIb == "~")))
             unsupported("[u,ia,ib]=union with an ignored (~) output (v1)");
-        const ArrayInfo &aa = arrays_.at(rhs.children[1]->strValue);
-        const ArrayInfo &bb = arrays_.at(rhs.children[2]->strValue);
+        const ArrayInfo &aa = arrayAt(rhs.children[1]->strValue);
+        const ArrayInfo &bb = arrayAt(rhs.children[2]->strValue);
         line("{");
         ++indent_;
         line("std::vector<double> _numkit_cv;");
@@ -512,26 +512,26 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         && rhs.children[0]->type == NodeType::IDENTIFIER && s.returnNames.size() >= 2
         && !types_.has(rhs.children[0]->strValue)  // not a variable (would be indexing)
         && !(ctx_ && ctx_->funcs && ctx_->funcs->has(rhs.children[0]->strValue))) {  // not a user fn
-        const std::string callee = rhs.children[0]->strValue;
-        const std::size_t nout   = s.returnNames.size();
-        std::string       boxedArgs;
-        for (std::size_t i = 1; i < rhs.children.size(); ++i)
+        const keel::String &callee = rhs.children[0]->strValue;
+        const keel::usize   nout   = s.returnNames.size();
+        keel::String        boxedArgs;
+        for (keel::usize i = 1; i < rhs.children.size(); ++i)
             boxedArgs += (i > 1 ? ", " : "") + emitDynamicExpr(*rhs.children[i]);
-        const std::string call = "numkit_rt::call_dyn_multi(\"" + callee + "\", {" + boxedArgs + "}, "
-                                 + std::to_string(nout) + ", _numkit_mo)";
+        const keel::String call = "numkit_rt::call_dyn_multi(\"" + callee + "\", {" + boxedArgs + "}, "
+                                  + toStr(nout) + ", _numkit_mo)";
         open("");  // scope for the extra-outputs array (outputs 1..nout-1)
-        line("numkit_rt::val _numkit_mo[" + std::to_string(nout - 1) + "];");
-        const std::string &t0 = s.returnNames[0];  // output 0 = call_dyn_multi's return
+        line("numkit_rt::val _numkit_mo[" + toStr(nout - 1) + "];");
+        const keel::String &t0 = s.returnNames[0];  // output 0 = call_dyn_multi's return
         if (t0.empty() || t0 == "~") {
             line(call + ";");  // discarded
         } else {
             line(cppIdent(t0) + " = " + call + ";");
             types_.set(t0, {InferredType::dynamic(), ConstVal::unknown()});
         }
-        for (std::size_t k = 1; k < nout; ++k) {  // outputs 1.. = the extras
-            const std::string &tk = s.returnNames[k];
+        for (keel::usize k = 1; k < nout; ++k) {  // outputs 1.. = the extras
+            const keel::String &tk = s.returnNames[k];
             if (tk.empty() || tk == "~") continue;  // discarded (released at block close)
-            line(cppIdent(tk) + " = std::move(_numkit_mo[" + std::to_string(k - 1) + "]);");
+            line(cppIdent(tk) + " = std::move(_numkit_mo[" + toStr(k - 1) + "]);");
             types_.set(tk, {InferredType::dynamic(), ConstVal::unknown()});
         }
         close();
@@ -542,24 +542,24 @@ void Emitter::emitMultiAssign(const ASTNode &s)
     if (rhs.type != NodeType::CALL || rhs.children.empty())
         unsupported("multi-assign RHS must be a function or method call");
 
-    const ASTNode    &callee     = *rhs.children[0];
-    const ASTNode    *def        = nullptr;
-    std::string       calleeName;
-    std::string       mangledBase;
-    bool              isMethodCall = false;
-    InferredType      selfType;
-    std::vector<InferredType> probeArgTypes;
+    const ASTNode             &callee       = *rhs.children[0];
+    const ASTNode             *def          = nullptr;
+    keel::String               calleeName;
+    keel::String               mangledBase;
+    bool                       isMethodCall = false;
+    InferredType               selfType;
+    keel::Array<InferredType>  probeArgTypes;
 
     if (callee.type == NodeType::IDENTIFIER) {
-        calleeName  = callee.strValue;
-        mangledBase = calleeName;
+        calleeName  = callee.strValue.clone();
+        mangledBase = calleeName.clone();
         if (!ctx_ || !ctx_->funcs || types_.has(calleeName) || !ctx_->funcs->has(calleeName))
             unsupported("multi-assign of a non-user-function '" + calleeName + "'");
         def = ctx_->funcs->find(calleeName);
     } else if (callee.type == NodeType::FIELD_ACCESS && !callee.children.empty()) {
-        const std::string &method  = callee.strValue;
-        const ASTNode     &objNode = *callee.children[0];
-        const InferredType objT    = inferExpr(objNode, types_, reg_, classes_).type;
+        const keel::String &method  = callee.strValue;
+        const ASTNode      &objNode = *callee.children[0];
+        const InferredType  objT    = inferExpr(objNode, types_, reg_, classes_).type;
         if (!objT.isObject() || !classes_ || !ctx_)
             unsupported("multi-assign method call on non-object '" + method + "'");
         const ClassInfo *ci = classes_->byId(objT.classId);
@@ -577,13 +577,13 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         unsupported("multi-assign RHS must be a user-function or method call");
     }
 
-    for (std::size_t i = 1; i < rhs.children.size(); ++i)
+    for (keel::usize i = 1; i < rhs.children.size(); ++i)
         probeArgTypes.push_back(inferExpr(*rhs.children[i], types_, reg_, classes_).type);
     if (probeArgTypes.size() != def->paramNames.size())
         unsupported("arity mismatch calling '" + calleeName + "'");
-    const std::vector<InferredType> outs = reg_.applyMulti(calleeName, toArgInfos(probeArgTypes));
+    const keel::Array<InferredType> outs = reg_.applyMulti(calleeName, toArgInfos(probeArgTypes));
 
-    const std::size_t ncallee = def->returnNames.size();
+    const keel::usize ncallee = def->returnNames.size();
     if (s.returnNames.size() > ncallee)
         unsupported("multi-assign requests more outputs than '" + calleeName + "' returns");
 
@@ -592,10 +592,10 @@ void Emitter::emitMultiAssign(const ASTNode &s)
 
     // Protect input array arguments that alias any `std::vector<T>&` out-param so resizing an
     // output mid-call never invalidates a raw `const T*` input pointer (`[s, a] = f(a)`).
-    std::set<std::string>    outRefArrays;
-    std::vector<std::string> aliasDecls;
-    for (std::size_t i = (out0ByValue ? 1 : 0); i < s.returnNames.size(); ++i) {
-        const std::string &rn = s.returnNames[i];
+    keel::HashSet<keel::String> outRefArrays;
+    keel::Array<keel::String>   aliasDecls;
+    for (keel::usize i = (out0ByValue ? 1 : 0); i < s.returnNames.size(); ++i) {
+        const keel::String &rn = s.returnNames[i];
         if (rn.empty() || rn == "~") continue;
         const InferredType ot = i < outs.size() ? outs[i] : InferredType::dynamic();
         if (ot.isStruct() && ot.structLayout) {
@@ -603,28 +603,28 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         } else if ((is2DMatrixType(ot) || (ot.isConcrete() && ot.shape.isNDims())
                     || isBufferArrayType(ot))
                    && isArrayVar(rn)) {
-            outRefArrays.insert(rn);
+            outRefArrays.insert(rn.clone());
         }
     }
     prepareCallInputAliases(rhs, 1, outRefArrays, aliasDecls);
 
-    std::vector<InferredType> argTypes;
-    std::string               argList;
+    keel::Array<InferredType> argTypes;
+    keel::String              argList;
     if (isMethodCall) {
         argTypes.push_back(selfType);
         argList = emitExpr(*callee.children[0]);
     }
-    for (std::size_t i = 1; i < rhs.children.size(); ++i)
+    for (keel::usize i = 1; i < rhs.children.size(); ++i)
         appendCallArg(*rhs.children[i], argTypes, argList);
     callAliasInputs_.clear();
 
-    std::vector<std::string> ignoreDecls;
-    for (std::size_t i = (out0ByValue ? 1 : 0); i < ncallee; ++i) {
-        const bool          requested = i < s.returnNames.size();
-        const std::string   rn = requested ? s.returnNames[i] : std::string();  // unrequested -> ""
-        const InferredType  ot = i < outs.size() ? outs[i] : InferredType::dynamic();
+    keel::Array<keel::String> ignoreDecls;
+    for (keel::usize i = (out0ByValue ? 1 : 0); i < ncallee; ++i) {
+        const bool            requested = i < s.returnNames.size();
+        const keel::StringRef rn        = requested ? s.returnNames[i].as_ref() : keel::StringRef();  // unrequested -> ""
+        const InferredType    ot        = i < outs.size() ? outs[i] : InferredType::dynamic();
         if (!requested || rn.empty() || rn == "~") {
-            appendIgnoreOutArg("_numkit_ignore_" + std::to_string(i), ot, ignoreDecls, argList);
+            appendIgnoreOutArg("_numkit_ignore_" + toStr(i), ot, ignoreDecls, argList);
         } else if (ot.isStruct()) {
             if (!ot.structLayout || ot.structLayout->fields.empty())
                 unsupported("multi-output struct '" + rn + "' has no fields");
@@ -632,7 +632,7 @@ void Emitter::emitMultiAssign(const ASTNode &s)
             appendStructOutArgs("_numkit_fld_" + rn, *ot.structLayout, argList);
         } else if (is2DMatrixType(ot) || (ot.isConcrete() && ot.shape.isNDims())
                    || isBufferArrayType(ot)) {
-            if (!isArrayVar(rn) || !arrays_.at(rn).isLocal)
+            if (!isArrayVar(rn) || !arrayAt(rn).isLocal)
                 unsupported("multi-output array target '" + rn
                             + "' must be a local vector (RawBuffer ABI parameters cannot be rebound)");
             if (!argList.empty()) argList += ", ";
@@ -648,15 +648,15 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         }
     }
 
-    const std::string mangled = mangle(mangledBase, argTypes);
-    if (ctx_->seen.insert(mangled).second)
-        ctx_->pending.push_back({def, argTypes, mangled});
+    const keel::String mangled = mangle(mangledBase, argTypes);
+    if (ctx_->seen.insert(mangled.clone()))
+        ctx_->pending.push_back(CallSite(def, keel::move(argTypes), mangled.clone()));
     // With a by-value output 0, target 0 takes the RETURN (an array LOCAL —
     // std::vector); a ~ slot discards the returned vector.
-    std::string callStmt;
+    keel::String callStmt;
     if (out0ByValue && !s.returnNames.empty()
         && !(s.returnNames[0].empty() || s.returnNames[0] == "~")) {
-        if (!isArrayVar(s.returnNames[0]) || !arrays_.at(s.returnNames[0]).isLocal)
+        if (!isArrayVar(s.returnNames[0]) || !arrayAt(s.returnNames[0]).isLocal)
             unsupported("multi-output array target '" + s.returnNames[0]
                         + "' must be a local vector (RawBuffer ABI parameters cannot be rebound)");
         callStmt = cppIdent(s.returnNames[0]) + " = " + mangled + "(" + argList + ");";
@@ -668,8 +668,8 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         line(callStmt);
     } else {
         open("");  // fresh scope for input-alias snapshots and ~ throwaway locals
-        for (const std::string &d : aliasDecls) line(d);
-        for (const std::string &d : ignoreDecls) line(d);
+        for (const keel::String &d : aliasDecls) line(d);
+        for (const keel::String &d : ignoreDecls) line(d);
         line(callStmt);
         close();
     }

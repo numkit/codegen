@@ -62,7 +62,7 @@ keel::String wave5TmpDir()
     return p;
 }
 
-std::unique_ptr<numkit::ASTNode> parseSrc(const std::string &src)
+numkit::ASTNodePtr parseSrc(const std::string &src)
 {
     numkit::Lexer  lex(src);
     numkit::Parser parser(lex.tokenize());
@@ -183,9 +183,9 @@ TEST(Wave5CodegenSafety, BoundsChecksRejectZeroNegativeNanInfFractionalAndSliceO
     // or simply find `fixedEf.signature` in `fixedEf.source`.
     const auto sigPos = fixedEf.source.find(fixedEf.signature);
     ASSERT_NE(sigPos, std::string::npos);
-    const std::string fixedDef = fixedEf.source.substr(sigPos);
+    const std::string fixedDef = keel::to_std_string(fixedEf.source.substr(sigPos));
 
-    std::string program = ef.source + "\n" + fixedDef + R"CPP(
+    std::string program = keel::to_std_string(ef.source) + "\n" + fixedDef + R"CPP(
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -202,7 +202,7 @@ bool throwsOob(Fn&& fn) {
 
 int main() {
     auto call = [](double mode, double a, double b = 1.0) {
-        return )CPP" + ef.name + R"CPP((mode, a, b);
+        return )CPP" + keel::to_std_string(ef.name) + R"CPP((mode, a, b);
     };
     const double nanv = std::numeric_limits<double>::quiet_NaN();
     const double infv = std::numeric_limits<double>::infinity();
@@ -264,7 +264,7 @@ int main() {
 
     const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_bounds"));
     const auto        cr  = aot::compileToExecutable(program, exe);
-    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
+    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 
@@ -318,12 +318,13 @@ TEST(Wave5CodegenSafety, CallInputOutputArrayAliasingSafeOnRealloc)
     //   s1 = 100, a(1) = 20, a(4) = 80, numel(a) = 8192
     //   st.tot = 100, st.v(1) = 11, st.v(4) = 41, numel(st.v) = 8192
     //   total = 100 + 20 + 80 + 100 + 11 + 41 + 8192 + 8192 = 16736
-    std::string program = ef.source + "\nint main() {\n    const double got = " + ef.name
+    std::string program = keel::to_std_string(ef.source) + "\nint main() {\n    const double got = "
+                        + keel::to_std_string(ef.name)
                         + "(10.0);\n    return (got == 16736.0) ? 0 : 1;\n}\n";
 
     const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_alias"));
     const auto        cr  = aot::compileToExecutable(program, exe);
-    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
+    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 
@@ -366,14 +367,14 @@ TEST(Wave5CodegenSafety, LogicalArrayInterprocAndMultiOutputReturn)
     const EmittedFunction ef = emitProgram(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, table, reg);
 
-    std::string program = ef.source + "\nint main() {\n"
+    std::string program = keel::to_std_string(ef.source) + "\nint main() {\n"
                           "    const double x[4] = {-3.0, 5.0, 0.0, 2.0};\n"
-                          "    const double got = " + ef.name + "(x, 4);\n"
+                          "    const double got = " + keel::to_std_string(ef.name) + "(x, 4);\n"
                           "    return (got == 207.0) ? 0 : 1;\n}\n";
 
     const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_logical_ret"));
     const auto        cr  = aot::compileToExecutable(program, exe);
-    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
+    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 
@@ -428,7 +429,7 @@ TEST(Wave5CodegenSafety, EmptyVectorMinMaxThrowsOutOfRange)
          {"thresh", InferredType::scalar(ValueType::DOUBLE)}},
         table, reg);
 
-    std::string program = ef.source + R"CPP(
+    std::string program = keel::to_std_string(ef.source) + R"CPP(
 #include <stdexcept>
 
 template <typename Fn>
@@ -444,7 +445,7 @@ bool throwsOutOfRange(Fn&& fn) {
 int main() {
     const double x[3] = {2.0, 5.0, 9.0};
     auto call = [&](double mode, double thresh) {
-        return )CPP" + ef.name + R"CPP((mode, x, 3, thresh);
+        return )CPP" + keel::to_std_string(ef.name) + R"CPP((mode, x, 3, thresh);
     };
     // Non-empty filtered vector [5, 9]: min=5, max=9, 10+min=15, 10+max=19 -> sum = 48.
     if (call(0.0, 3.0) != 48.0) return 1;
@@ -460,7 +461,7 @@ int main() {
 
     const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_empty_minmax"));
     const auto        cr  = aot::compileToExecutable(program, exe);
-    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
+    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 
@@ -489,9 +490,9 @@ TEST(Wave5CodegenSafety, CppReservedKeywordsAsParamsLocalsFunctionsAndClasses)
 
     ClassRegistry classes;
     ClassInfo     ci;
-    ci.name   = "register";
-    ci.fields = {{"virtual", InferredType::scalar(ValueType::DOUBLE), nullptr},
-                 {"explicit", InferredType::scalar(ValueType::DOUBLE), nullptr}};
+    ci.name = keel::String::from("register");
+    ci.fields.push_back(ClassField("virtual", InferredType::scalar(ValueType::DOUBLE), nullptr));
+    ci.fields.push_back(ClassField("explicit", InferredType::scalar(ValueType::DOUBLE), nullptr));
     classes.add(ci);
 
     const EmittedFunction ef = emitFunction(
@@ -505,7 +506,7 @@ TEST(Wave5CodegenSafety, CppReservedKeywordsAsParamsLocalsFunctionsAndClasses)
 
     // class = 10, default = 2, and = 5:
     //   new = [12, 14, 16], sum(new) = 42, delete = 47, private = 14 -> operator = 61
-    std::string program = ef.source + R"CPP(
+    std::string program = keel::to_std_string(ef.source) + R"CPP(
 int main() {
     numkit_kw_register obj{};
     obj._numkit_kw_virtual = 3.0;
@@ -518,7 +519,7 @@ int main() {
 
     const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_keywords"));
     const auto        cr  = aot::compileToExecutable(program, exe);
-    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
+    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 
@@ -558,10 +559,10 @@ TEST(Wave5CodegenSafety, RankUnknownMatrixBranchMergeRefusesWithoutBridgeAndRuns
     // With bridge: lowers via Dynamic tier and produces exact 1x3 [2,2,2] and 1x5 [8,8,8,8,8].
     BridgeOptions bridgeOpts;
     bridgeOpts.enabled       = true;
-    bridgeOpts.runtimeHeader = "numkit_codegen_rt.h";
+    bridgeOpts.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction ef = emitFunction(*fn, params, reg, nullptr, bridgeOpts);
 
-    std::string program = ef.source + R"CPP(
+    std::string program = keel::to_std_string(ef.source) + R"CPP(
 int main() {
     const long long live0 = numkit_debug_live_handles();
     numkit_val r1 = branch_sum(1.0);
@@ -587,11 +588,11 @@ int main() {
 
     const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_rank_unknown_bridged"));
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto cr = aot::compileToExecutable(program, exe, opts);
-    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
+    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 
@@ -622,7 +623,7 @@ TEST(Wave5CodegenSafety, UnconvergedLoopFixpointWidensToDynamicInsteadOfMiscompi
     env.set("seed", {InferredType::scalar(ValueType::DOUBLE), ConstVal::unknown()});
     inferStmt(*fn->children[0], env, reg);
     ASSERT_TRUE(env.has("v17"));
-    EXPECT_TRUE(env.get("v17").type.isDynamic()) << "actual type: " << env.get("v17").type.str();
+    EXPECT_TRUE(env.get("v17").type.isDynamic()) << "actual type: " << env.get("v17").type.str().c_str();
 
     const std::vector<ParamSpec> params = {{"seed", InferredType::scalar(ValueType::DOUBLE)}};
 
@@ -640,10 +641,10 @@ TEST(Wave5CodegenSafety, UnconvergedLoopFixpointWidensToDynamicInsteadOfMiscompi
 
     BridgeOptions bridgeOpts;
     bridgeOpts.enabled       = true;
-    bridgeOpts.runtimeHeader = "numkit_codegen_rt.h";
+    bridgeOpts.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction ef = emitFunction(*fn, params, reg, nullptr, bridgeOpts);
 
-    std::string program = ef.source + R"CPP(
+    std::string program = keel::to_std_string(ef.source) + R"CPP(
 int main() {
     const long long live0 = numkit_debug_live_handles();
     const double got = shift18(5.0);
@@ -654,11 +655,11 @@ int main() {
 
     const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_loop_widen"));
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto cr = aot::compileToExecutable(program, exe, opts);
-    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\n" << program;
+    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 
@@ -670,7 +671,8 @@ TEST(Wave5CodegenSafety, AotShellQuotingWaitStatusAndDefineValidation)
 
     {
         aot::CompileOptions badOpts;
-        badOpts.defines = {"SAFE=1", "INJECT=1\necho pwned"};
+        badOpts.defines.push_back(keel::String::from("SAFE=1"));
+        badOpts.defines.push_back(keel::String::from("INJECT=1\necho pwned"));
         const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_never_built"));
         const auto        r   = aot::compileToExecutable("int main(){return 0;}\n", exe, badOpts);
         EXPECT_EQ(r.status, aot::CompileStatus::CompileError);
@@ -678,7 +680,7 @@ TEST(Wave5CodegenSafety, AotShellQuotingWaitStatusAndDefineValidation)
     }
     {
         aot::CompileOptions badOpts;
-        badOpts.defines = {"123BAD"};
+        badOpts.defines.push_back(keel::String::from("123BAD"));
         const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_never_built2"));
         const auto        r   = aot::compileToExecutable("int main(){return 0;}\n", exe, badOpts);
         EXPECT_EQ(r.status, aot::CompileStatus::CompileError);
@@ -689,9 +691,9 @@ TEST(Wave5CodegenSafety, AotShellQuotingWaitStatusAndDefineValidation)
     const std::string exe = keel::to_std_string(keel::path_join(trickyDir, "ret42 bin"));
 
     aot::CompileOptions okOpts;
-    okOpts.defines = {"RET_CODE=42"};
+    okOpts.defines.push_back(keel::String::from("RET_CODE=42"));
     const auto cr = aot::compileToExecutable(
         "int main() { return RET_CODE; }\n", exe, okOpts);
-    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log << "\ncmd: " << cr.command;
+    ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\ncmd: " << cr.command.c_str();
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 42);
 }

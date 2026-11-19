@@ -5,15 +5,12 @@
 #include <numkit/sys/toolchain.hpp>
 #include <numkit/sys/env.hpp>
 
+#include <keel/format.h>
 #include <keel/fs.h>
-#include <keel/interop_std.h>
+#include <keel/hash_set.h>
 
 #include <cstdlib>
 #include <cstdio>
-#include <fstream>
-#include <set>
-#include <sstream>
-#include <string>
 
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #include <sys/wait.h>
@@ -23,30 +20,32 @@ namespace numkit::codegen::aot {
 
 namespace {
 
-std::string toNative(std::string s)
+keel::String toNative(keel::StringRef s)
 {
+    keel::String out = keel::String::from(s);
 #ifdef _WIN32
-    for (char &c : s)
-        if (c == '/') c = '\\';
+    for (keel::usize i = 0; i < out.size(); ++i)
+        if (out[i] == '/') out[i] = '\\';
 #endif
-    return s;
-}
-
-std::string shellQuotePosix(const std::string &s)
-{
-    std::string out = "'";
-    for (char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out += c;
-    }
-    out += "'";
     return out;
 }
 
-bool isValidDefine(const std::string &d)
+keel::String shellQuotePosix(keel::StringRef s)
+{
+    keel::String out = keel::String::from("'");
+    for (char c : s) {
+        if (c == '\'') out.append("'\\''");
+        else out.push_back(c);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+bool isValidDefine(keel::StringRef d)
 {
     if (d.empty()) return false;
-    for (unsigned char c : d) {
+    for (char ch : d) {
+        const unsigned char c = static_cast<unsigned char>(ch);
         if (c < 0x20 || c == 0x7f) return false;
 #ifdef _WIN32
         if (c == '"' || c == '&' || c == '|' || c == '<' || c == '>' || c == '^' || c == '%')
@@ -66,10 +65,10 @@ int decodeWaitStatus(int st)
     return st;
 }
 
-bool isPosixSharedLibraryPath(const std::string &p)
+bool isPosixSharedLibraryPath(keel::StringRef p)
 {
     if (p.empty() || p.back() == '/' || p.back() == '\\') return false;
-    if (p.find('/') == std::string::npos && p.find('\\') == std::string::npos) return false;
+    if (p.find('/') == keel::kInvalidIndex && p.find('\\') == keel::kInvalidIndex) return false;
     const keel::StringRef fn = keel::path_basename(p);
     if (fn.ends_with(".so")) return true;
     if (fn.contains(".so.")) return true;
@@ -77,46 +76,40 @@ bool isPosixSharedLibraryPath(const std::string &p)
     return false;
 }
 
-bool writeFile(const std::string &path, const std::string &content)
+bool writeFile(keel::StringRef path, keel::StringRef content)
 {
-    std::ofstream os(path, std::ios::binary);
-    if (!os) return false;
-    os.write(content.data(), static_cast<std::streamsize>(content.size()));
-    return static_cast<bool>(os);
+    return keel::fs_write_text(path, content).is_ok();
 }
 
-std::string readFile(const std::string &path)
+keel::String readFile(keel::StringRef path)
 {
-    std::ifstream is(path, std::ios::binary);
-    if (!is) return {};
-    std::ostringstream ss;
-    ss << is.rdbuf();
-    return ss.str();
+    auto res = keel::fs_read_text(path);
+    if (res.is_err()) return {};
+    return keel::move(res.value());
 }
 
-bool fileExists(const std::string &path)
+bool fileExists(keel::StringRef path)
 {
-    std::ifstream is(path, std::ios::binary);
-    return static_cast<bool>(is);
+    return keel::fs_is_file(path);
 }
 
 // Quote a compiler specification that may carry a trailing subcommand such as
 // `zig c++` or `C:\Users\...\.numkit\toolchain\zig\zig.exe c++`.
-std::string quoteCompilerCmd(const std::string &cxx, bool winQuote)
+keel::String quoteCompilerCmd(keel::StringRef cxx, bool winQuote)
 {
-    std::string exe = cxx;
-    std::string subcmd;
-    if (exe.size() > 4 && exe.compare(exe.size() - 4, 4, " c++") == 0) {
+    keel::StringRef exe = cxx;
+    keel::StringRef subcmd;
+    if (exe.size() > 4 && exe.ends_with(" c++")) {
         subcmd = " c++";
-        exe.resize(exe.size() - 4);
-    } else if (exe.size() > 3 && exe.compare(exe.size() - 3, 3, " cc") == 0) {
+        exe    = exe.substr(0, exe.size() - 4);
+    } else if (exe.size() > 3 && exe.ends_with(" cc")) {
         subcmd = " cc";
-        exe.resize(exe.size() - 3);
+        exe    = exe.substr(0, exe.size() - 3);
     }
     if (winQuote) {
-        return "\"" + toNative(exe) + "\"" + subcmd;
+        return keel::format("\"{}\"{}", toNative(exe), subcmd);
     }
-    return shellQuotePosix(exe) + subcmd;
+    return keel::format("{}{}", shellQuotePosix(exe), subcmd);
 }
 
 // The C++ compiler used at runtime:
@@ -124,38 +117,38 @@ std::string quoteCompilerCmd(const std::string &cxx, bool winQuote)
 //   2. NUMKIT_USE_ZIG=1 -> portable/system `zig c++` via numkit::sys::findZig()
 //   3. Build-time compiler (NUMKIT_CODEGEN_AOT_CXX) when still available on disk
 //   4. Runtime toolchain discovery (`~/.numkit/toolchain/zig`, clang++, g++)
-std::string resolveCxx()
+keel::String resolveCxx()
 {
     keel::String env = sys::envGet("NUMKIT_CXX");
     if (!env.empty())
-        return keel::to_std_string(env);
+        return env;
 
     if (sys::envGet("NUMKIT_USE_ZIG") == "1") {
         auto zig = sys::findZig();
         if (zig.found)
-            return keel::to_std_string(zig.path) + " c++";
+            return keel::format("{} c++", zig.path);
     }
 
     if (NUMKIT_CODEGEN_AOT_AVAILABLE != 0) {
         if (NUMKIT_CODEGEN_AOT_IS_MSVC != 0) {
             if (fileExists(NUMKIT_CODEGEN_AOT_VCVARS))
-                return NUMKIT_CODEGEN_AOT_CXX;
-        } else if (std::string(NUMKIT_CODEGEN_AOT_CXX).size() > 0) {
-            return NUMKIT_CODEGEN_AOT_CXX;
+                return keel::String::from(NUMKIT_CODEGEN_AOT_CXX);
+        } else if (!keel::StringRef(NUMKIT_CODEGEN_AOT_CXX).empty()) {
+            return keel::String::from(NUMKIT_CODEGEN_AOT_CXX);
         }
     }
 
     auto discovered = sys::findCxxCompiler();
     if (discovered.found && discovered.name != "msvc") {
         if (!discovered.extraArgs.empty())
-            return keel::to_std_string(discovered.path) + " " + keel::to_std_string(discovered.extraArgs);
-        return keel::to_std_string(discovered.path);
+            return keel::format("{} {}", discovered.path, discovered.extraArgs);
+        return keel::move(discovered.path);
     }
     return {};
 }
 
 // True when the build-time compiler is MSVC AND we are using that exact compiler.
-bool useMsvcVcvars(const std::string &cxx)
+bool useMsvcVcvars(keel::StringRef cxx)
 {
     return NUMKIT_CODEGEN_AOT_IS_MSVC != 0
         && cxx == NUMKIT_CODEGEN_AOT_CXX
@@ -168,11 +161,11 @@ bool available() { return !resolveCxx().empty(); }
 
 namespace {
 
-std::string findStaticLibInRoots(const std::vector<std::string> &roots,
-                                 const std::string &baseName)
+keel::String findStaticLibInRoots(keel::ArrayRef<keel::String> roots,
+                                  keel::StringRef baseName)
 {
-    const std::string winName   = baseName + ".lib";
-    const std::string posixName = "lib" + baseName + ".a";
+    const keel::String winName   = keel::format("{}.lib", baseName);
+    const keel::String posixName = keel::format("lib{}.a", baseName);
 
     for (const auto &root : roots) {
         if (root.empty() || !keel::fs_exists(root)) continue;
@@ -184,13 +177,13 @@ std::string findStaticLibInRoots(const std::vector<std::string> &roots,
         };
         for (const auto &p : directCandidates) {
             if (keel::fs_is_file(p))
-                return keel::to_std_string(p);
+                return p.clone();
         }
-        std::string match;
+        keel::String match;
         (void)keel::fs_walk_dir(root, [&](const keel::DirEntry &entry) -> bool {
             if (!entry.is_file) return true;
             if (entry.name == winName || entry.name == posixName) {
-                match = keel::to_std_string(entry.full_path);
+                match = keel::String::from(entry.full_path);
                 return false;
             }
             return true;
@@ -227,7 +220,7 @@ CompileOptions defaultBridgeCompileOptions()
     };
     for (const auto &b : bridgeCandidates) {
         if (!b.empty() && keel::fs_exists(keel::path_join(b, "numkit_codegen_rt.h"))) {
-            opts.includeDirs.push_back(keel::to_std_string(b));
+            opts.includeDirs.push_back(b.clone());
             break;
         }
     }
@@ -253,7 +246,7 @@ CompileOptions defaultBridgeCompileOptions()
     };
     for (const auto &o : opsCandidates) {
         if (!o.empty() && keel::fs_exists(keel::path_join(o, "numkit", "ops", "kernels.hpp"))) {
-            opts.includeDirs.push_back(keel::to_std_string(o));
+            opts.includeDirs.push_back(o.clone());
             break;
         }
     }
@@ -271,30 +264,30 @@ CompileOptions defaultBridgeCompileOptions()
     };
     for (const auto &k : keelCandidates) {
         if (!k.empty() && keel::fs_exists(keel::path_join(k, "keel", "core.h"))) {
-            opts.includeDirs.push_back(keel::to_std_string(k));
+            opts.includeDirs.push_back(k.clone());
             break;
         }
     }
 
     // 2. Locate static runtime libraries
-    std::vector<std::string> searchRoots;
+    keel::Array<keel::String> searchRoots;
 #ifdef NUMKIT_CODEGEN_BUILD_DIR
     if (!keel::StringRef(NUMKIT_CODEGEN_BUILD_DIR).empty()) {
         const keel::StringRef bdir(NUMKIT_CODEGEN_BUILD_DIR);
-        searchRoots.push_back(keel::to_std_string(bdir));
+        searchRoots.push_back(keel::String::from(bdir));
         const keel::StringRef bparent = keel::path_dirname(bdir);
         if (bparent != "." && bparent != bdir && keel::path_basename(bparent) == "modules") {
-            searchRoots.push_back(keel::to_std_string(keel::path_dirname(bparent)));
+            searchRoots.push_back(keel::String::from(keel::path_dirname(bparent)));
         }
     }
 #endif
 #ifdef NUMKIT_CODEGEN_PREBUILT_DIR
     if (!keel::StringRef(NUMKIT_CODEGEN_PREBUILT_DIR).empty()) {
-        searchRoots.push_back(NUMKIT_CODEGEN_PREBUILT_DIR);
+        searchRoots.push_back(keel::String::from(NUMKIT_CODEGEN_PREBUILT_DIR));
     }
 #endif
-    searchRoots.push_back(keel::to_std_string(keel::path_join(prefix, "src", "codegen", "build")));
-    searchRoots.push_back(keel::to_std_string(keel::path_join(prefix, "src", "numkit", "build")));
+    searchRoots.push_back(keel::path_join(prefix, "src", "codegen", "build"));
+    searchRoots.push_back(keel::path_join(prefix, "src", "numkit", "build"));
 
     const char *requiredLibs[] = {
         "numkit_codegen_core",
@@ -310,14 +303,14 @@ CompileOptions defaultBridgeCompileOptions()
         "hwy_contrib"
     };
     for (const char *libName : requiredLibs) {
-        std::string found = findStaticLibInRoots(searchRoots, libName);
+        keel::String found = findStaticLibInRoots(searchRoots, libName);
         if (!found.empty()) {
-            opts.linkLibs.push_back(found);
+            opts.linkLibs.push_back(keel::move(found));
         }
     }
 #ifdef _WIN32
-    opts.linkLibs.push_back("user32.lib");
-    opts.linkLibs.push_back("gdi32.lib");
+    opts.linkLibs.push_back(keel::String::from("user32.lib"));
+    opts.linkLibs.push_back(keel::String::from("gdi32.lib"));
 #endif
     return opts;
 }
@@ -327,91 +320,100 @@ namespace {
 // Shared compile core for the executable and shared-library forms; the
 // only difference is the output kind (an extra /LD for MSVC, -shared
 // -fPIC otherwise).
-CompileResult compileImpl(const std::string &cppSource, const std::string &outPath,
+CompileResult compileImpl(keel::StringRef cppSource, keel::StringRef outPath,
                           bool sharedLib, const CompileOptions &opts)
 {
     CompileResult r;
-    const std::string cxx = resolveCxx();
+    const keel::String cxx = resolveCxx();
     if (cxx.empty()) {
         r.status = CompileStatus::Unavailable;
         return r;
     }
 
-    const std::string src = outPath + ".cpp";
-    const std::string log = outPath + ".log";
+    const keel::String src = keel::format("{}.cpp", outPath);
+    const keel::String log = keel::format("{}.log", outPath);
     for (const auto &d : opts.defines) {
         if (!isValidDefine(d)) {
             r.status = CompileStatus::CompileError;
-            r.log    = "aot: invalid preprocessor define: " + d;
+            r.log    = keel::format("aot: invalid preprocessor define: {}", d);
             return r;
         }
     }
     if (!writeFile(src, cppSource)) {
         r.status = CompileStatus::CompileError;
-        r.log    = "aot: failed to write source file " + src;
+        r.log    = keel::format("aot: failed to write source file {}", src);
         return r;
     }
 
-    const bool  isMsvc = useMsvcVcvars(cxx);
-    std::string cmd;
+    const bool   isMsvc = useMsvcVcvars(cxx);
+    keel::String cmd;
 
 #ifdef _WIN32
     // A .bat carries the (optional) vcvars call + compile, so the test
     // process needs no developer-prompt environment and we dodge cmd's
     // nested-quote hazards. Redirect the whole script to the log file.
-    const std::string bat = outPath + ".build.bat";
-    std::string       b   = "@echo off\r\n";
+    const keel::String bat = keel::format("{}.build.bat", outPath);
+    keel::String       b   = keel::String::from("@echo off\r\n");
     if (isMsvc) {
-        std::string inc, def, libs;
-        for (const auto &d : opts.includeDirs) inc += " /I\"" + toNative(d) + "\"";
-        for (const auto &d : opts.defines) def += " /D" + d;
-        for (const auto &l : opts.linkLibs) libs += " \"" + toNative(l) + "\"";
-        b += "call \"" + toNative(NUMKIT_CODEGEN_AOT_VCVARS) + "\" >nul 2>&1\r\n";
-        b += std::string("cl /nologo /O2 /EHsc /MD /std:c++20 ") + (sharedLib ? "/LD " : "") + inc
-             + def + " \"" + toNative(src) + "\" /Fe:\"" + toNative(outPath) + "\" /Fo:\""
-             + toNative(outPath) + ".obj\"" + (libs.empty() ? "" : " /link" + libs) + "\r\n";
+        keel::String inc, def, libs;
+        for (const auto &d : opts.includeDirs) keel::format_into(inc, " /I\"{}\"", toNative(d));
+        for (const auto &d : opts.defines) keel::format_into(def, " /D{}", d);
+        for (const auto &l : opts.linkLibs) keel::format_into(libs, " \"{}\"", toNative(l));
+        keel::format_into(b, "call \"{}\" >nul 2>&1\r\n", toNative(NUMKIT_CODEGEN_AOT_VCVARS));
+        keel::format_into(b, "cl /nologo /O2 /EHsc /MD /std:c++20 {}{}{} \"{}\" /Fe:\"{}\" /Fo:\"{}.obj\"",
+                          sharedLib ? "/LD " : "", inc, def, toNative(src), toNative(outPath),
+                          toNative(outPath));
+        if (!libs.empty()) keel::format_into(b, " /link{}", libs);
+        b.append("\r\n");
     } else {
-        std::string inc, def, libs;
-        for (const auto &d : opts.includeDirs) inc += " -I\"" + toNative(d) + "\"";
-        for (const auto &d : opts.defines) def += " -D" + d;
-        for (const auto &l : opts.linkLibs) libs += " \"" + toNative(l) + "\"";
-        b += quoteCompilerCmd(cxx, /*winQuote=*/true) + " -O2 -std=c++20 "
-             + (sharedLib ? "-shared -fPIC " : "") + inc + def + " \"" + toNative(src) + "\" -o \""
-             + toNative(outPath) + "\"" + libs + "\r\n";
+        keel::String inc, def, libs;
+        for (const auto &d : opts.includeDirs) keel::format_into(inc, " -I\"{}\"", toNative(d));
+        for (const auto &d : opts.defines) keel::format_into(def, " -D{}", d);
+        for (const auto &l : opts.linkLibs) keel::format_into(libs, " \"{}\"", toNative(l));
+        keel::format_into(b, "{} -O2 -std=c++20 {}{}{} \"{}\" -o \"{}\"{}\r\n",
+                          quoteCompilerCmd(cxx, /*winQuote=*/true),
+                          sharedLib ? "-shared -fPIC " : "", inc, def, toNative(src),
+                          toNative(outPath), libs);
     }
-    b += "exit /b %ERRORLEVEL%\r\n";
+    b.append("exit /b %ERRORLEVEL%\r\n");
     if (!writeFile(bat, b)) {
         r.status = CompileStatus::CompileError;
-        r.log    = "aot: failed to write build script " + bat;
+        r.log    = keel::format("aot: failed to write build script {}", bat);
         return r;
     }
     // `cmd /c` (what std::system uses) strips the first and last quote of
     // the whole line, which would mangle a command that itself begins and
     // ends with a quoted path. Wrap the entire command in one extra pair
     // so the inner quoting survives.
-    cmd = "\"\"" + toNative(bat) + "\" > \"" + toNative(log) + "\" 2>&1\"";
+    cmd = keel::format("\"\"{}\" > \"{}\" 2>&1\"", toNative(bat), toNative(log));
 #else
     (void)isMsvc;
-    std::string inc, def, libs;
-    for (const auto &d : opts.includeDirs) inc += " -I" + shellQuotePosix(d);
-    for (const auto &d : opts.defines) def += " " + shellQuotePosix("-D" + d);
-    std::set<std::string> rpaths;
+    keel::String inc, def, libs;
+    for (const auto &d : opts.includeDirs) keel::format_into(inc, " -I{}", shellQuotePosix(d));
+    for (const auto &d : opts.defines) {
+        const keel::String defFlag = keel::format("-D{}", d);
+        keel::format_into(def, " {}", shellQuotePosix(defFlag));
+    }
+    keel::HashSet<keel::String> rpaths;
     for (const auto &l : opts.linkLibs) {
-        libs += " " + shellQuotePosix(l);
+        keel::format_into(libs, " {}", shellQuotePosix(l));
 #  ifndef __EMSCRIPTEN__
         if (isPosixSharedLibraryPath(l)) {
-            const std::string dir = keel::to_std_string(keel::path_dirname(l));
-            if (!dir.empty() && rpaths.insert(dir).second)
-                libs += " " + shellQuotePosix("-Wl,-rpath," + dir);
+            const keel::StringRef dir = keel::path_dirname(l);
+            if (!dir.empty() && rpaths.insert(keel::String::from(dir))) {
+                const keel::String rpathFlag = keel::format("-Wl,-rpath,{}", dir);
+                keel::format_into(libs, " {}", shellQuotePosix(rpathFlag));
+            }
         }
 #  endif
     }
-    cmd = quoteCompilerCmd(cxx, /*winQuote=*/false) + " -O2 -std=c++20 "
-          + (sharedLib ? "-shared -fPIC " : "") + inc + def + " " + shellQuotePosix(src)
-          + " -o " + shellQuotePosix(outPath) + libs + " > " + shellQuotePosix(log) + " 2>&1";
+    cmd = keel::format("{} -O2 -std=c++20 {}{}{} {} -o {}{} > {} 2>&1",
+                       quoteCompilerCmd(cxx, /*winQuote=*/false),
+                       sharedLib ? "-shared -fPIC " : "", inc, def, shellQuotePosix(src),
+                       shellQuotePosix(outPath), libs, shellQuotePosix(log));
 #endif
 
-    r.command    = cmd;
+    r.command    = cmd.clone();
     const int rc = decodeWaitStatus(std::system(cmd.c_str()));
     r.log        = readFile(log);
     r.status = (rc == 0 && fileExists(outPath)) ? CompileStatus::Ok
@@ -421,41 +423,41 @@ CompileResult compileImpl(const std::string &cppSource, const std::string &outPa
 
 } // namespace
 
-CompileResult compileToExecutable(const std::string &cppSource, const std::string &exePath,
+CompileResult compileToExecutable(keel::StringRef cppSource, keel::StringRef exePath,
                                   const CompileOptions &opts)
 {
     return compileImpl(cppSource, exePath, /*sharedLib=*/false, opts);
 }
 
-CompileResult compileToSharedLibrary(const std::string &cppSource, const std::string &libPath,
+CompileResult compileToSharedLibrary(keel::StringRef cppSource, keel::StringRef libPath,
                                       const CompileOptions &opts)
 {
     return compileImpl(cppSource, libPath, /*sharedLib=*/true, opts);
 }
 
-RunResult runExecutable(const std::string &exePath)
+RunResult runExecutable(keel::StringRef exePath)
 {
     RunResult r;
 #ifdef __EMSCRIPTEN__
     (void)exePath;
-    r.log = "aot: runExecutable is not available under Emscripten — a native "
-            "process cannot be spawned from a WASM module. Use the desktop IDE "
-            "or the native `nk` CLI for compile-and-run.";
+    r.log = keel::String::from("aot: runExecutable is not available under Emscripten — a native "
+                               "process cannot be spawned from a WASM module. Use the desktop IDE "
+                               "or the native `nk` CLI for compile-and-run.");
     return r;
 #else
     if (exePath.empty() || !fileExists(exePath)) {
-        r.log = "aot: executable not found: " + exePath;
+        r.log = keel::format("aot: executable not found: {}", exePath);
         return r;
     }
     // Capture combined stdout+stderr via a pipe. popen returns the child's
     // stdout; `2>&1` merges stderr into that stream. Quote the exe path on
     // Windows (cmd /c strips the outer quotes, so wrap once more — same
     // trick as compileImpl).
-    std::string cmd;
+    keel::String cmd;
 #  ifdef _WIN32
-    cmd = "\"\"" + toNative(exePath) + "\" 2>&1\"";
+    cmd = keel::format("\"\"{}\" 2>&1\"", toNative(exePath));
 #  else
-    cmd = shellQuotePosix(exePath) + " 2>&1";
+    cmd = keel::format("{} 2>&1", shellQuotePosix(exePath));
 #  endif
 #  ifdef _WIN32
     FILE *pipe = _popen(cmd.c_str(), "rt");
@@ -463,19 +465,19 @@ RunResult runExecutable(const std::string &exePath)
     FILE *pipe = ::popen(cmd.c_str(), "r");
 #  endif
     if (!pipe) {
-        r.log = "aot: failed to launch executable: " + exePath;
+        r.log = keel::format("aot: failed to launch executable: {}", exePath);
         return r;
     }
-    std::ostringstream ss;
+    keel::String ss;
     char buf[4096];
     while (std::fgets(buf, sizeof(buf), pipe))
-        ss << buf;
+        ss.append(buf);
 #  ifdef _WIN32
     r.exitCode = _pclose(pipe);
 #  else
     r.exitCode = decodeWaitStatus(::pclose(pipe));
 #  endif
-    r.log = ss.str();
+    r.log = keel::move(ss);
     return r;
 #endif
 }

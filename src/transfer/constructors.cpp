@@ -24,10 +24,10 @@ namespace {
 //   (n)       -> n x n           (KnownDims iff n is a known constant)
 //   (m, n)    -> m x n           (KnownDims iff both are known constants)
 //   (>=3 dims)-> Unknown shape   (N-D beyond the 2-D MVP)
-InferredType zerosOnesTransfer(const std::vector<ArgInfo> &args)
+InferredType zerosOnesTransfer(keel::ArrayRef<ArgInfo> args)
 {
     Shape sh;
-    std::size_t a = 0;
+    keel::usize a = 0;
     if (args.empty()) {
         sh = Shape::scalar();
     } else if (args.size() == 1) {
@@ -39,12 +39,12 @@ InferredType zerosOnesTransfer(const std::vector<ArgInfo> &args)
         // unknown dim), and it lets the emitter materialise runtime dim vars from the
         // call args (a runtime-dim local, incl. a RUNTIME-DIM 2-D matrix). ndShape
         // canonicalises a fully-known rank-2 back to KnownDims (the const-dim path).
-        std::vector<std::size_t> dimsv;
+        keel::Array<keel::usize> dimsv;
         for (const auto &arg : args) {
-            std::size_t d = 0;
+            keel::usize d = 0;
             dimsv.push_back(arg.constant.asDim(d) ? d : 0);
         }
-        sh = Shape::ndShape(std::move(dimsv));
+        sh = Shape::ndShape(dimsv);
     }
     return InferredType::concrete(ValueType::DOUBLE, sh);
 }
@@ -53,10 +53,10 @@ InferredType zerosOnesTransfer(const std::vector<ArgInfo> &args)
 //   n a known constant -> 1 x n ;  2-arg form -> 1 x 100 (MATLAB default);
 //   runtime n -> Unknown shape (still double; "row, unknown length" is a
 //   deferred shape refinement).
-InferredType linspaceTransfer(const std::vector<ArgInfo> &args)
+InferredType linspaceTransfer(keel::ArrayRef<ArgInfo> args)
 {
     Shape       sh;
-    std::size_t n = 0;
+    keel::usize n = 0;
     if (args.size() >= 3 && args[2].constant.asDim(n))
         sh = Shape::dims(1, n);
     else if (args.size() == 2)
@@ -69,10 +69,10 @@ InferredType linspaceTransfer(const std::vector<ArgInfo> &args)
 // logspace(a, b [, n]) -> 1 x N double row of decade-spaced points (10^linspace).
 // Same shape rule as linspace EXCEPT the 2-arg default is n=50 (MATLAB / nk
 // logspace), not 100. n a known constant -> 1 x n; runtime n -> RowVector shape.
-InferredType logspaceTransfer(const std::vector<ArgInfo> &args)
+InferredType logspaceTransfer(keel::ArrayRef<ArgInfo> args)
 {
     Shape       sh;
-    std::size_t n = 0;
+    keel::usize n = 0;
     if (args.size() >= 3 && args[2].constant.asDim(n))
         sh = Shape::dims(1, n);
     else if (args.size() == 2)
@@ -87,9 +87,9 @@ InferredType logspaceTransfer(const std::vector<ArgInfo> &args)
 // constant dim gives KnownDims; a RUNTIME dim gives an NDims rank-2 (a runtime-dim 2-D
 // the emitter materialises as an ndRuntimeLocal, like zeros(m,n) runtime). >=3 dims ->
 // Unknown.
-InferredType eyeTransfer(const std::vector<ArgInfo> &args)
+InferredType eyeTransfer(keel::ArrayRef<ArgInfo> args)
 {
-    std::size_t a = 0;
+    keel::usize a = 0;
     if (args.empty()) return InferredType::concrete(ValueType::DOUBLE, Shape::scalar());
     if (args.size() == 1)  // eye(n): n x n -- both dims are the same n
         return args[0].constant.asDim(a)
@@ -98,12 +98,12 @@ InferredType eyeTransfer(const std::vector<ArgInfo> &args)
     if (args.size() == 2) {
         // const dim -> its value; runtime dim -> 0. ndShape canonicalises a fully-known
         // rank-2 back to KnownDims (the const path) and keeps a runtime one as NDims.
-        std::vector<std::size_t> dimsv;
+        keel::Array<keel::usize> dimsv;
         for (const auto &arg : args) {
-            std::size_t d = 0;
+            keel::usize d = 0;
             dimsv.push_back(arg.constant.asDim(d) ? d : 0);
         }
-        return InferredType::concrete(ValueType::DOUBLE, Shape::ndShape(std::move(dimsv)));
+        return InferredType::concrete(ValueType::DOUBLE, Shape::ndShape(dimsv));
     }
     return InferredType::concrete(ValueType::DOUBLE, Shape::unknown());
 }
@@ -112,7 +112,7 @@ InferredType eyeTransfer(const std::vector<ArgInfo> &args)
 // data, so numel must match). v1: m,n known constants -> KnownDims(m, n) of x's
 // dtype; a runtime dim -> Dynamic (deferred). The reshape(x,[m n]) vector-size form
 // and the []-placeholder form are deferred.
-InferredType reshapeTransfer(const std::vector<ArgInfo> &args)
+InferredType reshapeTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() < 3 || !args[0].type.isConcrete()) return InferredType::dynamic();
     // reshape(x, d1, ..., dN) with N >= 3 dims -> a RANK-N array (same column-major flat data).
@@ -121,15 +121,15 @@ InferredType reshapeTransfer(const std::vector<ArgInfo> &args)
     if (args.size() >= 4) {
         if (args[0].type.shape.isScalar()) return InferredType::dynamic();
         return InferredType::concrete(
-            args[0].type.dtype, Shape::ndShape(std::vector<std::size_t>(args.size() - 1, 0)));
+            args[0].type.dtype, Shape::ndShape(keel::Array<keel::usize>(args.size() - 1, keel::usize{0})));
     }
-    std::size_t m = 0, n = 0;
+    keel::usize m = 0, n = 0;
     if (args[1].constant.asDim(m) && args[2].constant.asDim(n))
         return InferredType::concrete(args[0].type.dtype, Shape::dims(m, n));
     // A runtime dim -> a runtime-dim 2-D (NDims rank-2; the emitter copies x's flat
     // buffer, sets the dims, and guards numel). x must be a non-scalar array (its data is
     // reinterpreted). ndShape keeps it NDims while a dim is runtime.
-    std::size_t rm = 0, rn = 0;
+    keel::usize rm = 0, rn = 0;
     if (!args[0].type.shape.isScalar())
         return InferredType::concrete(args[0].type.dtype,
                                       Shape::ndShape({args[1].constant.asDim(rm) ? rm : 0,
@@ -141,10 +141,10 @@ InferredType reshapeTransfer(const std::vector<ArgInfo> &args)
 // a SCALAR -> the result is m x n (or n x n) all = A (tiling a 1x1). Literal dims ->
 // KnownDims of A's dtype. A vector/matrix operand (true tiling) or runtime dims are
 // deferred -> Dynamic.
-InferredType repmatTransfer(const std::vector<ArgInfo> &args)
+InferredType repmatTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || !args[0].type.isConcrete()) return InferredType::dynamic();
-    std::size_t m = 0, n = 0;
+    keel::usize m = 0, n = 0;
     // Scalar operand -> an m x n (or n x n) matrix all = s.
     if (args[0].type.shape.kind == ShapeKind::Scalar) {
         if (args.size() == 2 && args[1].constant.asDim(m))  // repmat(s, n) -> n x n
@@ -159,7 +159,7 @@ InferredType repmatTransfer(const std::vector<ArgInfo> &args)
     //              n is the operand's runtime length) -> NDims rank-2 ndShape({p, 0}),
     //              a runtime-dim 2-D the emitter materialises as an ndRuntimeLocal.
     if (args[0].type.shape.kind == ShapeKind::RowVector && args.size() == 3) {
-        std::size_t p = 0, q = 0;
+        keel::usize p = 0, q = 0;
         if (args[1].constant.asDim(p) && p == 1)
             return InferredType::concrete(args[0].type.dtype, Shape::rowVector());
         if (args[1].constant.asDim(p) && args[2].constant.asDim(q) && p > 1)
@@ -171,7 +171,7 @@ InferredType repmatTransfer(const std::vector<ArgInfo> &args)
     //              the operand's runtime length) -> NDims rank-2 ndShape({0, q}). The mirror
     //              of the row case.
     if (args[0].type.shape.kind == ShapeKind::ColVector && args.size() == 3) {
-        std::size_t p = 0, q = 0;
+        keel::usize p = 0, q = 0;
         if (args[2].constant.asDim(q) && q == 1)
             return InferredType::concrete(args[0].type.dtype, Shape::colVector());
         if (args[1].constant.asDim(p) && args[2].constant.asDim(q) && q > 1)

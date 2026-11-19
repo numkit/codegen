@@ -83,7 +83,7 @@ std::vector<double> compileRunReadDoubles(const std::string &program,
     (void)keel::fs_remove(outTxt);
     const auto r = numkit::codegen::aot::compileToExecutable(program, exe);
     EXPECT_EQ(r.status, numkit::codegen::aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
     std::vector<double> got;
     if (r.ok() && std::system(("\"" + exe + "\"").c_str()) == 0) {
         std::ifstream is(outTxt);
@@ -143,7 +143,7 @@ TEST(CodegenE2E, BiquadMatchesRuntimeFilter)
     (void)keel::fs_remove(outTxt);
 
     const std::size_t N = 64;
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -161,7 +161,7 @@ TEST(CodegenE2E, BiquadMatchesRuntimeFilter)
     // 3. Compile + run.
     const auto r = aot::compileToExecutable(program, exe);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
     ASSERT_EQ(std::system(("\"" + exe + "\"").c_str()), 0);
 
     // 4. Read the transpiled binary's output.
@@ -228,7 +228,7 @@ TEST(CodegenE2E, CheckedIndexPathRunsCorrectly)
     (void)keel::fs_remove(outTxt);
 
     const std::size_t N       = 32;
-    std::string       program = emitted.source;
+    std::string       program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -244,7 +244,7 @@ TEST(CodegenE2E, CheckedIndexPathRunsCorrectly)
 
     const auto r = aot::compileToExecutable(program, exe);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
     ASSERT_EQ(std::system(("\"" + exe + "\"").c_str()), 0);
 
     std::vector<double> got;
@@ -289,7 +289,7 @@ TEST(CodegenE2E, ReassignedBoundComputesCorrectly)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_reassign_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -304,7 +304,7 @@ TEST(CodegenE2E, ReassignedBoundComputesCorrectly)
 
     const auto r = aot::compileToExecutable(program, exe);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
     ASSERT_EQ(std::system(("\"" + exe + "\"").c_str()), 0);
 
     std::vector<double> got;
@@ -335,7 +335,7 @@ TEST(CodegenE2E, IfElseRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_if_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_if_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r1 = pick(1.0, 7.0, 9.0);\n"
@@ -367,7 +367,7 @@ TEST(CodegenE2E, WhileLoopRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_while_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_while_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double s10 = acc(10.0);\n"
@@ -415,13 +415,13 @@ TEST(CodegenE2E, ValueClassMethodCall)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_method_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_method_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  Rect p{};\n"
         "  p.w = 3.0;\n"
         "  p.h = 4.0;\n"
-        "  double r = " + emitted.name + "(p);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(p);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -462,10 +462,10 @@ TEST(CodegenE2E, SelfContainedClassProgram)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_selfclass_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_selfclass_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "();\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "();\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -502,11 +502,11 @@ TEST(CodegenE2E, Matrix2DRead)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_mat2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_mat2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[9] = {1,0,0, 0,2,0, 0,0,3};\n"  // column-major; diagonal 1,2,3
-        "  double r = " + emitted.name + "(A, 3, 3);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(A, 3, 3);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -554,10 +554,10 @@ TEST(CodegenE2E, InterprocArrayReturn)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_iparr_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_iparr_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double s = " + emitted.name + "(4.0);\n"  // g(4) = [1 4 9 16]; v(2) = 4
+        "  double s = " + keel::to_std_string(emitted.name) + "(4.0);\n"  // g(4) = [1 4 9 16]; v(2) = 4
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", s);\n"
@@ -605,12 +605,12 @@ TEST(CodegenE2E, InterprocArrayReturnIntoOutput)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_iparr_out_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_iparr_out_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const std::size_t N = 4;\n"
         "  double v[4] = {0, 0, 0, 0};\n"
-        "  " + emitted.name + "(4.0, v, N);\n"  // g(4) = [1 4 9 16]
+        "  " + keel::to_std_string(emitted.name) + "(4.0, v, N);\n"  // g(4) = [1 4 9 16]
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  for (std::size_t i = 0; i < N; ++i) std::fprintf(h, \"%.17g\\n\", v[i]);\n"
@@ -663,10 +663,10 @@ TEST(CodegenE2E, MultiOutputLeadingArray)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_multiout_arr_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_multiout_arr_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double out = " + emitted.name + "(4.0);\n"
+        "  double out = " + keel::to_std_string(emitted.name) + "(4.0);\n"
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", out);\n"
@@ -712,10 +712,10 @@ TEST(CodegenE2E, InterprocReturn2DKnownDims)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_iret2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_iret2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double out = " + emitted.name + "(2.0);\n"  // M(2,2) = 4
+        "  double out = " + keel::to_std_string(emitted.name) + "(2.0);\n"  // M(2,2) = 4
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", out);\n"
@@ -762,10 +762,10 @@ TEST(CodegenE2E, MultiOutputLeading2DArray)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_multiout_2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_multiout_2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double out = " + emitted.name + "(2.0);\n"  // M(2,2)=4 + s=10
+        "  double out = " + keel::to_std_string(emitted.name) + "(2.0);\n"  // M(2,2)=4 + s=10
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", out);\n"
@@ -803,7 +803,7 @@ TEST(CodegenE2E, BreakAndContinueInLoop)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_brkcont_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_brkcont_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double y = f(10.0);\n"  // 1 + 3 + 4 = 8 (skip 2; break once k>4)
@@ -841,7 +841,7 @@ TEST(CodegenE2E, EarlyReturnStatement)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_earlyret_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_earlyret_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const double a = f(100.0);\n"  // 1+2+3+4+5 = 15 (>10 at k=5 -> early return)
@@ -881,7 +881,7 @@ TEST(CodegenE2E, SwitchStatement)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_switch_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_switch_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const double a = f(1.0), b = f(2.0), c = f(3.0), d = f(5.0);\n"
@@ -922,7 +922,7 @@ TEST(CodegenE2E, LogicalArrayFromComparison)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_logarr_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_logarr_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1.0, 2.0, 3.0, 4.0};\n"  // x > 2.5 -> [0 0 1 1], count = 2
@@ -958,7 +958,7 @@ TEST(CodegenE2E, LogicalIndexingRead)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_logidx_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_logidx_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1.0, 2.0, 3.0, 4.0};\n"  // x(x>2.5) = [3 4]
@@ -993,7 +993,7 @@ TEST(CodegenE2E, LogicalIndexingWrite)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_logidxw_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_logidxw_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1.0, 2.0, 3.0, 4.0};\n"
@@ -1033,7 +1033,7 @@ TEST(CodegenE2E, NativeAnyAllReductions)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_anyall_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_anyall_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1.0, 2.0, 3.0, 4.0};\n"  // x > 2.5 -> [0 0 1 1]
@@ -1068,7 +1068,7 @@ TEST(CodegenE2E, NativeMinMaxReductions)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_minmax_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_minmax_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {3.0, 1.0, 4.0, 1.0, 5.0};\n"  // max 5, min 1
@@ -1102,7 +1102,7 @@ TEST(CodegenE2E, NativeSumReduction)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sum_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sum_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {1.0, 2.0, 3.0, 4.0, 5.0};\n"  // sum = 15
@@ -1137,7 +1137,7 @@ TEST(CodegenE2E, NativeProdMeanReductions)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_prodmean_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_prodmean_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1.0, 2.0, 3.0, 4.0};\n"  // prod 24, mean 2.5
@@ -1172,7 +1172,7 @@ TEST(CodegenE2E, FindReturnsPositions)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_find_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_find_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1.0, 2.0, 3.0, 4.0};\n"  // find(x>2.5) = [3 4]
@@ -1206,7 +1206,7 @@ TEST(CodegenE2E, NativeDiffReduction)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_diff_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_diff_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1.0, 4.0, 9.0, 16.0};\n"  // diff -> [3 5 7]
@@ -1241,7 +1241,7 @@ TEST(CodegenE2E, NativeCumsumCumprod)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cum_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cum_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1.0, 2.0, 3.0, 4.0};\n"  // cumsum(4)=10, cumprod(4)=24
@@ -1275,7 +1275,7 @@ TEST(CodegenE2E, NativeDotProduct)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_dot_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dot_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {1.0, 2.0, 3.0};\n"
@@ -1310,7 +1310,7 @@ TEST(CodegenE2E, CharRowLiteral)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_char_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_char_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double n = f();\n"  // numel('abcde') = 5
@@ -1348,7 +1348,7 @@ TEST(CodegenE2E, CharScalarCompareCount)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_charcmp_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_charcmp_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double n = f();\n"  // count of 'a' in "banana" = 3
@@ -1383,7 +1383,7 @@ TEST(CodegenE2E, CharArgIndexReturn)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_charg_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_charg_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  std::uint16_t s[5] = {104, 101, 108, 108, 111};\n"  // 'hello'
@@ -1421,7 +1421,7 @@ TEST(CodegenE2E, NativeStrcmp)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_strcmp_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_strcmp_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // strcmp(hello,hello)=1 -> *10; strcmp(hello,world)=0
@@ -1456,7 +1456,7 @@ TEST(CodegenE2E, StructScalarFields)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_struct_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_struct_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // s.a*10 + s.b = 23
@@ -1490,7 +1490,7 @@ TEST(CodegenE2E, HorzcatTwoArrays)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_horzcat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_horzcat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {1.0, 2.0, 3.0};\n"
@@ -1525,7 +1525,7 @@ TEST(CodegenE2E, ConcatStringLiteral)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_concatlit_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_concatlit_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  std::uint16_t s[3] = {120, 121, 122};\n"  // 'xyz' -> c = 'Hixyz' (5)
@@ -1571,10 +1571,10 @@ TEST(CodegenE2E, CharArrayInterprocReturn)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_charret_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_charret_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "();\n"  // numel('Hithere') = 7
+        "  double r = " + keel::to_std_string(emitted.name) + "();\n"  // numel('Hithere') = 7
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", r);\n"
@@ -1605,7 +1605,7 @@ TEST(CodegenE2E, CharUpperLower)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_upper_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_upper_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // upper('Hi') = 'HI'; t(1)=72, t(2)=73
@@ -1639,7 +1639,7 @@ TEST(CodegenE2E, StructArrayField)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_structarr_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_structarr_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {10.0, 20.0, 30.0};\n"
@@ -1673,7 +1673,7 @@ TEST(CodegenE2E, StructFieldIndex)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_structidx_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_structidx_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {10.0, 20.0, 30.0};\n"
@@ -1710,7 +1710,7 @@ TEST(CodegenE2E, IsemptyGuard)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_isempty_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_isempty_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double d[3] = {1.0, 2.0, 3.0};\n"
@@ -1757,7 +1757,7 @@ TEST(CodegenE2E, IsscalarIsrealQueries)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_isquery_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_isquery_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n#include <complex>\n"
         "int main() {\n"
         "  std::complex<double> z(1.0, 2.0);\n"
@@ -1808,7 +1808,7 @@ TEST(CodegenE2E, OrientationQueries)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_orient_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_orient_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x3[3] = {1.0, 2.0, 3.0};\n"
@@ -1858,7 +1858,7 @@ TEST(CodegenE2E, DtypeClassification)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_dtype_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dtype_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n#include <complex>\n#include <cstdint>\n"
         "int main() {\n"
         "  double r = f(2.5, (std::uint16_t)'A', true, (std::int32_t)7,\n"
@@ -1894,7 +1894,7 @@ TEST(CodegenE2E, LinspaceGenerative)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_linspace_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_linspace_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(5.0);\n"
@@ -1930,7 +1930,7 @@ TEST(CodegenE2E, ColonRangeMaterialise)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_colon_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_colon_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"
@@ -1963,7 +1963,7 @@ TEST(CodegenE2E, EndInIndex)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_end_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_end_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {10.0, 20.0, 30.0, 40.0};\n"
@@ -1999,7 +1999,7 @@ TEST(CodegenE2E, SliceRead)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_slice_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_slice_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {10.0, 20.0, 30.0, 40.0, 50.0};\n"
@@ -2036,7 +2036,7 @@ TEST(CodegenE2E, SliceWrite)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_slicew_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_slicew_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double w[2] = {3.0, 4.0};\n"
@@ -2073,7 +2073,7 @@ TEST(CodegenE2E, ArrayReversal)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_flip_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_flip_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {10.0, 20.0, 30.0, 40.0};\n"
@@ -2107,7 +2107,7 @@ TEST(CodegenE2E, SortAscending)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sort_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sort_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {30.0, 10.0, 40.0, 20.0};\n"
@@ -2144,7 +2144,7 @@ TEST(CodegenE2E, StatsReductions)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_stats_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_stats_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[2] = {3.0, 4.0};\n"
@@ -2181,7 +2181,7 @@ TEST(CodegenE2E, Median)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_median_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_median_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[3] = {3.0, 1.0, 2.0};\n"
@@ -2217,7 +2217,7 @@ TEST(CodegenE2E, SortDescend)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sortd_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sortd_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {30.0, 10.0, 40.0, 20.0};\n"
@@ -2252,7 +2252,7 @@ TEST(CodegenE2E, CumulativeExtrema)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cumext_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cumext_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {3.0, 1.0, 4.0, 1.0, 5.0};\n"
@@ -2287,7 +2287,7 @@ TEST(CodegenE2E, CircShift)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_circ_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_circ_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {1.0, 2.0, 3.0, 4.0, 5.0};\n"
@@ -2322,7 +2322,7 @@ TEST(CodegenE2E, ArgMaxMin)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_argmm_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_argmm_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {30.0, 10.0, 40.0, 20.0};\n"
@@ -2356,7 +2356,7 @@ TEST(CodegenE2E, LogspaceGenerative)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_logspace_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_logspace_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(4.0);\n"  // 1 + 10 + 100 + 1000 + 4 = 1115
@@ -2389,7 +2389,7 @@ TEST(CodegenE2E, Unique)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_unique_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_unique_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {3.0, 1.0, 4.0, 1.0, 5.0, 3.0};\n"
@@ -2422,7 +2422,7 @@ TEST(CodegenE2E, Trapz)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_trapz_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_trapz_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {1.0, 2.0, 3.0, 4.0, 5.0};\n"
@@ -2457,7 +2457,7 @@ TEST(CodegenE2E, Polyval)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_polyval_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_polyval_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double p[3] = {1.0, 0.0, -1.0};\n"   // x^2 - 1
@@ -2490,7 +2490,7 @@ TEST(CodegenE2E, Gradient)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_grad_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_grad_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double y[4] = {1.0, 4.0, 9.0, 16.0};\n"
@@ -2522,7 +2522,7 @@ TEST(CodegenE2E, ColonFlatten2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_flatten_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_flatten_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 4, 2, 5, 3, 6};\n"  // 2x3 col-major
@@ -2554,7 +2554,7 @@ TEST(CodegenE2E, ColumnSlice2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_colslice_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_colslice_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 4, 2, 5, 3, 6};\n"  // 2x3 col-major
@@ -2586,7 +2586,7 @@ TEST(CodegenE2E, RowSlice2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rowslice_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rowslice_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 4, 2, 5, 3, 6};\n"  // 2x3 col-major
@@ -2620,7 +2620,7 @@ TEST(CodegenE2E, Reshape)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_reshape_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_reshape_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {1, 2, 3, 4, 5, 6};\n"
@@ -2655,7 +2655,7 @@ TEST(CodegenE2E, NestedStruct)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_nstruct_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_nstruct_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // 2*10 + 3 = 23
@@ -2688,7 +2688,7 @@ TEST(CodegenE2E, RepmatScalar)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_repmat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_repmat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // 7 + 7 + 6*10 = 74
@@ -2719,7 +2719,7 @@ TEST(CodegenE2E, DiagOfMatrix)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_diag_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_diag_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 2, 3, 4, 5, 6};\n"  // 2x3 col-major
@@ -2750,7 +2750,7 @@ TEST(CodegenE2E, TraceOfMatrix)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_trace_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_trace_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[9] = {1,0,0, 0,5,0, 0,0,9};\n"  // 3x3 col-major, diagonal 1,5,9
@@ -2781,7 +2781,7 @@ TEST(CodegenE2E, EyeIdentity)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_eye_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_eye_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // diag 1,1,1; M(1,2)=0; numel 9: 1 + 10 + 100 + 0 + 90000 = 90111
@@ -2812,7 +2812,7 @@ TEST(CodegenE2E, TrilLower)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_tril_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_tril_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[4] = {1, 3, 2, 4};\n"  // [1 2; 3 4] col-major
@@ -2844,7 +2844,7 @@ TEST(CodegenE2E, DiagOfVector)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_diagv_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_diagv_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double v[3] = {5, 6, 7};\n"
@@ -2876,7 +2876,7 @@ TEST(CodegenE2E, RepmatRowVectorTo2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_repmat2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_repmat2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double v[3] = {10, 20, 30};\n"
@@ -2910,7 +2910,7 @@ TEST(CodegenE2E, VertcatRowsTo2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_vertcat2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_vertcat2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {1, 2, 3};\n"
@@ -2944,7 +2944,7 @@ TEST(CodegenE2E, HorzcatColumnsTo2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_horzcat2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_horzcat2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {1, 2, 3};\n"
@@ -2979,7 +2979,7 @@ TEST(CodegenE2E, TransposeRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_transpose2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_transpose2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {1, 2, 3};\n"
@@ -3016,7 +3016,7 @@ TEST(CodegenE2E, ElementwiseAddRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ewadd2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ewadd2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {1, 2, 3};\n"
@@ -3055,7 +3055,7 @@ TEST(CodegenE2E, MatmulRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_matmul2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_matmul2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3093,7 +3093,7 @@ TEST(CodegenE2E, SliceRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_slice2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_slice2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {1, 2, 3};\n"
@@ -3129,7 +3129,7 @@ TEST(CodegenE2E, MatrixVectorRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_matvec2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_matvec2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3170,7 +3170,7 @@ TEST(CodegenE2E, IndexedWriteFillRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_fill2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_fill2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(2, 3);\n"  // A(1,1)=11, A(2,3)=23, A(2,1)=21, numel=6: 11+230+2100+6000
@@ -3204,7 +3204,7 @@ TEST(CodegenE2E, ColumnSliceWriteRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_colwrite2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_colwrite2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double col[3] = {7, 8, 9};\n"
@@ -3239,7 +3239,7 @@ TEST(CodegenE2E, RowSliceWriteRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rowwrite2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rowwrite2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double row[3] = {7, 8, 9};\n"
@@ -3277,7 +3277,7 @@ TEST(CodegenE2E, HorzcatMatricesRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_horzcatmat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_horzcatmat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3318,7 +3318,7 @@ TEST(CodegenE2E, VertcatMatricesRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_vertcatmat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_vertcatmat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3365,7 +3365,7 @@ TEST(CodegenE2E, RuntimeDim2DCompositionMatchesInterpreter)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_compose2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_compose2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3420,7 +3420,7 @@ TEST(CodegenE2E, RuntimeDim2DKernelVsInterpreter)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_bench2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_bench2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "#include <chrono>\n"
         "int main() {\n"
@@ -3475,7 +3475,7 @@ TEST(CodegenE2E, RemScalarNative)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rem_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rem_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(-7, 3);\n"  // rem(-7,3)=-1, rem(3,-7)=3, rem(7,3)=1: -1000+30+1 = -969
@@ -3509,7 +3509,7 @@ TEST(CodegenE2E, Deg2RadRad2DegScalarNative)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_deg2rad_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_deg2rad_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(90);\n"  // deg2rad(90)=pi/2, rad2deg(90)=90*180/pi
@@ -3544,7 +3544,7 @@ TEST(CodegenE2E, GammalnScalarNative)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_gammaln_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_gammaln_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(5, 3);\n"  // lgamma(5)=ln(24), lgamma(3)=ln(2)
@@ -3580,7 +3580,7 @@ TEST(CodegenE2E, RepmatMatrixBlockTiling)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_repmatmat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_repmatmat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3618,7 +3618,7 @@ TEST(CodegenE2E, RepmatColVectorTo2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_repmatcol_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_repmatcol_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[3] = {10, 20, 30};\n"
@@ -3656,7 +3656,7 @@ TEST(CodegenE2E, RuntimeReshape)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_reshape_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_reshape_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {1, 2, 3, 4, 5, 6};\n"
@@ -3698,7 +3698,7 @@ TEST(CodegenE2E, BlockMatrixLiteralRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_blockmat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_blockmat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3740,7 +3740,7 @@ TEST(CodegenE2E, WholeArrayScalarFill)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_fillscalar_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_fillscalar_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3779,7 +3779,7 @@ TEST(CodegenE2E, WholeMatrixCopy)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_matcopy_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_matcopy_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3819,7 +3819,7 @@ TEST(CodegenE2E, RowColScalarFill)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rowcolfill_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rowcolfill_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3859,7 +3859,7 @@ TEST(CodegenE2E, WholeArrayArrayFill)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_fillarray_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_fillarray_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3901,7 +3901,7 @@ TEST(CodegenE2E, CircshiftMatrixDim1)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_circshift2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_circshift2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -3942,7 +3942,7 @@ TEST(CodegenE2E, CircshiftMatrixDim2)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_circshift2d_dim2_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_circshift2d_dim2_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[3] = {1, 2, 3};\n"
@@ -3984,7 +3984,7 @@ TEST(CodegenE2E, MaxMinTwoArg)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_maxmin2_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_maxmin2_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[3] = {-2, 3, -4};\n"
@@ -4023,7 +4023,7 @@ TEST(CodegenE2E, SignRealElementwise)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sign_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sign_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {-3, 0, 5, -0.5};\n"
@@ -4061,7 +4061,7 @@ TEST(CodegenE2E, MaskedWriteInlineRelational)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_maskwrite_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_maskwrite_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[5] = {-2, 3, -4, 5, -6};\n"
@@ -4100,7 +4100,7 @@ TEST(CodegenE2E, MaskedWrite2DMatrix)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_maskwrite2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_maskwrite2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[3] = {-1, 2, -3};\n"
@@ -4139,7 +4139,7 @@ TEST(CodegenE2E, MaskedRead2DMatrix)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_maskread2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_maskread2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[3] = {-1, 2, -3};\n"
@@ -4178,7 +4178,7 @@ TEST(CodegenE2E, FindInlineRelational2DMatrix)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_find2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_find2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[3] = {-1, 2, -3};\n"
@@ -4214,7 +4214,7 @@ TEST(CodegenE2E, MinMaxInlineExpr)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_minmaxinline_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_minmaxinline_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {-2, 3, -4, 5, -6};\n"
@@ -4249,7 +4249,7 @@ TEST(CodegenE2E, AnyAllInlineRelational)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_anyall_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_anyall_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {-2, 3, -4, 5, -6};\n"
@@ -4285,7 +4285,7 @@ TEST(CodegenE2E, MaskedReadInlineRelational)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_maskread_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_maskread_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {-2, 3, -4, 5, -6};\n"
@@ -4322,7 +4322,7 @@ TEST(CodegenE2E, NumericGatherRead)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_gather_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_gather_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {10, 20, 30, 40, 50};\n"
@@ -4360,7 +4360,7 @@ TEST(CodegenE2E, FindInlineRelational)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_findinline_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_findinline_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {-2, 3, -4, 5, -6};\n"
@@ -4398,7 +4398,7 @@ TEST(CodegenE2E, WholeArrayElementwiseExprFill)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_colonexpr_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_colonexpr_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[3] = {1, 2, 3};\n"
@@ -4440,7 +4440,7 @@ TEST(CodegenE2E, NumericScatterWrite)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_scatter_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_scatter_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {10, 20, 30, 40, 50};\n"
@@ -4486,7 +4486,7 @@ TEST(CodegenE2E, CatDimMatrices)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -4532,7 +4532,7 @@ TEST(CodegenE2E, KronMatrix)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_kron_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_kron_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -4569,7 +4569,7 @@ TEST(CodegenE2E, DiagVectorOffset)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_diagoff_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_diagoff_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double v[3] = {5, 6, 7};\n"
@@ -4609,7 +4609,7 @@ TEST(CodegenE2E, TrilTriuOffsetRuntimeDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_triltriu_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_triltriu_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[3] = {1, 2, 3};\n"
@@ -4650,7 +4650,7 @@ TEST(CodegenE2E, Rot90Matrix)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rot90_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rot90_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[3] = {1, 2, 3};\n"
@@ -4690,7 +4690,7 @@ TEST(CodegenE2E, FliplrFlipudMatrix)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_flip2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_flip2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[3] = {1, 2, 3};\n"
@@ -4730,7 +4730,7 @@ TEST(CodegenE2E, VertcatMatrixWithRowAppended)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_vrowapp_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_vrowapp_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -4771,7 +4771,7 @@ TEST(CodegenE2E, HorzcatMatrixWithColumnAugmented)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_augmat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_augmat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -4812,7 +4812,7 @@ TEST(CodegenE2E, RuntimeEye)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_eye_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_eye_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(3);\n"  // A=eye(3): A11=1,A22=1,A12=0,numel=9; B=eye(2,3): B22=1,numel=6
@@ -4848,7 +4848,7 @@ TEST(CodegenE2E, RuntimeDim2DConstructor)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rt2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rt2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(3.0, 4.0);\n"  // ones(3,4): A(2,3)=1, numel=12 -> 1 + 120 = 121
@@ -4879,7 +4879,7 @@ TEST(CodegenE2E, CrossProduct)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cross_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cross_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a[3] = {1, 2, 3};\n"
@@ -4914,7 +4914,7 @@ TEST(CodegenE2E, VertcatScalars)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_vcat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_vcat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // [10 20 30]: 10 + 200 + 3000 + 3*1000 = 6210
@@ -4945,7 +4945,7 @@ TEST(CodegenE2E, RepmatColTile)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_repmatc_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_repmatc_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[3] = {10, 20, 30};\n"  // column
@@ -4977,7 +4977,7 @@ TEST(CodegenE2E, RepmatRowTile)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_repmatv_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_repmatv_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[3] = {1, 2, 3};\n"
@@ -5018,7 +5018,7 @@ TEST(CodegenE2E, Integration2DCapstone)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cap2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cap2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[9] = {1,2,3,4,5,6,7,8,9};\n"  // reshape(.,3,3) col-major
@@ -5065,7 +5065,7 @@ TEST(CodegenE2E, IntegrationCapstone)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_capstone_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_capstone_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {1.0, 5.0, 2.0, 8.0, 3.0};\n"  // >4 at idx 2,4 -> find=[2 4]
@@ -5116,10 +5116,10 @@ TEST(CodegenE2E, RecursiveCallCompilesAndRuns)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_recursion_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_recursion_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double out = " + emitted.name + "(5.0);\n"  // 5! = 120
+        "  double out = " + keel::to_std_string(emitted.name) + "(5.0);\n"  // 5! = 120
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", out);\n"
@@ -5167,10 +5167,10 @@ TEST(CodegenE2E, BareLhsMultiOutputBindsFirstOutput)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_barelhs_multiout_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_barelhs_multiout_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double out = " + emitted.name + "(5.0);\n"  // f(5)=[6,10]; c=6; r=7
+        "  double out = " + keel::to_std_string(emitted.name) + "(5.0);\n"  // f(5)=[6,10]; c=6; r=7
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", out);\n"
@@ -5301,10 +5301,10 @@ TEST(CodegenE2E, MultiOutputCall)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_multiout_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_multiout_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "(17.0, 5.0);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(17.0, 5.0);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5343,10 +5343,10 @@ TEST(CodegenE2E, MultiOutputIgnoredTarget)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_multiign_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_multiign_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double y = " + emitted.name + "(5.0);\n"  // f(5): a=6 (ignored), b=10 -> y=10
+        "  double y = " + keel::to_std_string(emitted.name) + "(5.0);\n"  // f(5): a=6 (ignored), b=10 -> y=10
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", y);\n"
@@ -5385,11 +5385,11 @@ TEST(CodegenE2E, InterproceduralArrayArg)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_arrarg_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_arrarg_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double v[4] = {1.0, 2.0, 3.0, 4.0};\n"
-        "  double r = " + emitted.name + "(v, 4);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(v, 4);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5438,11 +5438,11 @@ TEST(CodegenE2E, HandleVoidMutator)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_voidmut_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_voidmut_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  numkit_rt::handle<Box> b = numkit_rt::handle<Box>::make();\n"
-        "  double r = " + emitted.name + "(b);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(b);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5488,10 +5488,10 @@ TEST(CodegenE2E, ExplicitConstructor)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ctor_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ctor_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "();\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "();\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5537,12 +5537,12 @@ TEST(CodegenE2E, HandleClassMethodCall)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_handle_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_handle_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  numkit_rt::handle<Box> b = numkit_rt::handle<Box>::make();\n"
         "  b->v = 9.0;\n"
-        "  double r = " + emitted.name + "(b);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(b);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5586,7 +5586,7 @@ TEST(CodegenE2E, ValueClassFieldRoundTrip)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_valueclass_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_valueclass_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  Point p{};\n"
@@ -5628,10 +5628,10 @@ TEST(CodegenE2E, InterproceduralRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_interproc_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_interproc_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "(3.0);\n"  // f__d(3.0)
+        "  double r = " + keel::to_std_string(emitted.name) + "(3.0);\n"  // f__d(3.0)
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5661,7 +5661,7 @@ TEST(CodegenE2E, ArrayLocalRunsCorrectly)
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_arrlocal_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_arrlocal_e2e_out.txt"));
     const std::size_t N       = 16;
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const std::size_t N = 16;\n"
@@ -5711,12 +5711,12 @@ TEST(CodegenE2E, ArrayLocalAsCallArgAndNumel)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_arrlocal_arg_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_arrlocal_arg_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8];\n"
         "  for (std::size_t i = 0; i < 8; ++i) x[i] = double(i + 1);\n"
-        "  double r = " + emitted.name + "(x, 8);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(x, 8);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5743,7 +5743,7 @@ TEST(CodegenE2E, ElementwiseArrayArithmeticRunsCorrectly)
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ewise_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ewise_e2e_out.txt"));
     const std::size_t N       = 12;
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const std::size_t N = 12;\n"
@@ -5778,7 +5778,7 @@ TEST(CodegenE2E, ScalarScalingRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_scale_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_scale_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double v[3] = {10, 20, 30}, y[3];\n"
@@ -5809,12 +5809,12 @@ TEST(CodegenE2E, Elementwise2DRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ewise2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ewise2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 2, 3, 4, 5, 6};\n"  // 2x3 col-major
         "  double B[6];\n"
-        "  " + emitted.name + "(A, 2, 3, B, 2, 3);\n"
+        "  " + keel::to_std_string(emitted.name) + "(A, 2, 3, B, 2, 3);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 6; ++i) std::fprintf(g, \"%.17g\\n\", B[i]);\n"
@@ -5842,13 +5842,13 @@ TEST(CodegenE2E, Elementwise2DTwoMatrixRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ewise2d2_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ewise2d2_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 2, 3, 4, 5, 6};\n"
         "  double C[6] = {10, 20, 30, 40, 50, 60};\n"
         "  double B[6];\n"
-        "  " + emitted.name + "(A, 2, 3, C, 2, 3, B, 2, 3);\n"
+        "  " + keel::to_std_string(emitted.name) + "(A, 2, 3, C, 2, 3, B, 2, 3);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 6; ++i) std::fprintf(g, \"%.17g\\n\", B[i]);\n"
@@ -5875,7 +5875,7 @@ TEST(CodegenE2E, ElementwiseNDRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ewisend_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ewisend_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[24], B[24];\n"
@@ -5907,7 +5907,7 @@ TEST(CodegenE2E, ElementwiseNDMultiOperandRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ewisendmul_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ewisendmul_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[24], C[24], B[24];\n"
@@ -5939,10 +5939,10 @@ TEST(CodegenE2E, Matrix2DLocalWriteRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_mat2dwrite_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_mat2dwrite_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "();\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "();\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5968,10 +5968,10 @@ TEST(CodegenE2E, NDArrayLocalWriteRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ndwrite_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ndwrite_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "();\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "();\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -5997,13 +5997,13 @@ TEST(CodegenE2E, NDParamReadRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ndparam_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ndparam_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[8] = {0,0,0,0,0,0,0,0};\n"
         "  A[0] = 10.0;  // A(1,1,1) column-major offset 0\n"
         "  A[7] = 99.0;  // A(2,2,2) offset 1 + 2*(1 + 2*1) = 7\n"
-        "  double r = " + emitted.name + "(A, 2, 2, 2);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(A, 2, 2, 2);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -6028,10 +6028,10 @@ TEST(CodegenE2E, NDShapeQueriesRunCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ndshape_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ndshape_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "();\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "();\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -6061,12 +6061,12 @@ TEST(CodegenE2E, NDOutputRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ndout_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ndout_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double y[8];\n"
         "  for (int i = 0; i < 8; ++i) y[i] = -1.0;  // sentinel: zeros() must clear it\n"
-        "  " + emitted.name + "(3.0, y, 2, 2, 2);\n"
+        "  " + keel::to_std_string(emitted.name) + "(3.0, y, 2, 2, 2);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 8; ++i) std::fprintf(g, \"%.17g\\n\", y[i]);\n"
@@ -6097,12 +6097,12 @@ TEST(CodegenE2E, Matrix2DOutputRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_mat2dout_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_mat2dout_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double M[6];\n"
         "  for (int i = 0; i < 6; ++i) M[i] = -1.0;  // sentinel: zeros() must clear it\n"
-        "  " + emitted.name + "(4.0, M, 2, 3);\n"  // a=4, rows=2, cols=3
+        "  " + keel::to_std_string(emitted.name) + "(4.0, M, 2, 3);\n"  // a=4, rows=2, cols=3
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 6; ++i) std::fprintf(g, \"%.17g\\n\", M[i]);\n"
@@ -6133,11 +6133,11 @@ TEST(CodegenE2E, OneDSizeOrientationRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_1dsize_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_1dsize_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {10, 20, 30, 40, 50};\n"
-        "  double s = " + emitted.name + "(x, 5);\n"
+        "  double s = " + keel::to_std_string(emitted.name) + "(x, 5);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", s);\n"
@@ -6164,11 +6164,11 @@ TEST(CodegenE2E, SizeNoDimRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sizenodim_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sizenodim_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {10, 20, 30, 40, 50};\n"
-        "  double r = " + emitted.name + "(x, 5);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(x, 5);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -6192,7 +6192,7 @@ TEST(CodegenE2E, SizeTwoOutputRunsCorrectly)
         const keel::String base = aotTmpDir();
         const std::string exe    = keel::to_std_string(keel::path_join(base, ("numkit_" + tag + ".exe")));
         const std::string outTxt = keel::to_std_string(keel::path_join(base, ("numkit_" + tag + "_out.txt")));
-        std::string       program = emitted.source +
+        std::string       program = keel::to_std_string(emitted.source) +
             "#include <cstdio>\n"
             "int main() {\n"
             "  double A[24] = {0};\n"
@@ -6209,7 +6209,7 @@ TEST(CodegenE2E, SizeTwoOutputRunsCorrectly)
         const EmittedFunction emitted =
             transpile(src, {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 4))}});
         ASSERT_NE(emitted.source.find("r = static_cast<double>(_numkit_A_rows);"), std::string::npos);
-        const std::vector<double> got = run(emitted, "size2_e2e", emitted.name + "(A, 3, 4)");
+        const std::vector<double> got = run(emitted, "size2_e2e", keel::to_std_string(emitted.name) + "(A, 3, 4)");
         ASSERT_EQ(got.size(), 1u);
         EXPECT_DOUBLE_EQ(got[0], 3004.0);  // r=3, c=4
     }
@@ -6218,7 +6218,7 @@ TEST(CodegenE2E, SizeTwoOutputRunsCorrectly)
             src, {{"A", InferredType::concrete(ValueType::DOUBLE,
                                                numkit::codegen::Shape::ndShape({2, 3, 4}))}});
         ASSERT_NE(emitted.source.find("_numkit_A_d1 * _numkit_A_d2"), std::string::npos);
-        const std::vector<double> got = run(emitted, "size2nd_e2e", emitted.name + "(A, 2, 3, 4)");
+        const std::vector<double> got = run(emitted, "size2nd_e2e", keel::to_std_string(emitted.name) + "(A, 2, 3, 4)");
         ASSERT_EQ(got.size(), 1u);
         EXPECT_DOUBLE_EQ(got[0], 2012.0);  // r=2, c=3*4=12
     }
@@ -6245,10 +6245,10 @@ TEST(CodegenE2E, NDRuntimeLocalRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ndrt_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ndrt_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "(2.0, 3.0, 4.0);\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(2.0, 3.0, 4.0);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -6278,12 +6278,12 @@ TEST(CodegenE2E, NDRuntimeOutputRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ndrtout_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ndrtout_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double y[12];\n"
         "  for (int i = 0; i < 12; ++i) y[i] = -1.0;  // sentinel; zeros() must clear\n"
-        "  " + emitted.name + "(2.0, 3.0, y, 2, 3, 2);\n"  // caller pre-sizes: m=2,n=3,2
+        "  " + keel::to_std_string(emitted.name) + "(2.0, 3.0, y, 2, 3, 2);\n"  // caller pre-sizes: m=2,n=3,2
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 12; ++i) std::fprintf(g, \"%.17g\\n\", y[i]);\n"
@@ -6315,11 +6315,11 @@ TEST(CodegenE2E, CompanionUserVarCoexistRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_companion_coexist_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_companion_coexist_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {10, 20, 30, 40, 50};\n"
-        "  double r = " + emitted.name + "(x, 5);\n"  // _numkit_x_len = 5
+        "  double r = " + keel::to_std_string(emitted.name) + "(x, 5);\n"  // _numkit_x_len = 5
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -6348,11 +6348,11 @@ TEST(CodegenE2E, NegativeDimClampsToEmpty)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_negdim_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_negdim_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double pos = " + emitted.name + "(3.0);\n"   // 1x3 -> numel 3
-        "  double neg = " + emitted.name + "(-1.0);\n"  // negative dim -> clamp to 0 -> empty
+        "  double pos = " + keel::to_std_string(emitted.name) + "(3.0);\n"   // 1x3 -> numel 3
+        "  double neg = " + keel::to_std_string(emitted.name) + "(-1.0);\n"  // negative dim -> clamp to 0 -> empty
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n%.17g\\n\", pos, neg);\n"
@@ -6385,7 +6385,7 @@ TEST(CodegenE2E, ElementwiseArrayMathRunsCorrectly)
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ewise_math_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ewise_math_e2e_out.txt"));
     const std::size_t N       = 8;
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const std::size_t N = 8;\n"
@@ -6419,10 +6419,10 @@ TEST(CodegenE2E, ComplexAccessorsRunCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cxaccess_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cxaccess_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double r = " + emitted.name + "(std::complex<double>(3.0, 4.0));\n"
+        "  double r = " + keel::to_std_string(emitted.name) + "(std::complex<double>(3.0, 4.0));\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", r);\n"
@@ -6450,11 +6450,11 @@ TEST(CodegenE2E, ComplexElementwiseRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cxewise_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cxewise_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  std::complex<double> x[3] = { {1,1}, {2,2}, {3,3} }, y[3];\n"
-        "  " + emitted.name + "(x, 3, y, 3);\n"
+        "  " + keel::to_std_string(emitted.name) + "(x, 3, y, 3);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 3; ++i) std::fprintf(g, \"%.17g\\n%.17g\\n\", y[i].real(), y[i].imag());\n"
@@ -6482,11 +6482,11 @@ TEST(CodegenE2E, RealVectorTransposeRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_transp_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_transp_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[3] = {10, 20, 30}, y[3];\n"
-        "  " + emitted.name + "(x, 3, y, 3);\n"
+        "  " + keel::to_std_string(emitted.name) + "(x, 3, y, 3);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 3; ++i) std::fprintf(g, \"%.17g\\n\", y[i]);\n"
@@ -6513,11 +6513,11 @@ TEST(CodegenE2E, ComplexConjTransposeRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_conjtransp_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_conjtransp_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  std::complex<double> x[2] = { {1,2}, {3,4} }, y[2];\n"
-        "  " + emitted.name + "(x, 2, y, 2);\n"
+        "  " + keel::to_std_string(emitted.name) + "(x, 2, y, 2);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 2; ++i) std::fprintf(g, \"%.17g\\n%.17g\\n\", y[i].real(), y[i].imag());\n"
@@ -6546,12 +6546,12 @@ TEST(CodegenE2E, MatrixTransposeRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_mattransp_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_mattransp_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 2, 3, 4, 5, 6};\n"  // 2x3 column-major
         "  double y[6];\n"
-        "  " + emitted.name + "(A, 2, 3, y, 3, 2);\n"  // A is 2x3, y is 3x2
+        "  " + keel::to_std_string(emitted.name) + "(A, 2, 3, y, 3, 2);\n"  // A is 2x3, y is 3x2
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 6; ++i) std::fprintf(g, \"%.17g\\n\", y[i]);\n"
@@ -6581,13 +6581,13 @@ TEST(CodegenE2E, MatrixProductRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_matmul_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_matmul_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 2, 3, 4, 5, 6};\n"  // 2x3 col-major
         "  double B[6] = {1, 2, 3, 4, 5, 6};\n"  // 3x2 col-major
         "  double C[4];\n"
-        "  " + emitted.name + "(A, 2, 3, B, 3, 2, C, 2, 2);\n"
+        "  " + keel::to_std_string(emitted.name) + "(A, 2, 3, B, 3, 2, C, 2, 2);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 4; ++i) std::fprintf(g, \"%.17g\\n\", C[i]);\n"
@@ -6616,12 +6616,12 @@ TEST(CodegenE2E, MatrixTimesVectorRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_matvec_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_matvec_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 2, 3, 4, 5, 6};\n"  // 2x3 col-major
         "  double x[3] = {1, 2, 3}, y[2];\n"
-        "  " + emitted.name + "(A, 2, 3, x, 3, y, 2);\n"
+        "  " + keel::to_std_string(emitted.name) + "(A, 2, 3, x, 3, y, 2);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 2; ++i) std::fprintf(g, \"%.17g\\n\", y[i]);\n"
@@ -6649,13 +6649,13 @@ TEST(CodegenE2E, VectorTimesMatrixRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_vecmat_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_vecmat_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r[3] = {1, 2, 3};\n"
         "  double A[6] = {1, 2, 3, 4, 5, 6};\n"  // 3x2 col-major
         "  double y[2];\n"
-        "  " + emitted.name + "(r, 3, A, 3, 2, y, 2);\n"
+        "  " + keel::to_std_string(emitted.name) + "(r, 3, A, 3, 2, y, 2);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 2; ++i) std::fprintf(g, \"%.17g\\n\", y[i]);\n"
@@ -6683,11 +6683,11 @@ TEST(CodegenE2E, InnerProductRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_dot_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dot_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r[3] = {1, 2, 3}, c[3] = {4, 5, 6};\n"
-        "  double s = " + emitted.name + "(r, 3, c, 3);\n"
+        "  double s = " + keel::to_std_string(emitted.name) + "(r, 3, c, 3);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", s);\n"
@@ -6715,7 +6715,7 @@ TEST(CodegenE2E, OuterProductRunsCorrectly)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_outer_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_outer_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double c[3] = {1, 2, 3}, r[2] = {10, 20}, y[6];\n"
@@ -6747,7 +6747,7 @@ TEST(CodegenE2E, MultiArrayElementwiseRunsCorrectly)
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_multiewise_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_multiewise_e2e_out.txt"));
     const std::size_t N       = 10;
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const std::size_t N = 10;\n"
@@ -6787,7 +6787,7 @@ TEST(CodegenBridge, BridgedScalarCallRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";  // resolved via the -I below
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");  // resolved via the -I below
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::bridge_scalar(\"gamma\""), std::string::npos);
@@ -6797,7 +6797,7 @@ TEST(CodegenBridge, BridgedScalarCallRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_bridged_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -6810,12 +6810,12 @@ TEST(CodegenBridge, BridgedScalarCallRunsAndMatchesInterpreter)
     // Bridged compile: find numkit_codegen_rt.h, request dllimport linkage, and
     // link the runtime import lib.
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     // The runtime DLL must sit beside the artifact so it loads at run time.
     const keel::Error copyErr =
@@ -6862,7 +6862,7 @@ TEST(CodegenBridge, BridgedNum2strCharArrayRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::bridge_to_vec_char(\"num2str\""), std::string::npos)
@@ -6873,7 +6873,7 @@ TEST(CodegenBridge, BridgedNum2strCharArrayRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_bridged_num2str_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -6883,12 +6883,12 @@ TEST(CodegenBridge, BridgedNum2strCharArrayRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -6929,7 +6929,7 @@ TEST(CodegenBridge, BridgedSprintfRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_box_string(\"%d!\")"), std::string::npos)
@@ -6941,7 +6941,7 @@ TEST(CodegenBridge, BridgedSprintfRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_bridged_sprintf_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -6951,12 +6951,12 @@ TEST(CodegenBridge, BridgedSprintfRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7000,7 +7000,7 @@ TEST(CodegenBridge, BridgedCellLiteralAndContentGetRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::val::cell({"), std::string::npos)
@@ -7013,7 +7013,7 @@ TEST(CodegenBridge, BridgedCellLiteralAndContentGetRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cell_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7025,12 +7025,12 @@ TEST(CodegenBridge, BridgedCellLiteralAndContentGetRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7071,7 +7071,7 @@ TEST(CodegenBridge, BridgedCellContentStoreRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::cell_set("), std::string::npos)
@@ -7082,7 +7082,7 @@ TEST(CodegenBridge, BridgedCellContentStoreRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cellset_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7094,12 +7094,12 @@ TEST(CodegenBridge, BridgedCellContentStoreRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7141,7 +7141,7 @@ TEST(CodegenBridge, BridgedCellSliceRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::index_dyn("), std::string::npos)
@@ -7152,7 +7152,7 @@ TEST(CodegenBridge, BridgedCellSliceRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cellslice_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7164,12 +7164,12 @@ TEST(CodegenBridge, BridgedCellSliceRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7211,7 +7211,7 @@ TEST(CodegenBridge, BridgedNamedFunctionHandleRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::make_handle(\"abs\")"), std::string::npos)
@@ -7224,7 +7224,7 @@ TEST(CodegenBridge, BridgedNamedFunctionHandleRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_handle_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7236,12 +7236,12 @@ TEST(CodegenBridge, BridgedNamedFunctionHandleRunsAndMatchesInterpreter)
         "  std::fclose(gf); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7283,7 +7283,7 @@ TEST(CodegenBridge, Bridged2DCellLiteralRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::val::cell_2d({"), std::string::npos)
@@ -7294,7 +7294,7 @@ TEST(CodegenBridge, Bridged2DCellLiteralRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cell2d_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7306,12 +7306,12 @@ TEST(CodegenBridge, Bridged2DCellLiteralRunsAndMatchesInterpreter)
         "  std::fclose(gf); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7354,7 +7354,7 @@ TEST(CodegenBridge, Bridged2DCellContentGetRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::cell_get_2d("), std::string::npos)
@@ -7365,7 +7365,7 @@ TEST(CodegenBridge, Bridged2DCellContentGetRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cell2dget_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7377,12 +7377,12 @@ TEST(CodegenBridge, Bridged2DCellContentGetRunsAndMatchesInterpreter)
         "  std::fclose(gf); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7426,7 +7426,7 @@ TEST(CodegenBridge, Bridged2DCellContentStoreRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::cell_set_2d("), std::string::npos)
@@ -7437,7 +7437,7 @@ TEST(CodegenBridge, Bridged2DCellContentStoreRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cell2dset_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7449,12 +7449,12 @@ TEST(CodegenBridge, Bridged2DCellContentStoreRunsAndMatchesInterpreter)
         "  std::fclose(gf); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7501,7 +7501,7 @@ TEST(CodegenBridge, BridgedCaptureFreeClosureRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::make_closure(\"@(t)t*t+1\")"), std::string::npos)
@@ -7514,7 +7514,7 @@ TEST(CodegenBridge, BridgedCaptureFreeClosureRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_closure_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7526,12 +7526,12 @@ TEST(CodegenBridge, BridgedCaptureFreeClosureRunsAndMatchesInterpreter)
         "  std::fclose(gf); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7572,7 +7572,7 @@ TEST(CodegenBridge, BridgedCapturingClosureRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::make_closure_captured(\"@(t)t+k\""), std::string::npos)
@@ -7585,7 +7585,7 @@ TEST(CodegenBridge, BridgedCapturingClosureRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_closure_cap_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7597,12 +7597,12 @@ TEST(CodegenBridge, BridgedCapturingClosureRunsAndMatchesInterpreter)
         "  std::fclose(gf); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7652,7 +7652,7 @@ TEST(CodegenBridge, DynamicScalarTierRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::call_dyn(\"mod\""), std::string::npos);
@@ -7663,7 +7663,7 @@ TEST(CodegenBridge, DynamicScalarTierRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dyntier_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7674,12 +7674,12 @@ TEST(CodegenBridge, DynamicScalarTierRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7739,7 +7739,7 @@ TEST(CodegenBridge, TryCatchRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"n", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("try {"), std::string::npos);
@@ -7750,7 +7750,7 @@ TEST(CodegenBridge, TryCatchRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_trycatch_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7761,12 +7761,12 @@ TEST(CodegenBridge, TryCatchRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7834,7 +7834,7 @@ TEST(CodegenBridge, DynamicCallArgRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::call_dyn(\"mod\", {x, 3.0})"), std::string::npos);
@@ -7846,7 +7846,7 @@ TEST(CodegenBridge, DynamicCallArgRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dynarg_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7857,12 +7857,12 @@ TEST(CodegenBridge, DynamicCallArgRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7904,7 +7904,7 @@ TEST(CodegenBridge, DynamicBoxedReturnRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_val f("), std::string::npos);   // boxed return signature
@@ -7915,7 +7915,7 @@ TEST(CodegenBridge, DynamicBoxedReturnRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dynret_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -7930,12 +7930,12 @@ TEST(CodegenBridge, DynamicBoxedReturnRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -7977,7 +7977,7 @@ TEST(CodegenBridge, DynamicArrayArgAndReturnRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
@@ -7990,7 +7990,7 @@ TEST(CodegenBridge, DynamicArrayArgAndReturnRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dynarr_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -8005,12 +8005,12 @@ TEST(CodegenBridge, DynamicArrayArgAndReturnRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8054,7 +8054,7 @@ TEST(CodegenBridge, DynamicIndexRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
@@ -8066,7 +8066,7 @@ TEST(CodegenBridge, DynamicIndexRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dynidx_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -8080,12 +8080,12 @@ TEST(CodegenBridge, DynamicIndexRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8123,7 +8123,7 @@ TEST(CodegenBridge, DynamicParamRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted =
         emitFunction(*fn, {{"z", InferredType::dynamic()}}, reg, nullptr, bridge);
     ASSERT_NE(emitted.source.find("numkit_rt::val z"), std::string::npos);  // by-value Dynamic param
@@ -8134,7 +8134,7 @@ TEST(CodegenBridge, DynamicParamRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dynparam_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -8147,12 +8147,12 @@ TEST(CodegenBridge, DynamicParamRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8191,7 +8191,7 @@ TEST(CodegenBridge, DynamicMatrixRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"M", InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3))}}, reg, nullptr,
         bridge);
@@ -8203,7 +8203,7 @@ TEST(CodegenBridge, DynamicMatrixRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dynmat_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source;
+    std::string program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -8218,12 +8218,12 @@ TEST(CodegenBridge, DynamicMatrixRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8270,7 +8270,7 @@ TEST(CodegenBridge, BridgedBuiltinMultiOutputRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
@@ -8281,7 +8281,7 @@ TEST(CodegenBridge, BridgedBuiltinMultiOutputRunsAndMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_multiout_bridge_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source +
+    std::string program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const double xs[2] = {20, 90};\n"  // ismember([20 90],[50 20 70]): tf(1)=1, loc(1)=2
@@ -8294,12 +8294,12 @@ TEST(CodegenBridge, BridgedBuiltinMultiOutputRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8338,7 +8338,7 @@ TEST(CodegenBridge, BridgedArrayResultRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
@@ -8350,7 +8350,7 @@ TEST(CodegenBridge, BridgedArrayResultRunsAndMatchesInterpreter)
     (void)keel::fs_remove(outTxt);
 
     const std::size_t N       = 8;
-    std::string       program = emitted.source;
+    std::string       program = keel::to_std_string(emitted.source);
     program +=
         "#include <cstdio>\n"
         "int main() {\n"
@@ -8364,12 +8364,12 @@ TEST(CodegenBridge, BridgedArrayResultRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8411,7 +8411,7 @@ TEST(CodegenBridge, ReductionSumBridgedMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
@@ -8422,23 +8422,23 @@ TEST(CodegenBridge, ReductionSumBridgedMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_redsum_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source +
+    std::string program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {1.5, 2.5, 3.5, 4.5, 5.5};\n"
-        "  double s = " + emitted.name + "(x, 5);\n"
+        "  double s = " + keel::to_std_string(emitted.name) + "(x, 5);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  std::fprintf(g, \"%.17g\\n\", s);\n"
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8477,7 +8477,7 @@ TEST(CodegenBridge, CumsumBridgedMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
@@ -8488,23 +8488,23 @@ TEST(CodegenBridge, CumsumBridgedMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cumsum_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source +
+    std::string program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1, 2, 3, 4}, y[4];\n"
-        "  " + emitted.name + "(x, 4, y, 4);\n"
+        "  " + keel::to_std_string(emitted.name) + "(x, 4, y, 4);\n"
         "  std::FILE* g = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!g) return 2;\n"
         "  for (int i = 0; i < 4; ++i) std::fprintf(g, \"%.17g\\n\", y[i]);\n"
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8555,7 +8555,7 @@ TEST(CodegenOpsKernel, MatrixProductViaOpsKernelRunsCorrectly)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_opskernel_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source +
+    std::string program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double A[6] = {1, 2, 3, 4, 5, 6};\n"  // 2x3 col-major
@@ -8568,12 +8568,13 @@ TEST(CodegenOpsKernel, MatrixProductViaOpsKernelRunsCorrectly)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR, NUMKIT_KEEL_INCLUDE_DIR};
-    opts.defines     = {"NUMKIT_OPS_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_OPS_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_OPS_INCLUDE_DIR));
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_KEEL_INCLUDE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_OPS_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_OPS_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_OPS_SHARED_DLL, keel::path_join(base, "numkit_ops_kernels.dll"));
@@ -8620,7 +8621,7 @@ TEST(CodegenOpsKernel, ElementwiseBinaryViaOpsKernelRunsCorrectly)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_opsewise_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source +
+    std::string program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[3] = {1, 2, 3}, y[3] = {10, 20, 30}, z[3];\n"
@@ -8631,12 +8632,13 @@ TEST(CodegenOpsKernel, ElementwiseBinaryViaOpsKernelRunsCorrectly)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR, NUMKIT_KEEL_INCLUDE_DIR};
-    opts.defines     = {"NUMKIT_OPS_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_OPS_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_OPS_INCLUDE_DIR));
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_KEEL_INCLUDE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_OPS_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_OPS_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_OPS_SHARED_DLL, keel::path_join(base, "numkit_ops_kernels.dll"));
@@ -8683,7 +8685,7 @@ TEST(CodegenOpsKernel, ComplexMatrixProductViaOpsKernelRunsCorrectly)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_opscxmm_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source +
+    std::string program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  std::complex<double> A[4] = { {0,1}, {0,0}, {0,0}, {0,1} };\n"  // col-major diag(i)
@@ -8696,12 +8698,13 @@ TEST(CodegenOpsKernel, ComplexMatrixProductViaOpsKernelRunsCorrectly)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR, NUMKIT_KEEL_INCLUDE_DIR};
-    opts.defines     = {"NUMKIT_OPS_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_OPS_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_OPS_INCLUDE_DIR));
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_KEEL_INCLUDE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_OPS_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_OPS_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_OPS_SHARED_DLL, keel::path_join(base, "numkit_ops_kernels.dll"));
@@ -8747,7 +8750,7 @@ TEST(CodegenOpsKernel, TranscendentalViaOpsKernelMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_opssin_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source +
+    std::string program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {0.5, 1.0, 1.5, 2.0}, y[4];\n"
@@ -8758,12 +8761,13 @@ TEST(CodegenOpsKernel, TranscendentalViaOpsKernelMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_OPS_INCLUDE_DIR, NUMKIT_KEEL_INCLUDE_DIR};
-    opts.defines     = {"NUMKIT_OPS_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_OPS_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_OPS_INCLUDE_DIR));
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_KEEL_INCLUDE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_OPS_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_OPS_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_OPS_SHARED_DLL, keel::path_join(base, "numkit_ops_kernels.dll"));
@@ -8807,7 +8811,7 @@ TEST(CodegenBridge, ComplexFftBridgedMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
@@ -8818,7 +8822,7 @@ TEST(CodegenBridge, ComplexFftBridgedMatchesInterpreter)
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cxfft_e2e_out.txt"));
     (void)keel::fs_remove(outTxt);
 
-    std::string program = emitted.source +
+    std::string program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4] = {1, 2, 3, 4};\n"
@@ -8830,12 +8834,12 @@ TEST(CodegenBridge, ComplexFftBridgedMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
     ASSERT_TRUE(copyErr.is_ok()) << "copy numkit_codegen_rt.dll: " << keel::to_std_string_view(keel::error_message(copyErr));
@@ -8882,7 +8886,7 @@ TEST(CodegenBridge, BridgedArrayLocalRunsAndMatchesInterpreter)
 
     BridgeOptions bridge;
     bridge.enabled       = true;
-    bridge.runtimeHeader = "numkit_codegen_rt.h";
+    bridge.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction emitted = emitFunction(
         *fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg, nullptr,
         bridge);
@@ -8895,7 +8899,7 @@ TEST(CodegenBridge, BridgedArrayLocalRunsAndMatchesInterpreter)
     (void)keel::fs_remove(outTxt);
 
     const std::size_t N       = 8;
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  const std::size_t N = 8;\n"
@@ -8908,12 +8912,12 @@ TEST(CodegenBridge, BridgedArrayLocalRunsAndMatchesInterpreter)
         "  std::fclose(g); return 0;\n}\n";
 
     aot::CompileOptions opts;
-    opts.includeDirs = {NUMKIT_BRIDGE_DIR};
-    opts.defines     = {"NUMKIT_RT_USE_DLL"};
-    opts.linkLibs    = {NUMKIT_RT_IMPORT_LIB};
+    opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
+    opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
+    opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto r = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(r.status, aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\n--- generated source ---\n" << program;
+        << "log:\n" << r.log.c_str() << "\n--- generated source ---\n" << program;
 
     const keel::Error copyErr =
         keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(base, "numkit_codegen_rt.dll"));
@@ -8953,7 +8957,7 @@ TEST(CodegenE2E, PermuteRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_permute3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_permute3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double s = f();\n"  // 1 + 30 + 500 + 2000 + 800000 = 802531
@@ -8992,7 +8996,7 @@ TEST(CodegenE2E, Cat3StackMatrices)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cat3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cat3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -9038,7 +9042,7 @@ TEST(CodegenE2E, PageSliceReadRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_pageslice_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_pageslice_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double a1[2] = {1, 2};\n"
@@ -9081,7 +9085,7 @@ TEST(CodegenE2E, PageSliceWriteRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_pagewrite_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_pagewrite_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double m1[2] = {10, 20};\n"
@@ -9118,7 +9122,7 @@ TEST(CodegenE2E, ReshapeToRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_reshape3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_reshape3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
@@ -9160,7 +9164,7 @@ TEST(CodegenE2E, Cat3Rank3Operands)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cat3r3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cat3r3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double p1[2] = {1, 2};\n"
@@ -9201,7 +9205,7 @@ TEST(CodegenE2E, PageRangeReadRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_pagerange_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_pagerange_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};\n"
@@ -9238,7 +9242,7 @@ TEST(CodegenE2E, LeadingScalarSliceRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_leadslice_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_leadslice_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};\n"
@@ -9275,7 +9279,7 @@ TEST(CodegenE2E, MiddleScalarSliceRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_midslice_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_midslice_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};\n"
@@ -9312,7 +9316,7 @@ TEST(CodegenE2E, FiberSliceRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_fiber_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_fiber_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};\n"
@@ -9349,7 +9353,7 @@ TEST(CodegenE2E, RowOfPageSliceRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rowofpage_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rowofpage_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};\n"
@@ -9386,7 +9390,7 @@ TEST(CodegenE2E, ColOfPageSliceRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_colofpage_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_colofpage_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};\n"
@@ -9426,7 +9430,7 @@ TEST(CodegenE2E, Rank4FoundationAndPermute)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rank4_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rank4_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double s = f();\n"  // 1 + 20 + 1600 + 16000 + 400000 = 417621
@@ -9460,7 +9464,7 @@ TEST(CodegenE2E, ReshapeToRank4)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_reshape4_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_reshape4_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[16];\n"
@@ -9501,7 +9505,7 @@ TEST(CodegenE2E, Cat4StackRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cat4_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cat4_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
@@ -9543,7 +9547,7 @@ TEST(CodegenE2E, GeneralSliceRank4)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_genslice4_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_genslice4_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[16];\n"
@@ -9589,7 +9593,7 @@ TEST(CodegenE2E, GeneralSliceWriteRank4)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_slicewr4_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_slicewr4_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8];\n"
@@ -9630,7 +9634,7 @@ TEST(CodegenE2E, CatDim3ThreeOperands)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cat3x3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cat3x3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[4];\n"
@@ -9671,7 +9675,7 @@ TEST(CodegenE2E, CatDim4ThreeOperands)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cat4x3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cat4x3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8];\n"
@@ -9711,7 +9715,7 @@ TEST(CodegenE2E, PageRangeWriteRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_pgrangewr_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_pgrangewr_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8];\n"
@@ -9753,7 +9757,7 @@ TEST(CodegenE2E, SlabRangeReadWriteRank4)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_slabrange4_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_slabrange4_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[32];\n"
@@ -9795,7 +9799,7 @@ TEST(CodegenE2E, ColumnRangeReadWrite2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_colrange2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_colrange2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12];\n"
@@ -9837,7 +9841,7 @@ TEST(CodegenE2E, RowRangeReadWrite2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rowrange2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rowrange2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12];\n"
@@ -9879,7 +9883,7 @@ TEST(CodegenE2E, BlockRangeReadWrite2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_blockrange2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_blockrange2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[16];\n"
@@ -9919,7 +9923,7 @@ TEST(CodegenE2E, FlipWithDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_flipdim2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_flipdim2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6];\n"
@@ -9960,7 +9964,7 @@ TEST(CodegenE2E, Cumsum2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cumsum2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cumsum2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6];\n"
@@ -10000,7 +10004,7 @@ TEST(CodegenE2E, Cummax2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cummax2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cummax2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {3, 1, 4, 1, 5, 9};\n"  // col-major 2x3: [3 4 5; 1 1 9]
@@ -10039,7 +10043,7 @@ TEST(CodegenE2E, Diff2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_diff2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_diff2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[9] = {1, 2, 4, 8, 16, 32, 64, 128, 256};\n"  // 3x3 col-major
@@ -10078,7 +10082,7 @@ TEST(CodegenE2E, ColumnMaxMin2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_colmaxmin2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_colmaxmin2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[9] = {3, 1, 4, 1, 5, 9, 2, 6, 5};\n"  // 3x3 col-major
@@ -10118,7 +10122,7 @@ TEST(CodegenE2E, MaxMinWithDim2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_maxmindim_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_maxmindim_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[9] = {3, 1, 4, 1, 5, 9, 2, 6, 5};\n"  // 3x3 col-major
@@ -10156,7 +10160,7 @@ TEST(CodegenE2E, AnyAllRowwise2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_anyallrow_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_anyallrow_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[9] = {1, 0, 1, 1, 0, 0, 1, 0, 1};\n"  // 3x3 col-major -> rows [1 1 1;0 0 0;1 0 1]
@@ -10195,7 +10199,7 @@ TEST(CodegenE2E, ColumnAnyAll2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_anyall2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_anyall2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[9] = {0, 0, 0, 1, 2, 3, 4, 0, 5};\n"  // 3x3 col-major
@@ -10236,7 +10240,7 @@ TEST(CodegenE2E, FlipRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_fliprank3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_fliprank3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8];\n"
@@ -10276,7 +10280,7 @@ TEST(CodegenE2E, Sort2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sort2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sort2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {3, 1, 2, 6, 4, 5};\n"  // 3x2 col-major
@@ -10314,7 +10318,7 @@ TEST(CodegenE2E, Unique2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_unique2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_unique2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {3, 1, 3, 2, 1, 5};\n"  // 2x3 col-major, duplicated
@@ -10353,7 +10357,7 @@ TEST(CodegenE2E, FliplrFlipudRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_fliplrud3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_fliplrud3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8];\n"
@@ -10392,7 +10396,7 @@ TEST(CodegenE2E, Rot90Rank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rot90rank3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rot90rank3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8];\n"
@@ -10434,7 +10438,7 @@ TEST(CodegenE2E, Rot90WithK)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_rot90k_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_rot90k_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6];\n"
@@ -10475,7 +10479,7 @@ TEST(CodegenE2E, ColumnArgMaxMin2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_argmaxmin2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_argmaxmin2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[9] = {3, 1, 4, 1, 5, 9, 2, 6, 5};\n"  // 3x3 col-major
@@ -10514,7 +10518,7 @@ TEST(CodegenE2E, SortWithIndex)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sortidx_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sortidx_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {3, 1, 4, 1, 5};\n"  // tie: two 1s at positions 2 and 4
@@ -10553,7 +10557,7 @@ TEST(CodegenE2E, SortWithIndex2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sortidx2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sortidx2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {3, 1, 2, 6, 4, 5};\n"  // 3x2 col-major
@@ -10591,7 +10595,7 @@ TEST(CodegenE2E, UniqueWithIndices)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_uniqueidx_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_uniqueidx_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {30, 10, 40, 10, 50};\n"  // tie: two 10s at positions 2 and 4
@@ -10630,7 +10634,7 @@ TEST(CodegenE2E, UniqueWithIndices2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_uniqueidx2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_uniqueidx2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {30, 10, 40, 10, 50, 10};\n"  // 2x3 col-major, repeats of 10
@@ -10667,7 +10671,7 @@ TEST(CodegenE2E, UnionVectors)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_union_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_union_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {3, 1, 4, 1, 5};\n"
@@ -10706,7 +10710,7 @@ TEST(CodegenE2E, IntersectSetdiffVectors)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_setdiff_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_setdiff_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {3, 1, 4, 1, 5};\n"
@@ -10744,7 +10748,7 @@ TEST(CodegenE2E, IsmemberMask)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_ismember_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_ismember_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {3, 1, 4, 1, 5};\n"
@@ -10782,7 +10786,7 @@ TEST(CodegenE2E, IntersectWithIndices)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_isectidx_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_isectidx_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {30, 10, 40, 10, 50};\n"
@@ -10820,7 +10824,7 @@ TEST(CodegenE2E, SetdiffWithIndices)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_setdiffidx_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_setdiffidx_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {30, 10, 40, 10, 50};\n"
@@ -10859,7 +10863,7 @@ TEST(CodegenE2E, UnionWithIndices)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_unionidx_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_unionidx_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[5] = {30, 10, 40, 10, 50};\n"
@@ -10897,7 +10901,7 @@ TEST(CodegenE2E, Sortrows)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sortrows_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sortrows_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8] = {3, 1, 3, 1, 1, 2, 0, 2};\n"  // 4x2 col-major
@@ -10937,7 +10941,7 @@ TEST(CodegenE2E, Median2D)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_median2d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_median2d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[8] = {3, 1, 4, 8, 5, 2, 9, 6};\n"  // 4x2 col-major
@@ -10974,7 +10978,7 @@ TEST(CodegenE2E, Mode)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_mode_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_mode_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[6] = {3, 3, 7, 7, 5, 1};\n"  // 1-D mode 3; 3x2 col modes [3 1]
@@ -11013,7 +11017,7 @@ TEST(CodegenE2E, CumsumCumprodRank3Dim3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cumrank3dim3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cumrank3dim3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12];\n"
@@ -11057,7 +11061,7 @@ TEST(CodegenE2E, CumsumRank3Dim1Dim2)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cumrank3d12_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cumrank3d12_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12];\n"
@@ -11102,7 +11106,7 @@ TEST(CodegenE2E, CummaxCumminRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_cummmrank3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_cummmrank3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {4, 2, 7, 1, 3, 8, 6, 5, 9, 2, 1, 7};\n"  // 2x2x3 col-major
@@ -11145,7 +11149,7 @@ TEST(CodegenE2E, CircshiftRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_circshiftrank3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_circshiftrank3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12];\n"
@@ -11189,7 +11193,7 @@ TEST(CodegenE2E, SortRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_sortrank3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_sortrank3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {4, 2, 7, 1, 3, 8, 6, 5, 9, 2, 1, 7};\n"  // 2x2x3 col-major
@@ -11231,7 +11235,7 @@ TEST(CodegenE2E, DiffRank3Dim1Dim2)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_diffrank3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_diffrank3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {4, 2, 7, 1, 3, 8, 6, 5, 9, 2, 1, 7};\n"  // 2x2x3 col-major
@@ -11274,7 +11278,7 @@ TEST(CodegenE2E, MaxMinReduceRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_maxminreducerank3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_maxminreducerank3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {4, 2, 7, 1, 3, 8, 6, 5, 9, 2, 1, 7};\n"  // 2x2x3 col-major
@@ -11317,7 +11321,7 @@ TEST(CodegenE2E, AnyAllReduceRank3)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_anyallreducerank3_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_anyallreducerank3_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double x[12] = {1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 1};\n"  // 2x2x3 col-major, mixed 0/1
@@ -11376,10 +11380,10 @@ TEST(CodegenE2E, PartialNargoutUserCall)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_partialnargout_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_partialnargout_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double out = " + emitted.name + "(5.0);\n"  // 10 + 50 + 600 = 660
+        "  double out = " + keel::to_std_string(emitted.name) + "(5.0);\n"  // 10 + 50 + 600 = 660
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", out);\n"
@@ -11424,10 +11428,10 @@ TEST(CodegenE2E, StructParamAcrossABI)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_structparam_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_structparam_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double out = " + emitted.name + "();\n"  // 3*10 + 4 = 34
+        "  double out = " + keel::to_std_string(emitted.name) + "();\n"  // 3*10 + 4 = 34
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", out);\n"
@@ -11471,10 +11475,10 @@ TEST(CodegenE2E, StructReturnAcrossABI)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_structret_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_structret_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
-        "  double out = " + emitted.name + "();\n"  // 5 + 7*10 = 75
+        "  double out = " + keel::to_std_string(emitted.name) + "();\n"  // 5 + 7*10 = 75
         "  std::FILE* h = std::fopen(\"" + fwd(outTxt) + "\", \"w\");\n"
         "  if (!h) return 2;\n"
         "  std::fprintf(h, \"%.17g\\n\", out);\n"
@@ -11507,7 +11511,7 @@ TEST(CodegenE2E, GrowLocalVectorByIndex)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_grow1d_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_grow1d_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(3.0);\n"  // x=[1 2 3]->[1 2 3 0 99]: 5*1000 + 99*10 + 0 = 5990
@@ -11544,7 +11548,7 @@ TEST(CodegenE2E, AppendViaEndPlusOne)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_append_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_append_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(3.0);\n"  // [1 2 3 99 7]: 5*100 + 7*10 + 99 = 669
@@ -11584,7 +11588,7 @@ TEST(CodegenE2E, EmptyInitLoopBuild)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_emptybuild_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_emptybuild_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f(3.0);\n"  // x=[1 4 9]: 3*100 + 1 + 9*10 = 391
@@ -11629,7 +11633,7 @@ TEST(CodegenE2E, StructArraySoA)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_structarr_soa_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_structarr_soa_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // 5 + 6*10 + 70*100 + 80*1000 = 87065
@@ -11669,7 +11673,7 @@ TEST(CodegenE2E, ConstDynamicField)
     const keel::String base = aotTmpDir();
     const std::string exe    = keel::to_std_string(keel::path_join(base, "numkit_dynfield_e2e.exe"));
     const std::string outTxt = keel::to_std_string(keel::path_join(base, "numkit_dynfield_e2e_out.txt"));
-    std::string       program = emitted.source +
+    std::string       program = keel::to_std_string(emitted.source) +
         "#include <cstdio>\n"
         "int main() {\n"
         "  double r = f();\n"  // 5*10 + 7 = 57

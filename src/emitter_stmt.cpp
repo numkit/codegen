@@ -11,9 +11,9 @@ void Emitter::emitFor(const ASTNode &s)
     if (range.type != NodeType::COLON_EXPR)
         unsupported("for range must be a colon expression a:b / a:s:b");
 
-    const std::string &loopVar  = s.strValue;
-    const std::string  cLoopVar = cppIdent(loopVar);
-    const ASTNode     &body     = *s.children[1];
+    const keel::String &loopVar  = s.strValue;
+    const keel::String  cLoopVar = cppIdent(loopVar);
+    const ASTNode      &body     = *s.children[1];
 
     // Settle body types (fixpoint) so indexing / disambiguation inside the
     // loop sees loop-carried types. The loop var takes the range element
@@ -43,7 +43,7 @@ void Emitter::emitFor(const ASTNode &s)
             converged = true;
             break;
         }
-        for (const auto &[k, av] : next.entries())
+        for (auto [k, av] : next.entries())
             if (!cur.has(k) || av != cur.get(k))
                 cur.set(k, AbstractValue::dynamic());
     }
@@ -53,11 +53,12 @@ void Emitter::emitFor(const ASTNode &s)
     // brick 6: clean-index promotion -> 0-based size_t counter (no double
     // loop var, no bounds check). Gated on analyzeOptimizations(); absent
     // the fact this falls through to the always-correct checked form.
-    if (opt_.promotedLoops.count(&s)) {
-        const std::string         *saved = promotedCounter_;
-        promotedCounter_                 = &loopVar;
+    if (opt_.promotedLoops.contains(&s)) {
+        const keel::String *saved = promotedCounter_;
+        promotedCounter_          = &loopVar;
+        const keel::String *bound = opt_.loopBound.get(&s);
         open("for (std::size_t " + cLoopVar + " = 0; " + cLoopVar + " < "
-             + opt_.loopBound.at(&s) + "; ++" + cLoopVar + ")");
+             + (bound ? bound->as_ref() : keel::StringRef()) + "; ++" + cLoopVar + ")");
         emitStmt(body);
         close();
         promotedCounter_ = saved;
@@ -67,19 +68,19 @@ void Emitter::emitFor(const ASTNode &s)
 
     // Default (always correct): a double loop variable counting the colon
     // range; index sites stay bounds-checked.
-    const std::string startE = emitExpr(*range.children[0]);
-    std::string       stopE, stepE, cond;
+    const keel::String startE = emitExpr(*range.children[0]);
+    keel::String       stopE, stepE, cond;
     if (range.children.size() == 2) {
         stopE = emitExpr(*range.children[1]);
-        stepE = "1.0";
-        cond  = "<=";
+        stepE.assign("1.0");
+        cond.assign("<=");
     } else if (range.children.size() == 3) {
         const ConstVal sc = inferExpr(*range.children[1], types_, reg_, classes_).constant;
         if (!sc.isKnown() || sc.value == 0.0)
             unsupported("for range step must be a known non-zero constant");
         stepE = emitExpr(*range.children[1]);
         stopE = emitExpr(*range.children[2]);
-        cond  = sc.value > 0.0 ? "<=" : ">=";
+        cond.assign(sc.value > 0.0 ? "<=" : ">=");
     } else {
         unsupported("malformed colon range");
     }
@@ -116,7 +117,7 @@ void Emitter::emitWhile(const ASTNode &s)
             converged = true;
             break;
         }
-        for (const auto &[k, av] : next.entries())
+        for (auto [k, av] : next.entries())
             if (!cur.has(k) || av != cur.get(k))
                 cur.set(k, AbstractValue::dynamic());
     }
@@ -138,11 +139,11 @@ void Emitter::emitIf(const ASTNode &s)
         have   = true;
     };
 
-    for (std::size_t i = 0; i < s.branches.size(); ++i) {
+    for (keel::usize i = 0; i < s.branches.size(); ++i) {
         types_ = entry;  // condition + body typed from the incoming env
-        const std::string cond = emitCondition(*s.branches[i].first);
+        const keel::String cond = emitCondition(*s.branches[i].cond);
         open((i == 0 ? "if (" : "else if (") + cond + ")");
-        if (s.branches[i].second) emitStmt(*s.branches[i].second);
+        if (s.branches[i].body) emitStmt(*s.branches[i].body);
         close();
         mergeIn(types_);
     }
@@ -171,7 +172,7 @@ void Emitter::emitSwitch(const ASTNode &s)
     const AbstractValue selv = inferExpr(sel, types_, reg_, classes_);
     if (!isUnboxableScalarType(selv.type))
         unsupported("switch selector must be an unboxed scalar (v1)");
-    const std::string tmp = "_numkit_switch" + std::to_string(switchCounter_++);
+    const keel::String tmp = "_numkit_switch" + toStr(switchCounter_++);
 
     const TypeEnv entry = types_;
     TypeEnv       merged;
@@ -181,17 +182,17 @@ void Emitter::emitSwitch(const ASTNode &s)
     open("");  // scope the selector temp (no leak / nested-switch name collision)
     line("const " + cppScalarType(selv.type.dtype) + " " + tmp + " = " + emitExpr(sel) + ";");
 
-    auto eqTerm = [&](const ASTNode &v) -> std::string {
+    auto eqTerm = [&](const ASTNode &v) -> keel::String {
         const AbstractValue vv = inferExpr(v, types_, reg_, classes_);
         if (!isUnboxableScalarType(vv.type))
             unsupported("switch case value must be an unboxed scalar (v1)");
         return "(" + tmp + " == " + emitExpr(v) + ")";
     };
 
-    for (std::size_t i = 0; i < s.branches.size(); ++i) {
+    for (keel::usize i = 0; i < s.branches.size(); ++i) {
         types_ = entry;  // each case body typed from the incoming env
-        const ASTNode &caseVal = *s.branches[i].first;
-        std::string    cond;
+        const ASTNode &caseVal = *s.branches[i].cond;
+        keel::String   cond;
         if (caseVal.type == NodeType::CELL_LITERAL) {
             // `case {a,b,...}` matches the selector against ANY element. A cell
             // literal stores each row as a BLOCK child (a 1-row cell -> one row
@@ -207,12 +208,12 @@ void Emitter::emitSwitch(const ASTNode &s)
                 else
                     addElem(*child);
             }
-            if (cond.empty()) cond = "false";  // `case {}` matches nothing
+            if (cond.empty()) cond.assign("false");  // `case {}` matches nothing
         } else {
             cond = eqTerm(caseVal);
         }
         open((i == 0 ? "if (" : "else if (") + cond + ")");
-        if (s.branches[i].second) emitStmt(*s.branches[i].second);
+        if (s.branches[i].body) emitStmt(*s.branches[i].body);
         close();
         mergeIn(types_);
     }
@@ -308,7 +309,7 @@ void Emitter::emitStmt(const ASTNode &s)
             }
             if (e.type == NodeType::CALL && !e.children.empty()
                 && e.children[0]->type == NodeType::IDENTIFIER) {
-                const std::string &fn = e.children[0]->strValue;
+                const keel::String &fn = e.children[0]->strValue;
                 const bool shadowed = types_.has(fn)
                                       || (ctx_ && ctx_->funcs && ctx_->funcs->has(fn));
                 if (!shadowed && fn == "disp" && e.children.size() == 2) {
@@ -316,13 +317,13 @@ void Emitter::emitStmt(const ASTNode &s)
                     if (arg.type == NodeType::STRING_LITERAL
                         || arg.type == NodeType::DQSTRING_LITERAL) {
                         bool ok = false;
-                        const std::string esc = cEscape(arg.strValue, ok);
+                        const keel::String esc = cEscape(arg.strValue, ok);
                         if (!ok) unsupported("disp string literal contains non-printable bytes");
                         line("numkit_rt::disp(\"" + esc + "\");");
                         return;
                     }
                     if (arg.type == NodeType::IDENTIFIER && isArrayVar(arg.strValue)) {
-                        const ArrayInfo &ai = arrays_.at(arg.strValue);
+                        const ArrayInfo &ai = arrayAt(arg.strValue);
                         if (ai.dtype == ValueType::DOUBLE) {
                             if (ai.is2D || (ai.isND && ai.ndDims.size() == 2)) {
                                 line("numkit_rt::disp_mat(" + ai.dataExpr + ", " + dimExpr(ai, 0) + ", "
@@ -348,22 +349,22 @@ void Emitter::emitStmt(const ASTNode &s)
                     return;
                 }
                 if (!shadowed && fn == "fprintf" && e.children.size() >= 2) {
-                    std::size_t fmtIdx = 1;
-                    std::string stream = "stdout";
+                    keel::usize  fmtIdx = 1;
+                    keel::String stream = keel::String::from("stdout");
                     if (e.children.size() >= 3
                         && e.children[1]->type == NodeType::NUMBER_LITERAL
                         && (e.children[1]->numValue == 1.0 || e.children[1]->numValue == 2.0)
                         && (e.children[2]->type == NodeType::STRING_LITERAL
                             || e.children[2]->type == NodeType::DQSTRING_LITERAL)) {
                         fmtIdx = 2;
-                        stream = (e.children[1]->numValue == 2.0) ? "stderr" : "stdout";
+                        stream.assign((e.children[1]->numValue == 2.0) ? "stderr" : "stdout");
                     }
                     if (e.children[fmtIdx]->type == NodeType::STRING_LITERAL
                         || e.children[fmtIdx]->type == NodeType::DQSTRING_LITERAL) {
-                        const std::string &rawFmt = e.children[fmtIdx]->strValue;
-                        std::string cppFmt;
-                        std::vector<char> specKinds;
-                        for (std::size_t i = 0; i < rawFmt.size(); ++i) {
+                        const keel::String &rawFmt = e.children[fmtIdx]->strValue;
+                        keel::String cppFmt;
+                        keel::Array<char> specKinds;
+                        for (keel::usize i = 0; i < rawFmt.size(); ++i) {
                             const char c = rawFmt[i];
                             if (c == '%') {
                                 if (i + 1 < rawFmt.size() && rawFmt[i + 1] == '%') {
@@ -402,7 +403,7 @@ void Emitter::emitStmt(const ASTNode &s)
                                     cppFmt += 'c';
                                     specKinds.push_back('c');
                                 } else {
-                                    unsupported(std::string("fprintf format specifier '%") + conv
+                                    unsupported(keel::String::from("fprintf format specifier '%") + conv
                                                 + "'");
                                 }
                             } else if (c == '\\') {
@@ -429,11 +430,11 @@ void Emitter::emitStmt(const ASTNode &s)
                                 cppFmt += c;
                             }
                         }
-                        const std::size_t nArgs = e.children.size() - (fmtIdx + 1);
+                        const keel::usize nArgs = e.children.size() - (fmtIdx + 1);
                         if (nArgs != specKinds.size())
                             unsupported("fprintf argument count does not match format specifiers");
-                        std::string callStr = "std::fprintf(" + stream + ", \"" + cppFmt + "\"";
-                        for (std::size_t k = 0; k < nArgs; ++k) {
+                        keel::String callStr = "std::fprintf(" + stream + ", \"" + cppFmt + "\"";
+                        for (keel::usize k = 0; k < nArgs; ++k) {
                             const ASTNode &a = *e.children[fmtIdx + 1 + k];
                             const char     sk = specKinds[k];
                             callStr += ", ";
@@ -442,7 +443,7 @@ void Emitter::emitStmt(const ASTNode &s)
                                     && a.type != NodeType::DQSTRING_LITERAL)
                                     unsupported("fprintf %s requires a string literal argument");
                                 bool ok = false;
-                                const std::string esc = cEscape(a.strValue, ok);
+                                const keel::String esc = cEscape(a.strValue, ok);
                                 if (!ok) unsupported("fprintf %s literal has non-printable bytes");
                                 callStr += "\"" + esc + "\"";
                             } else if (sk == 'i') {
@@ -470,12 +471,12 @@ void Emitter::emitStmt(const ASTNode &s)
                 } catch (const std::runtime_error &) {
                     if (bridge_ && !e.children.empty()
                         && e.children[0]->type == NodeType::IDENTIFIER) {
-                        const std::string &fn = e.children[0]->strValue;
+                        const keel::String &fn = e.children[0]->strValue;
                         const bool shadowed = types_.has(fn)
                                               || (ctx_ && ctx_->funcs && ctx_->funcs->has(fn));
                         if (!shadowed) {
-                            std::string args;
-                            for (std::size_t k = 1; k < e.children.size(); ++k) {
+                            keel::String args;
+                            for (keel::usize k = 1; k < e.children.size(); ++k) {
                                 args += (k > 1 ? ", " : "") + emitDynamicExpr(*e.children[k]);
                             }
                             line("numkit_rt::call_void(\"" + fn + "\", {" + args + "});");

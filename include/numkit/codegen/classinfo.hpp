@@ -17,50 +17,102 @@
 
 #include <numkit/core/ast.hpp>
 
-#include <string>
-#include <unordered_map>
-#include <vector>
+#include <keel/array.h>
+#include <keel/core.h>
+#include <keel/hash_map.h>
+#include <keel/ref.h>
+#include <keel/string.h>
 
 namespace numkit::codegen {
 
 struct ClassField {
-    std::string    name;
+    keel::String   name;
     InferredType   type;                  // inferred from the default expression
     const ASTNode *defaultExpr = nullptr;  // the property's default value expression
+
+    ClassField() noexcept = default;
+    ClassField(keel::StringRef n, InferredType t, const ASTNode *def = nullptr)
+        : name(keel::String::from(n)), type(keel::move(t)), defaultExpr(def)
+    {}
+    ClassField(const ClassField &o)
+        : name(o.name.clone()), type(o.type.clone()), defaultExpr(o.defaultExpr)
+    {}
+    ClassField &operator=(const ClassField &o)
+    {
+        if (this != &o) {
+            name        = o.name.clone();
+            type        = o.type.clone();
+            defaultExpr = o.defaultExpr;
+        }
+        return *this;
+    }
+    ClassField(ClassField &&) noexcept = default;
+    ClassField &operator=(ClassField &&) noexcept = default;
+    ~ClassField() noexcept = default;
+
+    ClassField clone() const { return *this; }
 };
 
 struct ClassInfo {
-    std::string                                      name;
-    bool                                             isHandle = false;
-    int                                              id       = -1;
-    std::vector<ClassField>                          fields;
-    std::unordered_map<std::string, const ASTNode *> methods;  // name -> FUNCTION_DEF
-    const ASTNode                                   *def = nullptr;  // the CLASSDEF_DEF
+    keel::String                                name;
+    bool                                        isHandle = false;
+    int                                         id       = -1;
+    keel::Array<ClassField>                     fields;
+    keel::HashMap<keel::String, const ASTNode *> methods;  // name -> FUNCTION_DEF
+    const ASTNode                              *def = nullptr;  // the CLASSDEF_DEF
 
-    const ClassField *field(const std::string &n) const;
-    const ASTNode    *method(const std::string &n) const;
+    ClassInfo() noexcept = default;
+    ClassInfo(const ClassInfo &o)
+        : name(o.name.clone()), isHandle(o.isHandle), id(o.id), fields(o.fields.clone()),
+          methods(o.methods.clone()), def(o.def)
+    {}
+    ClassInfo &operator=(const ClassInfo &o)
+    {
+        if (this != &o) {
+            name     = o.name.clone();
+            isHandle = o.isHandle;
+            id       = o.id;
+            fields   = o.fields.clone();
+            methods  = o.methods.clone();
+            def      = o.def;
+        }
+        return *this;
+    }
+    ClassInfo(ClassInfo &&) noexcept = default;
+    ClassInfo &operator=(ClassInfo &&) noexcept = default;
+    ~ClassInfo() noexcept = default;
+
+    ClassInfo clone() const { return *this; }
+
+    const ClassField *field(keel::StringRef n) const;
+    const ASTNode    *method(keel::StringRef n) const;
 };
 
 // classId -> ClassInfo (id == insertion index). Borrows AST nodes (owned by
 // the caller's parse tree, which must outlive the registry).
 class ClassRegistry {
 public:
+    ClassRegistry() noexcept = default;
+    ClassRegistry(ClassRegistry &&) noexcept = default;
+    ClassRegistry &operator=(ClassRegistry &&) noexcept = default;
+    ~ClassRegistry() noexcept = default;
+
     int              add(ClassInfo info);  // assigns + returns the classId
     const ClassInfo *byId(int id) const;
-    const ClassInfo *byName(const std::string &name) const;
-    int              idOf(const std::string &name) const;  // -1 if absent
-    bool             has(const std::string &name) const { return idOf(name) >= 0; }
-    std::size_t      size() const { return classes_.size(); }
+    const ClassInfo *byName(keel::StringRef name) const;
+    int              idOf(keel::StringRef name) const;  // -1 if absent
+    bool             has(keel::StringRef name) const { return idOf(name) >= 0; }
+    keel::usize      size() const { return classes_.size(); }
 
 private:
-    std::vector<ClassInfo>               classes_;
-    std::unordered_map<std::string, int> byName_;
+    keel::Array<ClassInfo>              classes_;
+    keel::HashMap<keel::String, int>    byName_;
 };
 
 // Why `classDef` is outside the v1 compilable subset; empty string =
 // accepted. (Inheritance beyond `handle`, `get.`/`set.` accessors,
 // Dependent/Constant/Abstract properties.)
-std::string classRefusalReason(const ASTNode &classDef);
+keel::String classRefusalReason(const ASTNode &classDef);
 
 // Build a ClassInfo from a CLASSDEF_DEF: `id` is the classId it will hold;
 // field types are inferred from property defaults under `reg`. Throws
@@ -70,7 +122,7 @@ ClassInfo buildClassInfo(const ASTNode &classDef, int id, const TransferRegistry
 
 // Collect every CLASSDEF_DEF reachable in `root` into `reg`. Throws on a
 // refused class (loud, per §7a). Returns the number added.
-std::size_t collectClasses(const ASTNode &root, ClassRegistry &reg,
+keel::usize collectClasses(const ASTNode &root, ClassRegistry &reg,
                            const TransferRegistry &reg2);
 
 } // namespace numkit::codegen

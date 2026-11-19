@@ -71,7 +71,7 @@ public:
         if (pred.isDynamic()) return;  // top — over-approximates everything
         ASSERT_TRUE(pred.isConcrete()) << name << ": Bottom is never sound here";
         EXPECT_EQ(pred.dtype, actual.type())
-            << name << " UNSOUND: predicted " << pred.str()
+            << name << " UNSOUND: predicted " << pred.str().c_str()
             << " but runtime produced " << numkit::mtypeName(actual.type());
         if (pred.shape.kind == ShapeKind::KnownDims) {
             EXPECT_EQ(pred.shape.rows, actual.dims().rows()) << name << ": rows";

@@ -22,8 +22,10 @@
 
 #include <numkit/core/ast.hpp>
 
-#include <string>
-#include <unordered_map>
+#include <keel/core.h>
+#include <keel/hash_map.h>
+#include <keel/ref.h>
+#include <keel/string.h>
 
 namespace numkit::codegen {
 
@@ -38,7 +40,29 @@ struct AbstractValue {
     InferredType type;
     ConstVal     constant = ConstVal::unknown();
 
-    static AbstractValue dynamic() { return {InferredType::dynamic(), ConstVal::unknown()}; }
+    AbstractValue() noexcept = default;
+    AbstractValue(InferredType t, ConstVal c = ConstVal::unknown()) noexcept
+        : type(keel::move(t)), constant(c)
+    {}
+    AbstractValue(const AbstractValue &o) : type(o.type.clone()), constant(o.constant) {}
+    AbstractValue &operator=(const AbstractValue &o)
+    {
+        if (this != &o) {
+            type     = o.type.clone();
+            constant = o.constant;
+        }
+        return *this;
+    }
+    AbstractValue(AbstractValue &&) noexcept = default;
+    AbstractValue &operator=(AbstractValue &&) noexcept = default;
+    ~AbstractValue() noexcept = default;
+
+    AbstractValue clone() const { return *this; }
+
+    static AbstractValue dynamic()
+    {
+        return AbstractValue(InferredType::dynamic(), ConstVal::unknown());
+    }
 
     // The ArgInfo a transfer function consumes for this value.
     ArgInfo asArg() const { return ArgInfo(type, constant); }
@@ -59,17 +83,30 @@ AbstractValue join(const AbstractValue &a, const AbstractValue &b);
 // conservatively unknown).
 class TypeEnv {
 public:
-    void          set(const std::string &name, AbstractValue v);
-    AbstractValue get(const std::string &name) const;
-    bool          has(const std::string &name) const;
-    std::size_t   size() const { return vars_.size(); }
+    TypeEnv() noexcept = default;
+    TypeEnv(const TypeEnv &o) : vars_(o.vars_.clone()) {}
+    TypeEnv &operator=(const TypeEnv &o)
+    {
+        if (this != &o) vars_ = o.vars_.clone();
+        return *this;
+    }
+    TypeEnv(TypeEnv &&) noexcept = default;
+    TypeEnv &operator=(TypeEnv &&) noexcept = default;
+    ~TypeEnv() noexcept = default;
 
-    const std::unordered_map<std::string, AbstractValue> &entries() const { return vars_; }
-    bool operator==(const TypeEnv &o) const { return vars_ == o.vars_; }
+    TypeEnv clone() const { return *this; }
+
+    void          set(keel::StringRef name, AbstractValue v);
+    AbstractValue get(keel::StringRef name) const;
+    bool          has(keel::StringRef name) const;
+    keel::usize   size() const { return vars_.size(); }
+
+    const keel::HashMap<keel::String, AbstractValue> &entries() const { return vars_; }
+    bool operator==(const TypeEnv &o) const;
     bool operator!=(const TypeEnv &o) const { return !(*this == o); }
 
 private:
-    std::unordered_map<std::string, AbstractValue> vars_;
+    keel::HashMap<keel::String, AbstractValue> vars_;
 };
 
 // Join two environments at a control-flow merge: a variable in both is
@@ -88,7 +125,7 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
 // the type the variable is assigned THERE (its program-point type, not the
 // post-merge value). The emitter consumes this to choose one C++ type per
 // local that is valid at every point. nullptr disables recording.
-using DeclTypeRecorder = std::unordered_map<std::string, InferredType>;
+using DeclTypeRecorder = keel::HashMap<keel::String, InferredType>;
 
 // Apply one statement to the environment (straight-line). Unmodelled
 // statement kinds set every variable they assign to Dynamic (sound). When

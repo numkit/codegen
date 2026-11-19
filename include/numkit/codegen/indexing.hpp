@@ -19,7 +19,7 @@
 
 #include <numkit/codegen/inference.hpp>  // AbstractValue
 
-#include <vector>
+#include <keel/ref.h>
 
 namespace numkit::codegen {
 
@@ -54,14 +54,14 @@ bool isScalarPositionIndex(const AbstractValue &idx);
 
 // Decide how to lower `array(indices)` as a READ.
 IndexPlan planIndexRead(const AbstractValue &array,
-                        const std::vector<AbstractValue> &indices);
+                        keel::ArrayRef<AbstractValue> indices);
 
 // Decide how to lower `array(indices) = rhs` as a WRITE. The fast store
 // additionally requires `rhs` to be an unboxed scalar whose dtype matches
 // the buffer (yp[i] = <double>); deletion (`x(i)=[]`), dtype conversion,
 // and growth-with-promotion all route to Runtime.
 IndexPlan planIndexWrite(const AbstractValue &array,
-                         const std::vector<AbstractValue> &indices,
+                         keel::ArrayRef<AbstractValue> indices,
                          const AbstractValue &rhs);
 
 } // namespace numkit::codegen

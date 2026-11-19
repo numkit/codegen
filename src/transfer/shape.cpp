@@ -15,7 +15,7 @@ namespace numkit::codegen {
 namespace {
 
 // numel / length / ndims: always a scalar double count.
-InferredType countTransfer(const std::vector<ArgInfo> & /*args*/)
+InferredType countTransfer(keel::ArrayRef<ArgInfo> /*args*/)
 {
     return InferredType::scalar(ValueType::DOUBLE);
 }
@@ -25,7 +25,7 @@ InferredType countTransfer(const std::vector<ArgInfo> & /*args*/)
 // vector / matrix, the array's rank for N-D. Unknown shape -> unknown rank ->
 // Dynamic (the sound fallback). The VALUES are filled by the emitter; this
 // transfer only fixes the result SHAPE (1 x rank).
-InferredType sizeTransfer(const std::vector<ArgInfo> &args)
+InferredType sizeTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() == 2) return InferredType::scalar(ValueType::DOUBLE);  // size(A, dim)
     if (args.size() != 1) return InferredType::dynamic();
@@ -49,7 +49,7 @@ InferredType sizeTransfer(const std::vector<ArgInfo> &args)
 // arity; the emitter computes the VALUES (folding the trailing dims into c)
 // and refuses other nargout. Modelling only the supported shape keeps the
 // fallback sound (an unsupported arity -> Dynamic / explicit refusal).
-std::vector<InferredType> sizeMultiTransfer(const std::vector<ArgInfo> & /*args*/)
+keel::Array<InferredType> sizeMultiTransfer(keel::ArrayRef<ArgInfo> /*args*/)
 {
     return {InferredType::scalar(ValueType::DOUBLE), InferredType::scalar(ValueType::DOUBLE)};
 }
@@ -59,7 +59,7 @@ std::vector<InferredType> sizeMultiTransfer(const std::vector<ArgInfo> & /*args*
 // emitter lowers natively (a scan tracking the extremum + its position) in EVERY
 // tier -- so the transfer and the always-native emit agree. A matrix/N-D or non-
 // double operand -> Dynamic, which routes to the bridged multi-output path.
-std::vector<InferredType> maxMinMultiTransfer(const std::vector<ArgInfo> &args)
+keel::Array<InferredType> maxMinMultiTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE)
@@ -91,7 +91,7 @@ std::vector<InferredType> maxMinMultiTransfer(const std::vector<ArgInfo> &args)
 // [s, i] = sort(x[, 'ascend'|'descend']): sorted values (same shape as x) + the 1-based
 // permutation indices (a DOUBLE array of the same shape). v1: a 1-D DOUBLE vector (a matrix
 // is the next brick); a numeric dim arg -> deferred.
-std::vector<InferredType> sortMultiTransfer(const std::vector<ArgInfo> &args)
+keel::Array<InferredType> sortMultiTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || args.size() > 2 || !args[0].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE)
@@ -122,7 +122,7 @@ std::vector<InferredType> sortMultiTransfer(const std::vector<ArgInfo> &args)
 // Binary set op (union / intersect / setdiff) over two 1-D DOUBLE vectors -> a sorted distinct
 // 1-D DOUBLE result (runtime length -> Vector1D). Anything else -> Dynamic. Shared because the
 // shape rule is identical; the per-op element selection lives in the emitter.
-InferredType setopBinaryTransfer(const std::vector<ArgInfo> &args)
+InferredType setopBinaryTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
@@ -135,7 +135,7 @@ InferredType setopBinaryTransfer(const std::vector<ArgInfo> &args)
 // ismember(a, b): a LOGICAL mask the shape of a -- tf(i) = a(i) is a member of b. v1: two 1-D
 // DOUBLE vectors -> a 1-D LOGICAL result. (Only the SINGLE-output form; [tf,loc]=ismember has no
 // addMulti entry, so it stays Dynamic/bridged -- and is the bridged-multi-output e2e exemplar.)
-InferredType ismemberTransfer(const std::vector<ArgInfo> &args)
+InferredType ismemberTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
@@ -148,7 +148,7 @@ InferredType ismemberTransfer(const std::vector<ArgInfo> &args)
 // median(x) / mode(x): a 1-D vector reduces to a scalar; a 2-D matrix reduces COLUMN-wise to a
 // 1 x n row vector. Both are sort-based (exact, order-independent), so 2-D is native (unlike sum/
 // mean, which stay bridged on the shared vectorReductionTransfer). A scalar / N-D -> Dynamic.
-InferredType statColumnReduceTransfer(const std::vector<ArgInfo> &args)
+InferredType statColumnReduceTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete() || args[0].type.dtype != ValueType::DOUBLE)
         return InferredType::dynamic();
@@ -173,7 +173,7 @@ InferredType statColumnReduceTransfer(const std::vector<ArgInfo> &args)
 
 // sortrows(A): sort the ROWS of a 2-D matrix in ascending lexicographic order -> same shape. v1: a
 // true 2-D DOUBLE matrix (a vector/scalar/N-D -> Dynamic/bridged, so the emit never sees a non-2-D).
-InferredType sortrowsTransfer(const std::vector<ArgInfo> &args)
+InferredType sortrowsTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete() || args[0].type.dtype != ValueType::DOUBLE)
         return InferredType::dynamic();
@@ -187,7 +187,7 @@ InferredType sortrowsTransfer(const std::vector<ArgInfo> &args)
 // [u, ia, ic] = unique(x): u = sorted distinct values; ia s.t. u = x(ia) (the FIRST occurrence,
 // nk default -- probed); ic s.t. x = u(ic). All three are 1-D DOUBLE vectors (u/ia length =
 // #distinct, ic length = numel(x); all runtime -> Vector1D).
-std::vector<InferredType> uniqueMultiTransfer(const std::vector<ArgInfo> &args)
+keel::Array<InferredType> uniqueMultiTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete() || args[0].type.dtype != ValueType::DOUBLE)
         return {InferredType::dynamic(), InferredType::dynamic(), InferredType::dynamic()};
@@ -205,7 +205,7 @@ std::vector<InferredType> uniqueMultiTransfer(const std::vector<ArgInfo> &args)
 // [c, ia, ib] = intersect(a, b): c = sorted distinct common values; ia s.t. c = a(ia) (FIRST
 // occurrence in a -- probed); ib s.t. c = b(ib) (first occurrence in b). All three 1-D DOUBLE
 // (length = #common, runtime -> Vector1D). v1: two 1-D DOUBLE vectors; else Dynamic.
-std::vector<InferredType> intersectMultiTransfer(const std::vector<ArgInfo> &args)
+keel::Array<InferredType> intersectMultiTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
@@ -219,7 +219,7 @@ std::vector<InferredType> intersectMultiTransfer(const std::vector<ArgInfo> &arg
 
 // [c, ia] = setdiff(a, b): c = sorted distinct values of a not in b; ia s.t. c = a(ia) (FIRST
 // occurrence in a). Both 1-D DOUBLE (length = #result). v1: two 1-D DOUBLE vectors; else Dynamic.
-std::vector<InferredType> setdiffMultiTransfer(const std::vector<ArgInfo> &args)
+keel::Array<InferredType> setdiffMultiTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
@@ -234,7 +234,7 @@ std::vector<InferredType> setdiffMultiTransfer(const std::vector<ArgInfo> &args)
 // indices (values whose first occurrence in the concatenation [a b] falls in the a part), ib = the
 // b-sourced ones. |ia|+|ib| = |u| (3-output); the 2-output [u,ia] form drops ib (ia stays the
 // a-sourced indices -- probed). All 1-D DOUBLE. v1: two 1-D DOUBLE vectors; else Dynamic.
-std::vector<InferredType> unionMultiTransfer(const std::vector<ArgInfo> &args)
+keel::Array<InferredType> unionMultiTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete()
         || args[0].type.dtype != ValueType::DOUBLE || args[1].type.dtype != ValueType::DOUBLE)
@@ -252,7 +252,7 @@ std::vector<InferredType> unionMultiTransfer(const std::vector<ArgInfo> &args)
 // but the type stays complex; the conjugation is emitted, not inferred). N-D
 // transpose is undefined in MATLAB -> Dynamic (the sound fallback). Shared by
 // both operators since the shape rule is identical.
-InferredType transposeTransfer(const std::vector<ArgInfo> &args)
+InferredType transposeTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1) return InferredType::dynamic();
     const InferredType &t = args[0].type;
@@ -281,7 +281,7 @@ InferredType transposeTransfer(const std::vector<ArgInfo> &args)
 // transpose. Only the 1-arg matrix forms are typed (KnownDims rank-2 / NDims rank-2); a
 // vector / scalar / the rot90(A,k) 2-arg form -> Dynamic (bridged) -- the emit handles the
 // 1-arg 2-D case only.
-InferredType rot90Transfer(const std::vector<ArgInfo> &args)
+InferredType rot90Transfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || args.size() > 2 || !args[0].type.isConcrete())
         return InferredType::dynamic();
@@ -315,7 +315,7 @@ InferredType rot90Transfer(const std::vector<ArgInfo> &args)
 // 2-D matrices (KnownDims rank-2 or runtime-dim NDims rank-2), DOUBLE; the result is a
 // runtime-dim 2-D (ndShape({0,0})). Vector / scalar / non-DOUBLE operands -> Dynamic
 // (bridged); kron ships in the linalg toolbox, so the bridge handles those.
-InferredType kronTransfer(const std::vector<ArgInfo> &args)
+InferredType kronTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
@@ -333,7 +333,7 @@ InferredType kronTransfer(const std::vector<ArgInfo> &args)
 // (like [A B]). v1: a LITERAL dim 1|2 and exactly two 2-D DOUBLE matrix operands -> a
 // runtime-dim 2-D result (ndShape({0,0})). A runtime dim / >2 operands / vector / non-DOUBLE
 // -> Dynamic (bridged).
-InferredType catTransfer(const std::vector<ArgInfo> &args)
+InferredType catTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() < 3) return InferredType::dynamic();  // dim + >=2 arrays
     std::size_t dim = 0;
@@ -365,7 +365,7 @@ InferredType catTransfer(const std::vector<ArgInfo> &args)
                 return InferredType::dynamic();
         }
         return InferredType::concrete(
-            ValueType::DOUBLE, Shape::ndShape(std::vector<std::size_t>(dim == 4 ? 4 : 3, 0)));
+            ValueType::DOUBLE, Shape::ndShape(keel::Array<keel::usize>(dim == 4 ? 4 : 3, 0)));
     }
     const bool bothOk = dim == 4 ? (okDim4(args[1].type.shape) && okDim4(args[2].type.shape))
                         : dim == 3 ? (okDim3(args[1].type.shape) && okDim3(args[2].type.shape))
@@ -373,7 +373,7 @@ InferredType catTransfer(const std::vector<ArgInfo> &args)
     if (args[1].type.isConcrete() && args[2].type.isConcrete() && bothOk
         && args[1].type.dtype == ValueType::DOUBLE && args[2].type.dtype == ValueType::DOUBLE)
         return InferredType::concrete(
-            ValueType::DOUBLE, Shape::ndShape(std::vector<std::size_t>(dim == 4 ? 4 : dim == 3 ? 3
+            ValueType::DOUBLE, Shape::ndShape(keel::Array<keel::usize>(dim == 4 ? 4 : dim == 3 ? 3
                                                                                               : 2,
                                                                        0)));
     return InferredType::dynamic();
@@ -385,7 +385,7 @@ InferredType catTransfer(const std::vector<ArgInfo> &args)
 // rank r with all-runtime dims (ndShape of r zeros). v1: a DOUBLE A that is NDims (rank>=2) or a
 // KnownDims 2-D (rank 2), and a vector perm. A scalar/1-D A, a non-vector perm, or a non-DOUBLE
 // operand -> Dynamic (bridged). (A LITERAL perm is enforced at emit; a runtime perm -> refusal.)
-InferredType permuteTransfer(const std::vector<ArgInfo> &args)
+InferredType permuteTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
@@ -397,7 +397,7 @@ InferredType permuteTransfer(const std::vector<ArgInfo> &args)
     if (!args[1].type.shape.isVector1D() && args[1].type.shape.kind != ShapeKind::KnownDims)
         return InferredType::dynamic();
     return InferredType::concrete(ValueType::DOUBLE,
-                                  Shape::ndShape(std::vector<std::size_t>(rank, 0)));
+                                  Shape::ndShape(keel::Array<keel::usize>(rank, 0)));
 }
 
 // sum / prod / mean / max / min over a VECTOR (single-arg form) -> a scalar of
@@ -406,7 +406,7 @@ InferredType permuteTransfer(const std::vector<ArgInfo> &args)
 // vector->scalar single-output case is typed here (the common reduction); it is
 // bridged to the runtime for the exact result (summation order, NaN handling).
 // Matrix / N-D input, or a 2-arg call, -> Dynamic (the sound fallback).
-InferredType vectorReductionTransfer(const std::vector<ArgInfo> &args)
+InferredType vectorReductionTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     const Shape &s = args[0].type.shape;
@@ -426,7 +426,7 @@ InferredType vectorReductionTransfer(const std::vector<ArgInfo> &args)
 
 // sum / prod / mean: 1-arg over a vector -> scalar; 1-arg over a 2-D matrix -> 1-D vector
 // (column-wise); 2-arg sum(A, dim) with a 2-D matrix and literal dim 1|2 -> 1-D vector.
-InferredType sumProdMeanTransfer(const std::vector<ArgInfo> &args)
+InferredType sumProdMeanTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || !args[0].type.isConcrete()) return InferredType::dynamic();
     const Shape &s    = args[0].type.shape;
@@ -465,7 +465,7 @@ InferredType sumProdMeanTransfer(const std::vector<ArgInfo> &args)
 // 2-arg result is typed concrete ONLY for equal shapes or a scalar broadcast; any other shape
 // mismatch (row vs col, vector vs matrix -> MATLAB implicit expansion) -> Dynamic, so the
 // runtime does the broadcast (never a wrong-shape miscompile). 3-arg max(x,[],dim) -> Dynamic.
-InferredType maxMinTransfer(const std::vector<ArgInfo> &args)
+InferredType maxMinTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || !args[0].type.isConcrete()) return InferredType::dynamic();
     if (args.size() == 1) {  // reduction
@@ -529,7 +529,7 @@ InferredType maxMinTransfer(const std::vector<ArgInfo> &args)
 // 2-arg any(A, dim) form with a 2-D matrix A and a LITERAL dim 1|2 -> a LOGICAL 1-D vector (dim 1
 // -> 1 x n; dim 2 -> m x 1). The emitter lowers all to native inline loops. N-D / non-literal dim
 // -> Dynamic.
-InferredType anyAllTransfer(const std::vector<ArgInfo> &args)
+InferredType anyAllTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || !args[0].type.isConcrete()) return InferredType::dynamic();
     const Shape &s    = args[0].type.shape;
@@ -569,7 +569,7 @@ InferredType anyAllTransfer(const std::vector<ArgInfo> &args)
 // find(x) -> a 1-D DOUBLE vector of the 1-based positions of the nonzero
 // elements. The length is runtime (-> Vector1D shape, still a buffer type); the
 // emitter lowers it to a native filter loop.
-InferredType findTransfer(const std::vector<ArgInfo> &args)
+InferredType findTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     switch (args[0].type.shape.kind) {
@@ -588,7 +588,7 @@ InferredType findTransfer(const std::vector<ArgInfo> &args)
 
 // diff(x) -> consecutive differences, a 1-D vector of length n-1 (runtime ->
 // RowVector / ColVector / Vector1D) preserving the operand dtype.
-InferredType diffTransfer(const std::vector<ArgInfo> &args)
+InferredType diffTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || !args[0].type.isConcrete()) return InferredType::dynamic();
     const Shape &s     = args[0].type.shape;
@@ -626,7 +626,7 @@ InferredType diffTransfer(const std::vector<ArgInfo> &args)
 // dot(a,b) -> scalar inner product (sum of a.*b for real). v1: two 1-D real
 // DOUBLE vectors -> a DOUBLE scalar; the emitter lowers it to an accumulation
 // loop. Anything else (complex needs conj, matrix, wrong arity) -> Dynamic.
-InferredType dotTransfer(const std::vector<ArgInfo> &args)
+InferredType dotTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
@@ -643,7 +643,7 @@ InferredType dotTransfer(const std::vector<ArgInfo> &args)
 // strcmp(a,b) -> a LOGICAL scalar (true iff the two arrays are identical: same
 // length AND elementwise equal). v1: two concrete array args -> LOGICAL scalar;
 // the emitter lowers it to a length + elementwise compare.
-InferredType strcmpTransfer(const std::vector<ArgInfo> &args)
+InferredType strcmpTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
@@ -655,7 +655,7 @@ InferredType strcmpTransfer(const std::vector<ArgInfo> &args)
 
 // Single-arg type/shape query predicates (isempty / isscalar / isreal): always a
 // LOGICAL scalar for a concrete arg.
-InferredType logicalQueryTransfer(const std::vector<ArgInfo> &args)
+InferredType logicalQueryTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     if (args[0].type.shape.kind == ShapeKind::Unknown) return InferredType::dynamic();
@@ -663,7 +663,7 @@ InferredType logicalQueryTransfer(const std::vector<ArgInfo> &args)
 }
 
 // sort(x) / sort(x, 'ascend'|'descend') -> same shape AND dtype as x.
-InferredType sortTransfer(const std::vector<ArgInfo> &args)
+InferredType sortTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || args.size() > 3 || !args[0].type.isConcrete()
         || args[0].type.shape.kind == ShapeKind::Unknown)
@@ -682,7 +682,7 @@ InferredType sortTransfer(const std::vector<ArgInfo> &args)
 
 // polyval(p, x) -> the polynomial with coefficients p (highest degree first)
 // evaluated at each point of x, a DOUBLE result with the SAME shape as x.
-InferredType polyvalTransfer(const std::vector<ArgInfo> &args)
+InferredType polyvalTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
@@ -694,7 +694,7 @@ InferredType polyvalTransfer(const std::vector<ArgInfo> &args)
 }
 
 // cross(a, b): the 3-D vector cross product -> a 3-element vector (1-D DOUBLE).
-InferredType crossTransfer(const std::vector<ArgInfo> &args)
+InferredType crossTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
@@ -706,7 +706,7 @@ InferredType crossTransfer(const std::vector<ArgInfo> &args)
 }
 
 // trace(A): the sum of the diagonal of a 2-D matrix -> a DOUBLE scalar.
-InferredType traceTransfer(const std::vector<ArgInfo> &args)
+InferredType traceTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     if (args[0].type.shape.kind == ShapeKind::KnownDims) return InferredType::scalar(ValueType::DOUBLE);
@@ -714,7 +714,7 @@ InferredType traceTransfer(const std::vector<ArgInfo> &args)
 }
 
 // diag(A): the diagonal of a 2-D matrix as a 1-D vector (ColVector), or diag(v[,k]) -> N x N matrix.
-InferredType diagTransfer(const std::vector<ArgInfo> &args)
+InferredType diagTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || args.size() > 2 || !args[0].type.isConcrete())
         return InferredType::dynamic();
@@ -734,7 +734,7 @@ InferredType diagTransfer(const std::vector<ArgInfo> &args)
 
 // unique(x) -> the sorted distinct values, a 1-D vector of runtime length (-> Vector1D
 // shape) preserving the operand dtype.
-InferredType uniqueTransfer(const std::vector<ArgInfo> &args)
+InferredType uniqueTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     switch (args[0].type.shape.kind) {
@@ -756,7 +756,7 @@ InferredType uniqueTransfer(const std::vector<ArgInfo> &args)
 }
 
 // circshift(x, k) -> same shape AND dtype as x.
-InferredType circshiftTransfer(const std::vector<ArgInfo> &args)
+InferredType circshiftTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if ((args.size() != 2 && args.size() != 3) || !args[0].type.isConcrete()
         || args[0].type.shape.kind == ShapeKind::Unknown)
@@ -774,7 +774,7 @@ InferredType circshiftTransfer(const std::vector<ArgInfo> &args)
     return args[0].type;
 }
 
-InferredType identityShapeTransfer(const std::vector<ArgInfo> &args)
+InferredType identityShapeTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()
         || args[0].type.shape.kind == ShapeKind::Unknown)
@@ -782,7 +782,7 @@ InferredType identityShapeTransfer(const std::vector<ArgInfo> &args)
     return args[0].type;
 }
 
-InferredType trilTriuTransfer(const std::vector<ArgInfo> &args)
+InferredType trilTriuTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || args.size() > 2 || !args[0].type.isConcrete()
         || args[0].type.shape.kind == ShapeKind::Unknown)
@@ -790,7 +790,7 @@ InferredType trilTriuTransfer(const std::vector<ArgInfo> &args)
     return args[0].type;
 }
 
-InferredType identityShape1or2Transfer(const std::vector<ArgInfo> &args)
+InferredType identityShape1or2Transfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || args.size() > 2 || !args[0].type.isConcrete()
         || args[0].type.shape.kind == ShapeKind::Unknown)
@@ -798,7 +798,7 @@ InferredType identityShape1or2Transfer(const std::vector<ArgInfo> &args)
     return args[0].type;
 }
 
-InferredType num2strTransfer(const std::vector<ArgInfo> &args)
+InferredType num2strTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     if (args[0].type.shape.isScalar() || args[0].type.shape.isVector1D())
@@ -806,7 +806,7 @@ InferredType num2strTransfer(const std::vector<ArgInfo> &args)
     return InferredType::dynamic();
 }
 
-InferredType sprintfTransfer(const std::vector<ArgInfo> &args)
+InferredType sprintfTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.empty() || !args[0].type.isConcrete()
         || args[0].type.shape.kind == ShapeKind::Unknown)

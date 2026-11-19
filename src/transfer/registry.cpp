@@ -5,22 +5,20 @@
 
 #include <numkit/codegen/transfer.hpp>
 
-#include <utility>
-
 namespace numkit::codegen {
 
-void TransferRegistry::add(std::string name, TransferFn fn)
+void TransferRegistry::add(keel::StringRef name, TransferFn fn)
 {
-    table_.insert_or_assign(std::move(name), std::move(fn));
+    table_.put(keel::String::from(name), keel::move(fn));
 }
 
-void TransferRegistry::addMulti(std::string name, MultiTransferFn fn)
+void TransferRegistry::addMulti(keel::StringRef name, MultiTransferFn fn)
 {
-    multiTable_.insert_or_assign(std::move(name), std::move(fn));
+    multiTable_.put(keel::String::from(name), keel::move(fn));
 }
 
-std::vector<InferredType> TransferRegistry::applyMulti(const std::string &name,
-                                                       const std::vector<ArgInfo> &args) const
+keel::Array<InferredType> TransferRegistry::applyMulti(keel::StringRef name,
+                                                       keel::ArrayRef<ArgInfo> args) const
 {
     // Bottom is ABSORBING in a transfer (see apply): a ⊥ operand carries no value,
     // so the outputs are unknown. Return "no info" (empty) -> the caller defaults
@@ -28,23 +26,23 @@ std::vector<InferredType> TransferRegistry::applyMulti(const std::string &name,
     // in v1 -- single-output recursion converges via apply's ⊥ propagation).
     for (const ArgInfo &a : args)
         if (a.type.isBottom()) return {};
-    const auto it = multiTable_.find(name);
-    if (it == multiTable_.end()) return {};  // no multi-output transfer
-    return it->second(args);
+    const MultiTransferFn *fn = multiTable_.get(name);
+    if (!fn) return {};  // no multi-output transfer
+    return (*fn)(args);
 }
 
-bool TransferRegistry::has(const std::string &name) const
+bool TransferRegistry::has(keel::StringRef name) const
 {
-    return table_.find(name) != table_.end();
+    return table_.contains(name);
 }
 
-std::size_t TransferRegistry::size() const
+keel::usize TransferRegistry::size() const
 {
     return table_.size();
 }
 
-InferredType TransferRegistry::apply(const std::string &name,
-                                     const std::vector<ArgInfo> &args) const
+InferredType TransferRegistry::apply(keel::StringRef name,
+                                     keel::ArrayRef<ArgInfo> args) const
 {
     // Bottom is ABSORBING in a transfer: an operand with no value yet (⊥ -- e.g.
     // the seed of a recursive self-call before its return type is known) yields no
@@ -56,10 +54,10 @@ InferredType TransferRegistry::apply(const std::string &name,
     // absorber -- the dual roles, both sound.)
     for (const ArgInfo &a : args)
         if (a.type.isBottom()) return InferredType::bottom();
-    const auto it = table_.find(name);
-    if (it == table_.end())
+    const TransferFn *fn = table_.get(name);
+    if (!fn)
         return InferredType::dynamic();  // unknown builtin -> boxed (sound)
-    return it->second(args);
+    return (*fn)(args);
 }
 
 void registerStandardTransfers(TransferRegistry &reg)

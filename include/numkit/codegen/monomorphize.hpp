@@ -25,8 +25,11 @@
 
 #include <numkit/core/ast.hpp>
 
-#include <string>
-#include <unordered_map>
+#include <keel/array.h>
+#include <keel/core.h>
+#include <keel/hash_map.h>
+#include <keel/ref.h>
+#include <keel/string.h>
 
 namespace numkit::codegen {
 
@@ -35,15 +38,20 @@ namespace numkit::codegen {
 // the table and any registry built from it).
 class FunctionTable {
 public:
-    void           add(const ASTNode &funcDef);  // funcDef.type == FUNCTION_DEF
-    const ASTNode *find(const std::string &name) const;
-    bool           has(const std::string &name) const { return find(name) != nullptr; }
-    std::size_t    size() const { return defs_.size(); }
+    FunctionTable() noexcept = default;
+    FunctionTable(FunctionTable &&) noexcept = default;
+    FunctionTable &operator=(FunctionTable &&) noexcept = default;
+    ~FunctionTable() noexcept = default;
 
-    const std::unordered_map<std::string, const ASTNode *> &entries() const { return defs_; }
+    void           add(const ASTNode &funcDef);  // funcDef.type == FUNCTION_DEF
+    const ASTNode *find(keel::StringRef name) const;
+    bool           has(keel::StringRef name) const { return find(name) != nullptr; }
+    keel::usize    size() const { return defs_.size(); }
+
+    const keel::HashMap<keel::String, const ASTNode *> &entries() const { return defs_; }
 
 private:
-    std::unordered_map<std::string, const ASTNode *> defs_;
+    keel::HashMap<keel::String, const ASTNode *> defs_;
 };
 
 // Collect every FUNCTION_DEF reachable in `root` (top-level and nested)
@@ -57,7 +65,7 @@ void collectFunctions(const ASTNode &root, FunctionTable &table);
 // be typed: arity mismatch, not exactly one output (MVP), or the output is
 // never assigned.
 InferredType inferFunctionReturn(const ASTNode &funcDef,
-                                 const std::vector<ArgInfo> &args,
+                                 keel::ArrayRef<ArgInfo> args,
                                  const TransferRegistry &reg,
                                  const ClassRegistry *classes = nullptr);
 
@@ -65,8 +73,8 @@ InferredType inferFunctionReturn(const ASTNode &funcDef,
 // for multi-output calls `[a,b] = f(...)`. Empty on arity mismatch. A `~`
 // (ignored) output still occupies its slot. inferFunctionReturn is the
 // single-output projection of this.
-std::vector<InferredType> inferFunctionReturns(const ASTNode &funcDef,
-                                               const std::vector<ArgInfo> &args,
+keel::Array<InferredType> inferFunctionReturns(const ASTNode &funcDef,
+                                               keel::ArrayRef<ArgInfo> args,
                                                const TransferRegistry &reg,
                                                const ClassRegistry *classes = nullptr);
 

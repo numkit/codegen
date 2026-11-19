@@ -4,80 +4,81 @@
 
 #include <numkit/codegen/inference.hpp>
 
+#include <keel/format.h>
+
 #include <stdexcept>
-#include <utility>
 
 namespace numkit::codegen {
 
-const ClassField *ClassInfo::field(const std::string &n) const
+const ClassField *ClassInfo::field(keel::StringRef n) const
 {
     for (const auto &f : fields)
         if (f.name == n) return &f;
     return nullptr;
 }
 
-const ASTNode *ClassInfo::method(const std::string &n) const
+const ASTNode *ClassInfo::method(keel::StringRef n) const
 {
-    const auto it = methods.find(n);
-    return it == methods.end() ? nullptr : it->second;
+    const ASTNode *const *p = methods.get(n);
+    return p ? *p : nullptr;
 }
 
 int ClassRegistry::add(ClassInfo info)
 {
     info.id = static_cast<int>(classes_.size());
-    byName_.insert_or_assign(info.name, info.id);
-    classes_.push_back(std::move(info));
+    byName_.put(info.name.clone(), info.id);
+    classes_.push_back(keel::move(info));
     return classes_.back().id;
 }
 
 const ClassInfo *ClassRegistry::byId(int id) const
 {
     if (id < 0 || id >= static_cast<int>(classes_.size())) return nullptr;
-    return &classes_[static_cast<std::size_t>(id)];
+    return &classes_[static_cast<keel::usize>(id)];
 }
 
-int ClassRegistry::idOf(const std::string &name) const
+int ClassRegistry::idOf(keel::StringRef name) const
 {
-    const auto it = byName_.find(name);
-    return it == byName_.end() ? -1 : it->second;
+    const int *p = byName_.get(name);
+    return p ? *p : -1;
 }
 
-const ClassInfo *ClassRegistry::byName(const std::string &name) const
+const ClassInfo *ClassRegistry::byName(keel::StringRef name) const
 {
     return byId(idOf(name));
 }
 
-std::string classRefusalReason(const ASTNode &classDef)
+keel::String classRefusalReason(const ASTNode &classDef)
 {
-    if (classDef.type != NodeType::CLASSDEF_DEF) return "not a classdef";
+    if (classDef.type != NodeType::CLASSDEF_DEF) return keel::String::from("not a classdef");
 
     // Inheritance beyond the `handle` mixin is out of the v1 subset.
     for (const auto &super : classDef.paramNames)
         if (super != "handle")
-            return "inheritance from '" + super + "' not supported (v1)";
+            return keel::format("inheritance from '{}' not supported (v1)", super);
 
     for (const auto &c : classDef.children) {
         if (!c) continue;
         if (c->type == NodeType::FUNCTION_DEF
-            && c->strValue.find('.') != std::string::npos)
-            return "property accessor '" + c->strValue + "' not supported (v1)";
+            && c->strValue.find('.') != keel::kInvalidIndex)
+            return keel::format("property accessor '{}' not supported (v1)", c->strValue);
         if (c->type == NodeType::CLASSDEF_PROPERTY)
             for (const auto &a : c->classAttrs)
                 if (a == "Dependent" || a == "Constant" || a == "Abstract")
-                    return "property attribute '" + a + "' not supported (v1)";
+                    return keel::format("property attribute '{}' not supported (v1)", a);
         if (c->type == NodeType::CLASSDEF_ENUM_MEMBER)
-            return "enumeration classes not supported (v1)";
+            return keel::String::from("enumeration classes not supported (v1)");
     }
     return {};
 }
 
 ClassInfo buildClassInfo(const ASTNode &classDef, int id, const TransferRegistry &reg)
 {
-    if (const std::string why = classRefusalReason(classDef); !why.empty())
-        throw std::runtime_error("class '" + classDef.strValue + "': " + why);
+    if (const keel::String why = classRefusalReason(classDef); !why.empty())
+        throw std::runtime_error(keel::format("class '{}': {}", classDef.strValue, why).c_str());
 
     ClassInfo ci;
-    ci.name = classDef.strValue;
+    ci.name = classDef.strValue.clone();
     ci.id   = id;
     ci.def  = &classDef;
     for (const auto &super : classDef.paramNames)
@@ -87,25 +88,27 @@ ClassInfo buildClassInfo(const ASTNode &classDef, int id, const TransferRegistry
         if (!c) continue;
         if (c->type == NodeType::CLASSDEF_PROPERTY) {
             if (c->children.empty() || !c->children[0])
-                throw std::runtime_error("class '" + ci.name + "': property '" + c->strValue
-                                         + "' needs a concrete-typed default (v1)");
+                throw std::runtime_error(
+                    keel::format("class '{}': property '{}' needs a concrete-typed default (v1)",
+                                 ci.name, c->strValue).c_str());
             TypeEnv            empty;
             const InferredType ft = inferExpr(*c->children[0], empty, reg).type;
             if (!ft.isConcrete())
-                throw std::runtime_error("class '" + ci.name + "': property '" + c->strValue
-                                         + "' default is not concretely typed (" + ft.str() + ")");
-            ci.fields.push_back({c->strValue, ft, c->children[0].get()});
+                throw std::runtime_error(
+                    keel::format("class '{}': property '{}' default is not concretely typed ({})",
+                                 ci.name, c->strValue, ft.str()).c_str());
+            ci.fields.push_back(ClassField(c->strValue, ft, c->children[0].get()));
         } else if (c->type == NodeType::FUNCTION_DEF) {
-            ci.methods.insert_or_assign(c->strValue, c.get());
+            ci.methods.put(c->strValue.clone(), c.get());
         }
     }
     return ci;
 }
 
-std::size_t collectClasses(const ASTNode &root, ClassRegistry &reg,
+keel::usize collectClasses(const ASTNode &root, ClassRegistry &reg,
                            const TransferRegistry &reg2)
 {
-    std::size_t added = 0;
+    keel::usize added = 0;
     if (root.type == NodeType::CLASSDEF_DEF) {
         reg.add(buildClassInfo(root, static_cast<int>(reg.size()), reg2));
         ++added;

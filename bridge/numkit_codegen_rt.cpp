@@ -6,9 +6,14 @@
 
 #include "numkit_plugin.h"
 
+#include <keel/array.h>
 #include <keel/complex.h>
 #include <keel/core.h>
+#include <keel/format.h>
+#include <keel/hash_map.h>
+#include <keel/hash_set.h>
 #include <keel/ref.h>
+#include <keel/string.h>
 #include <numkit/core/standard_engine.hpp>
 #include <numkit/core/engine.hpp>
 #include <numkit/value/value.hpp>
@@ -20,10 +25,6 @@
 #include <exception>
 #include <limits>
 #include <stdexcept>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
 
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
@@ -48,13 +49,13 @@ numkit::StandardEngine &engine()
 
 // Function handle for `name` (`@name`), cached. Resolves builtins and
 // path functions exactly as the interpreter would.
-const Value &handleFor(const std::string &name)
+const Value &handleFor(keel::StringRef name)
 {
-    static std::unordered_map<std::string, Value> cache;
-    const auto it = cache.find(name);
-    if (it != cache.end()) return it->second;
+    static keel::HashMap<keel::String, Value> cache;
+    if (const Value *v = cache.get(name)) return *v;
     // suppressTopLevelDisplay = true: don't print `ans = @name`.
-    return cache.emplace(name, engine().eval("@" + name, true)).first->second;
+    const keel::String expr = keel::format("@{}", name);
+    return *cache.try_insert(keel::String::from(name), engine().eval(expr, true)).value;
 }
 
 Value *unwrap(numkit_val v) { return reinterpret_cast<Value *>(v); }
@@ -265,7 +266,7 @@ numkit_val numkit_call(const char *name, const numkit_val *args, size_t nargs,
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
         if (nargs != 0 && !args) throw std::runtime_error("numkit_call: null args");
-        std::vector<Value> a;
+        keel::Array<Value> a;
         a.reserve(nargs);
         for (size_t i = 0; i < nargs; ++i) {
             const Value *av = unwrap(args[i]);  // a null handle is UB to deref
@@ -274,7 +275,7 @@ numkit_val numkit_call(const char *name, const numkit_val *args, size_t nargs,
         }
 
         keel::Array<Value> outs = engine().callFunctionHandleMulti(
-            handleFor(name), keel::ArrayRef<Value>(a.data(), a.size()), nargout);
+            handleFor(name), a.as_ref(), nargout);
         if (nargout == 0)
             return nullptr;
 
@@ -347,14 +348,14 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
     try {
         const Value *av = unwrap(a);
         if (!av) throw std::runtime_error("numkit_index: null handle");
-        std::vector<Value> args;
+        keel::Array<Value> args;
         args.reserve(nsubs);
         for (size_t i = 0; i < nsubs; ++i) {
             const Value *sv = subs ? unwrap(subs[i]) : nullptr;
             if (!sv) throw std::runtime_error("numkit_index: null subscript handle");
             args.push_back(*sv);
         }
-        const keel::ArrayRef<Value> argSpan(args.data(), args.size());
+        const keel::ArrayRef<Value> argSpan = args.as_ref();
 
         // `value(subs)` is index/call-AMBIGUOUS — resolve exactly as the
         // interpreter (VM::execCallIndirect), so a Dynamic value behaves
@@ -391,10 +392,10 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
         if (static_cast<int>(nsubs) != dd.ndim())
             throw std::runtime_error(
                 "numkit_index: multi-subscript count must match array rank (v1)");
-        std::vector<keel::Array<keel::usize>> lists(nsubs);
-        std::vector<const std::size_t *>      ptrs(nsubs);
-        std::vector<std::size_t>              counts(nsubs);
-        for (std::size_t k = 0; k < nsubs; ++k) {
+        keel::Array<keel::Array<keel::usize>> lists(nsubs);
+        keel::Array<const keel::usize *>      ptrs(nsubs);
+        keel::Array<keel::usize>              counts(nsubs);
+        for (keel::usize k = 0; k < nsubs; ++k) {
             lists[k]  = Value::resolveIndices(args[k], dd.dim(static_cast<int>(k)));
             ptrs[k]   = lists[k].data();
             counts[k] = lists[k].size();
@@ -506,7 +507,7 @@ numkit_val numkit_make_handle(const char *name, numkit_error *err)
         // Build @name exactly as the interpreter does (it owns func-handle
         // semantics). An unknown name still yields a handle that errors on CALL,
         // matching MATLAB -- no need to pre-validate existence here.
-        return make(engine().eval(std::string("@") + name, true));
+        return make(engine().eval(keel::format("@{}", name), true));
     } catch (const std::exception &e) {
         setError(err, e.what());
         return nullptr;
@@ -528,14 +529,14 @@ numkit_val numkit_make_closure_captured(const char *src, const char **names, con
         // workspace stays clean. Bridged evals never leave user-named vars, so the
         // capture names do not collide; the snapshot is copied into the closure, so
         // the later clear does not disturb it.
-        std::string clearCmd = "clear";
+        keel::String clearCmd = keel::String::from("clear");
         for (size_t i = 0; i < n; ++i) {
             const Value *v = vals ? unwrap(vals[i]) : nullptr;
             if (!names || !names[i] || !v)
                 throw std::runtime_error("numkit_make_closure_captured: null name/value");
             engine().setVariable(names[i], *v);
-            clearCmd += ' ';
-            clearCmd += names[i];
+            clearCmd.push_back(' ');
+            clearCmd.append(names[i]);
         }
         Value h = engine().eval(src, true);  // @(...)... snapshots the workspace -> captures
         if (n > 0) engine().eval(clearCmd, true);
@@ -649,12 +650,12 @@ int numkit_register_fn(const char *name, numkit_fn fn)
             name,
             [f](keel::ArrayRef<Value> args, keel::usize nargout,
                 keel::MutArrayRef<Value> outs, numkit::CallContext &) {
-                std::vector<numkit_val> in;  // owned by us, borrowed by the plugin
+                keel::Array<numkit_val> in;  // owned by us, borrowed by the plugin
                 in.reserve(args.size());
                 for (const Value &a : args) in.push_back(make(a));
 
-                const size_t        nout = nargout == 0 ? 1 : nargout;
-                std::vector<numkit_val> extra(nout > 1 ? nout - 1 : 0, nullptr);
+                const size_t            nout = nargout == 0 ? 1 : nargout;
+                keel::Array<numkit_val> extra(nout > 1 ? nout - 1 : 0);
 
                 numkit_error err;
                 err.code    = 0;
@@ -664,7 +665,7 @@ int numkit_register_fn(const char *name, numkit_fn fn)
                 for (numkit_val h : in) destroy(h);  // release inputs
 
                 if (err.code != 0) {
-                    std::string msg = err.message[0] ? err.message : "plugin error";
+                    const char *msg = err.message[0] ? err.message : "plugin error";
                     destroy(r);
                     for (numkit_val h : extra) destroy(h);
                     throw std::runtime_error(msg);
@@ -696,8 +697,8 @@ int numkit_load_plugin(const char *path, numkit_error *err)
         // success. Re-running its register hook would otherwise hit the
         // runtime's duplicate-registration guard. (Plugin loading is a setup
         // operation, not a concurrent hot path, so a plain static set is fine.)
-        static std::unordered_set<std::string> loaded;
-        if (loaded.count(path)) return 0;
+        static keel::HashSet<keel::String> loaded;
+        if (loaded.contains(path)) return 0;
 
         using version_fn  = int (*)();
         using register_fn = int (*)(const numkit_host_api *);
@@ -758,7 +759,7 @@ int numkit_load_plugin(const char *path, numkit_error *err)
             setError(err, "plugin registration hook returned an error");
             return rc;
         }
-        loaded.insert(path);  // record only on success, so a failed load retries
+        loaded.insert(keel::String::from(path));  // record only on success, so a failed load retries
         // `lib` is intentionally left loaded: its registered function pointers
         // must stay live for the process lifetime. (A proper unload API would
         // first unregister those names; deferred.)

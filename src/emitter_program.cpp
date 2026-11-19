@@ -185,7 +185,7 @@ const char *kPrelude =
 // The bridged-emission addendum (DESIGN.md §6a): the runtime C-ABI header +
 // a tiny scalar-call helper. Appended ONLY when bridging is enabled, so a
 // non-bridged TU stays self-contained / stdlib-only (the no-kludge litmus).
-std::string bridgePrelude(const std::string &runtimeHeader)
+keel::String bridgePrelude(keel::StringRef runtimeHeader)
 {
     return "#include \"" + runtimeHeader + "\"\n"
            "#include <initializer_list>\n"
@@ -422,15 +422,15 @@ std::string bridgePrelude(const std::string &runtimeHeader)
 // overrides the emitted symbol (for a mangled specialisation; empty -> the
 // source name). `ctx` (when set) routes user-function calls and collects
 // further specialisations. Returns {signature, definition}.
-OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &params,
+OneFn emitOneFunction(const ASTNode &funcDef, keel::ArrayRef<ParamSpec> params,
                       const TransferRegistry &reg, ProgramEmitCtx *ctx,
-                      const std::string &cppName, const ClassRegistry *classes,
-                      const std::vector<ParamSpec> &extraSeed, bool bridge,
+                      keel::StringRef cppName, const ClassRegistry *classes,
+                      keel::ArrayRef<ParamSpec> extraSeed, bool bridge,
                       bool opsKernels, bool interprocByValueReturn)
 {
     if (funcDef.type != NodeType::FUNCTION_DEF || funcDef.children.empty())
         unsupported("emitOneFunction expects a FUNCTION_DEF with a body");
-    const std::size_t nout = funcDef.returnNames.size();
+    const keel::usize nout = funcDef.returnNames.size();
 
     const ASTNode &body = *funcDef.children[0];
 
@@ -438,16 +438,16 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     // params drive the signature + the hoist-skip; `entry` is the typing
     // env (params PLUS extraSeed — pre-typed non-parameter locals such as a
     // constructor's output object, which are hoisted as locals, not params).
-    TypeEnv                                     entry;
-    std::unordered_map<std::string, ArrayInfo>  arrays;
-    std::vector<std::string>                    sigParams;
-    std::set<std::string>                       paramSet;
-    std::vector<std::string> prologueStmts;
-    std::vector<std::pair<std::string, std::string>> epilogueAssigns;
+    TypeEnv                                entry;
+    keel::HashMap<keel::String, ArrayInfo> arrays;
+    keel::Array<keel::String>              sigParams;
+    keel::HashSet<keel::String>            paramSet;
+    keel::Array<keel::String>              prologueStmts;
+    keel::Array<StrPair>                   epilogueAssigns;
     for (const ParamSpec &p : params) {
-        const std::string cpName = cppIdent(p.name);
+        const keel::String cpName = cppIdent(p.name);
         entry.set(p.name, {p.type, ConstVal::unknown()});
-        paramSet.insert(p.name);
+        paramSet.insert(p.name.clone());
         if (isUnboxableScalarType(p.type)) {
             sigParams.push_back(cppScalarType(p.type.dtype) + " " + cpName);
         } else if (is2DMatrixType(p.type)) {
@@ -458,10 +458,10 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             ai.rowsVar  = companion(p.name, "_rows");
             ai.colsVar  = companion(p.name, "_cols");
             ai.lenVar   = "(" + ai.rowsVar + " * " + ai.colsVar + ")";  // numel (elementwise)
-            ai.dataExpr = cpName;
-            arrays[p.name] = ai;
+            ai.dataExpr = cpName.clone();
             sigParams.push_back("const " + cppArrayElemType(p.type.dtype) + "* " + cpName
                                 + ", std::size_t " + ai.rowsVar + ", std::size_t " + ai.colsVar);
+            arrays.put(p.name.clone(), keel::move(ai));
         } else if (p.type.isConcrete() && p.type.shape.isNDims()) {
             // N-D (rank>=3) param -> pointer + one size_t companion per dim
             // (column-major). Checked BEFORE isBufferArrayType, which also
@@ -470,27 +470,27 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             ArrayInfo ai;
             ai.dtype    = p.type.dtype;
             ai.isND     = true;
-            ai.dataExpr = cpName;
-            std::string sig = "const " + cppArrayElemType(p.type.dtype) + "* " + cpName;
-            std::string prod;  // numel = product of the dim companions (elementwise)
-            for (std::size_t d = 0; d < p.type.shape.nd.size(); ++d) {
-                const std::string dv = companion(p.name, "_d" + std::to_string(d));
-                ai.ndDims.push_back(dv);
-                sig += ", std::size_t " + dv;
+            ai.dataExpr = cpName.clone();
+            keel::String sig = "const " + cppArrayElemType(p.type.dtype) + "* " + cpName;
+            keel::String prod;  // numel = product of the dim companions (elementwise)
+            for (keel::usize d = 0; d < p.type.shape.nd.size(); ++d) {
+                keel::String dv = companion(p.name, "_d" + toStr(d));
+                sig  += ", std::size_t " + dv;
                 prod += (prod.empty() ? "" : " * ") + dv;
+                ai.ndDims.push_back(keel::move(dv));
             }
-            ai.lenVar       = "(" + prod + ")";
-            arrays[p.name] = ai;
-            sigParams.push_back(sig);
+            ai.lenVar = "(" + prod + ")";
+            arrays.put(p.name.clone(), keel::move(ai));
+            sigParams.push_back(keel::move(sig));
         } else if (isBufferArrayType(p.type)) {
             ArrayInfo ai;
-            ai.dtype       = p.type.dtype;
-            ai.lenVar      = companion(p.name, "_len");
-            ai.dataExpr    = cpName;
-            ai.orient      = orientOf(p.type);
-            arrays[p.name] = ai;
+            ai.dtype    = p.type.dtype;
+            ai.lenVar   = companion(p.name, "_len");
+            ai.dataExpr = cpName.clone();
+            ai.orient   = orientOf(p.type);
             sigParams.push_back("const " + cppArrayElemType(p.type.dtype) + "* " + cpName
                                 + ", std::size_t " + ai.lenVar);
+            arrays.put(p.name.clone(), keel::move(ai));
         } else if (p.type.isObject()) {
             // value class -> by value (value semantics); handle -> wrapper.
             sigParams.push_back(cppObjectType(p.type.classId, classes) + " " + cpName);
@@ -501,112 +501,112 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             // Supports scalar, object, 1D/2D/ND array, and arbitrarily nested struct fields.
             if (!p.type.structLayout)
                 unsupported("struct parameter '" + p.name + "' has no field layout");
-            const bool isReturnStruct =
-                std::find(funcDef.returnNames.begin(), funcDef.returnNames.end(), p.name)
-                != funcDef.returnNames.end();
-            std::function<void(const std::string &, const std::string &, const StructLayout &)>
-                explodeStructParam = [&](const std::string &prefix,
-                                         const std::string &dotPath,
-                                         const StructLayout &layout) {
-                    for (const auto &f : layout.fields) {
-                        const std::string fld = prefix + "_" + f.first;
-                        const std::string dp  = dotPath + "." + f.first;
-                        const InferredType &ft = f.second;
-                        entry.set(fld, {ft, ConstVal::unknown()});
-                        if (ft.isStruct()) {
-                            if (!ft.structLayout)
-                                unsupported("nested struct parameter field '" + dp
-                                            + "' has no field layout");
-                            paramSet.insert(fld);
-                            explodeStructParam(fld, dp, *ft.structLayout);
-                        } else if (isUnboxableScalarType(ft)) {
-                            paramSet.insert(fld);
-                            sigParams.push_back(cppScalarType(ft.dtype) + " " + fld);
-                        } else if (ft.isObject()) {
-                            paramSet.insert(fld);
-                            sigParams.push_back(cppObjectType(ft.classId, classes) + " " + fld);
-                        } else if (is2DMatrixType(ft)) {
-                            const std::string sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld;
-                            const std::string rowsVar = companion(sigName, "_rows");
-                            const std::string colsVar = companion(sigName, "_cols");
-                            const std::string lenExpr = "(" + rowsVar + " * " + colsVar + ")";
-                            sigParams.push_back("const " + cppArrayElemType(ft.dtype) + "* " + sigName
-                                                + ", std::size_t " + rowsVar
-                                                + ", std::size_t " + colsVar);
-                            if (isReturnStruct) {
-                                prologueStmts.push_back(fld + ".assign(" + sigName + ", "
-                                                        + sigName + " + " + lenExpr + ");");
-                            } else {
-                                ArrayInfo ai;
-                                ai.dtype    = ft.dtype;
-                                ai.is2D     = true;
-                                ai.rowsVar  = rowsVar;
-                                ai.colsVar  = colsVar;
-                                ai.lenVar   = lenExpr;
-                                ai.dataExpr = fld;
-                                arrays[fld] = ai;
-                                paramSet.insert(fld);
-                            }
-                        } else if (ft.isConcrete() && ft.shape.isNDims()) {
-                            const std::string sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld;
-                            std::string sig = "const " + cppArrayElemType(ft.dtype) + "* " + sigName;
-                            std::string prod;
-                            std::vector<std::string> inDims;
-                            for (std::size_t d = 0; d < ft.shape.nd.size(); ++d) {
-                                const std::string dv = companion(sigName, "_d" + std::to_string(d));
-                                inDims.push_back(dv);
-                                sig += ", std::size_t " + dv;
-                                prod += (prod.empty() ? "" : " * ") + dv;
-                            }
-                            const std::string lenExpr = "(" + prod + ")";
-                            sigParams.push_back(sig);
-                            if (isReturnStruct) {
-                                prologueStmts.push_back(fld + ".assign(" + sigName + ", "
-                                                        + sigName + " + " + lenExpr + ");");
-                                bool allKnown = true;
-                                for (std::size_t d : ft.shape.nd)
-                                    if (d == 0) { allKnown = false; break; }
-                                if (!allKnown) {
-                                    for (std::size_t d = 0; d < ft.shape.nd.size(); ++d) {
-                                        prologueStmts.push_back(
-                                            companion(fld, "_d" + std::to_string(d)) + " = "
-                                            + inDims[d] + ";");
-                                    }
+            bool isReturnStruct = false;
+            for (const auto &rn : funcDef.returnNames)
+                if (rn == p.name) { isReturnStruct = true; break; }
+            auto explodeStructParam = [&](auto &self, keel::StringRef prefix,
+                                          keel::StringRef dotPath,
+                                          const StructLayout &layout) -> void {
+                for (const auto &f : layout.fields) {
+                    const keel::String  fld = prefix + "_" + f.first;
+                    const keel::String  dp  = dotPath + "." + f.first;
+                    const InferredType &ft  = f.second;
+                    entry.set(fld, {ft, ConstVal::unknown()});
+                    if (ft.isStruct()) {
+                        if (!ft.structLayout)
+                            unsupported("nested struct parameter field '" + dp
+                                        + "' has no field layout");
+                        paramSet.insert(fld.clone());
+                        self(self, fld, dp, *ft.structLayout);
+                    } else if (isUnboxableScalarType(ft)) {
+                        paramSet.insert(fld.clone());
+                        sigParams.push_back(cppScalarType(ft.dtype) + " " + fld);
+                    } else if (ft.isObject()) {
+                        paramSet.insert(fld.clone());
+                        sigParams.push_back(cppObjectType(ft.classId, classes) + " " + fld);
+                    } else if (is2DMatrixType(ft)) {
+                        const keel::String sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld.clone();
+                        const keel::String rowsVar = companion(sigName, "_rows");
+                        const keel::String colsVar = companion(sigName, "_cols");
+                        const keel::String lenExpr = "(" + rowsVar + " * " + colsVar + ")";
+                        sigParams.push_back("const " + cppArrayElemType(ft.dtype) + "* " + sigName
+                                            + ", std::size_t " + rowsVar
+                                            + ", std::size_t " + colsVar);
+                        if (isReturnStruct) {
+                            prologueStmts.push_back(fld + ".assign(" + sigName + ", "
+                                                    + sigName + " + " + lenExpr + ");");
+                        } else {
+                            ArrayInfo ai;
+                            ai.dtype    = ft.dtype;
+                            ai.is2D     = true;
+                            ai.rowsVar  = rowsVar.clone();
+                            ai.colsVar  = colsVar.clone();
+                            ai.lenVar   = lenExpr.clone();
+                            ai.dataExpr = fld.clone();
+                            arrays.put(fld.clone(), keel::move(ai));
+                            paramSet.insert(fld.clone());
+                        }
+                    } else if (ft.isConcrete() && ft.shape.isNDims()) {
+                        const keel::String sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld.clone();
+                        keel::String sig = "const " + cppArrayElemType(ft.dtype) + "* " + sigName;
+                        keel::String prod;
+                        keel::Array<keel::String> inDims;
+                        for (keel::usize d = 0; d < ft.shape.nd.size(); ++d) {
+                            keel::String dv = companion(sigName, "_d" + toStr(d));
+                            sig  += ", std::size_t " + dv;
+                            prod += (prod.empty() ? "" : " * ") + dv;
+                            inDims.push_back(keel::move(dv));
+                        }
+                        const keel::String lenExpr = "(" + prod + ")";
+                        sigParams.push_back(keel::move(sig));
+                        if (isReturnStruct) {
+                            prologueStmts.push_back(fld + ".assign(" + sigName + ", "
+                                                    + sigName + " + " + lenExpr + ");");
+                            bool allKnown = true;
+                            for (keel::usize d : ft.shape.nd)
+                                if (d == 0) { allKnown = false; break; }
+                            if (!allKnown) {
+                                for (keel::usize d = 0; d < ft.shape.nd.size(); ++d) {
+                                    prologueStmts.push_back(
+                                        companion(fld, "_d" + toStr(d)) + " = "
+                                        + inDims[d] + ";");
                                 }
-                            } else {
-                                ArrayInfo ai;
-                                ai.dtype    = ft.dtype;
-                                ai.isND     = true;
-                                ai.dataExpr = fld;
-                                ai.ndDims   = inDims;
-                                ai.lenVar   = lenExpr;
-                                arrays[fld] = ai;
-                                paramSet.insert(fld);
-                            }
-                        } else if (isBufferArrayType(ft)) {
-                            const std::string sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld;
-                            const std::string lenVar  = companion(sigName, "_len");
-                            sigParams.push_back("const " + cppArrayElemType(ft.dtype) + "* " + sigName
-                                                + ", std::size_t " + lenVar);
-                            if (isReturnStruct) {
-                                prologueStmts.push_back(fld + ".assign(" + sigName + ", "
-                                                        + sigName + " + " + lenVar + ");");
-                            } else {
-                                ArrayInfo ai;
-                                ai.dtype    = ft.dtype;
-                                ai.lenVar   = lenVar;
-                                ai.dataExpr = fld;
-                                ai.orient   = orientOf(ft);
-                                arrays[fld] = ai;
-                                paramSet.insert(fld);
                             }
                         } else {
-                            unsupported("struct parameter field '" + dp + "' has unsupported type "
-                                        + ft.str());
+                            ArrayInfo ai;
+                            ai.dtype    = ft.dtype;
+                            ai.isND     = true;
+                            ai.dataExpr = fld.clone();
+                            ai.ndDims   = keel::move(inDims);
+                            ai.lenVar   = lenExpr.clone();
+                            arrays.put(fld.clone(), keel::move(ai));
+                            paramSet.insert(fld.clone());
                         }
+                    } else if (isBufferArrayType(ft)) {
+                        const keel::String sigName = isReturnStruct ? ("_numkit_in_" + fld) : fld.clone();
+                        const keel::String lenVar  = companion(sigName, "_len");
+                        sigParams.push_back("const " + cppArrayElemType(ft.dtype) + "* " + sigName
+                                            + ", std::size_t " + lenVar);
+                        if (isReturnStruct) {
+                            prologueStmts.push_back(fld + ".assign(" + sigName + ", "
+                                                    + sigName + " + " + lenVar + ");");
+                        } else {
+                            ArrayInfo ai;
+                            ai.dtype    = ft.dtype;
+                            ai.lenVar   = lenVar.clone();
+                            ai.dataExpr = fld.clone();
+                            ai.orient   = orientOf(ft);
+                            arrays.put(fld.clone(), keel::move(ai));
+                            paramSet.insert(fld.clone());
+                        }
+                    } else {
+                        unsupported("struct parameter field '" + dp + "' has unsupported type "
+                                    + ft.str());
                     }
-                };
-            explodeStructParam("_numkit_fld_" + p.name, p.name, *p.type.structLayout);
+                }
+            };
+            explodeStructParam(explodeStructParam, "_numkit_fld_" + p.name, p.name,
+                               *p.type.structLayout);
         } else if (bridge && p.type.isDynamic()) {
             // Dynamic tier (DESIGN.md §10 C1): an un-typeable parameter is a boxed
             // numkit_rt::val passed BY VALUE — pass-by-value is a copy (val's
@@ -630,13 +630,13 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     // emit UB. (A function/method NAME may contain "__"; it is mangled through
     // escapeBase, so it never reaches the output verbatim — only var names do.)
     {
-        auto refuseDunder = [](const std::string &name) {
-            if (name.find("__") != std::string::npos)
+        auto refuseDunder = [](keel::StringRef name) {
+            if (name.find("__") != keel::kInvalidIndex)
                 unsupported("identifier '" + name + "' contains '__', which is reserved in C++ "
                             "([lex.name]) — rename the variable");
         };
-        for (const std::string &p : paramSet) refuseDunder(p);
-        for (const auto &[n, t] : decls) refuseDunder(n);
+        for (const keel::String &p : paramSet) refuseDunder(p);
+        for (auto [n, t] : decls) refuseDunder(n);
     }
 
     // Rank-unknown (`ShapeKind::Unknown`) non-parameter locals arise when branches merge
@@ -644,8 +644,8 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     // (`numkit_rt::val`) so runtime rank/dimensions are preserved faithfully; without `bridge`,
     // they fall through to the explicit RawBuffer refusal below instead of miscompiling as 1-D.
     if (bridge) {
-        for (auto &[n, t] : decls) {
-            if (paramSet.count(n)) continue;
+        for (auto [n, t] : decls) {
+            if (paramSet.contains(n)) continue;
             if (t.isConcrete() && t.shape.kind == ShapeKind::Unknown)
                 t = InferredType::dynamic();
         }
@@ -655,8 +655,8 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     // or non-leading multi-output array). Treated like a local vector (`ai.isLocal = true`)
     // for `.resize()` / `.assign()` / `.data()` / `.size()`, with `ai.isRefParam = true`
     // so `hoistArrayLocals()` does not redeclare the vector inside the body.
-    auto registerOutRefArray = [&](const std::string &varName, const InferredType &ft) {
-        const std::string cVar = cppIdent(varName);
+    auto registerOutRefArray = [&](keel::StringRef varName, const InferredType &ft) {
+        const keel::String cVar = cppIdent(varName);
         if (is2DMatrixType(ft)) {
             ArrayInfo ai;
             ai.dtype      = ft.dtype;
@@ -665,9 +665,9 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             ai.is2D       = true;
             ai.dataExpr   = cVar + ".data()";
             ai.lenVar     = cVar + ".size()";
-            ai.rowsVar    = std::to_string(ft.shape.rows);
-            ai.colsVar    = std::to_string(ft.shape.cols);
-            arrays[varName] = ai;
+            ai.rowsVar    = toStr(ft.shape.rows);
+            ai.colsVar    = toStr(ft.shape.cols);
+            arrays.put(keel::String::from(varName), keel::move(ai));
         } else if (ft.isConcrete() && ft.shape.isNDims()) {
             ArrayInfo ai;
             ai.dtype      = ft.dtype;
@@ -677,16 +677,16 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             ai.dataExpr   = cVar + ".data()";
             ai.lenVar     = cVar + ".size()";
             bool allKnown = true;
-            for (std::size_t d : ft.shape.nd)
+            for (keel::usize d : ft.shape.nd)
                 if (d == 0) { allKnown = false; break; }
             if (allKnown) {
-                for (std::size_t d : ft.shape.nd) ai.ndDims.push_back(std::to_string(d));
+                for (keel::usize d : ft.shape.nd) ai.ndDims.push_back(toStr(d));
             } else {
                 ai.ndRuntimeLocal = true;
-                for (std::size_t d = 0; d < ft.shape.nd.size(); ++d)
-                    ai.ndDims.push_back(companion(varName, "_d" + std::to_string(d)));
+                for (keel::usize d = 0; d < ft.shape.nd.size(); ++d)
+                    ai.ndDims.push_back(companion(varName, "_d" + toStr(d)));
             }
-            arrays[varName] = ai;
+            arrays.put(keel::String::from(varName), keel::move(ai));
         } else {
             ArrayInfo ai;
             ai.dtype      = ft.dtype;
@@ -695,119 +695,118 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             ai.dataExpr   = cVar + ".data()";
             ai.lenVar     = cVar + ".size()";
             ai.orient     = orientOf(ft);
-            arrays[varName] = ai;
+            arrays.put(keel::String::from(varName), keel::move(ai));
         }
-        paramSet.insert(varName);
+        paramSet.insert(keel::String::from(varName));
         sigParams.push_back("std::vector<" + cppArrayElemType(ft.dtype) + ">& " + cVar);
     };
 
     // Helper: recursively explode a struct output into per-leaf reference out-params.
-    std::function<void(const std::string &, const std::string &, const StructLayout &)>
-        explodeStructOutput = [&](const std::string &prefix,
-                                  const std::string &dotPath,
-                                  const StructLayout &layout) {
-            for (const auto &f : layout.fields) {
-                const std::string fld = prefix + "_" + f.first;
-                const std::string dp  = dotPath + "." + f.first;
-                const InferredType &ft = f.second;
-                entry.set(fld, {ft, ConstVal::unknown()});
-                if (ft.isStruct()) {
-                    if (!ft.structLayout)
-                        unsupported("nested struct output field '" + dp + "' has no field layout");
-                    paramSet.insert(fld);
-                    explodeStructOutput(fld, dp, *ft.structLayout);
-                } else if (isUnboxableScalarType(ft)) {
-                    if (paramSet.count(fld)) {
-                        const std::string outRef = "_numkit_out_" + fld;
-                        sigParams.push_back(cppScalarType(ft.dtype) + "& " + outRef);
-                        epilogueAssigns.push_back({outRef, fld});
-                    } else {
-                        paramSet.insert(fld);
-                        sigParams.push_back(cppScalarType(ft.dtype) + "& " + fld);
-                    }
-                } else if (ft.isObject()) {
-                    if (paramSet.count(fld)) {
-                        const std::string outRef = "_numkit_out_" + fld;
-                        sigParams.push_back(cppObjectType(ft.classId, classes) + "& " + outRef);
-                        epilogueAssigns.push_back({outRef, fld});
-                    } else {
-                        paramSet.insert(fld);
-                        sigParams.push_back(cppObjectType(ft.classId, classes) + "& " + fld);
-                    }
-                } else if (is2DMatrixType(ft) || (ft.isConcrete() && ft.shape.isNDims())
-                           || isBufferArrayType(ft)) {
-                    registerOutRefArray(fld, ft);
+    auto explodeStructOutput = [&](auto &self, keel::StringRef prefix,
+                                   keel::StringRef dotPath,
+                                   const StructLayout &layout) -> void {
+        for (const auto &f : layout.fields) {
+            const keel::String  fld = prefix + "_" + f.first;
+            const keel::String  dp  = dotPath + "." + f.first;
+            const InferredType &ft  = f.second;
+            entry.set(fld, {ft, ConstVal::unknown()});
+            if (ft.isStruct()) {
+                if (!ft.structLayout)
+                    unsupported("nested struct output field '" + dp + "' has no field layout");
+                paramSet.insert(fld.clone());
+                self(self, fld, dp, *ft.structLayout);
+            } else if (isUnboxableScalarType(ft)) {
+                if (paramSet.contains(fld)) {
+                    const keel::String outRef = "_numkit_out_" + fld;
+                    sigParams.push_back(cppScalarType(ft.dtype) + "& " + outRef);
+                    epilogueAssigns.push_back(StrPair(outRef, fld));
                 } else {
-                    unsupported("struct output field '" + dp + "' has unsupported type " + ft.str());
+                    paramSet.insert(fld.clone());
+                    sigParams.push_back(cppScalarType(ft.dtype) + "& " + fld);
                 }
+            } else if (ft.isObject()) {
+                if (paramSet.contains(fld)) {
+                    const keel::String outRef = "_numkit_out_" + fld;
+                    sigParams.push_back(cppObjectType(ft.classId, classes) + "& " + outRef);
+                    epilogueAssigns.push_back(StrPair(outRef, fld));
+                } else {
+                    paramSet.insert(fld.clone());
+                    sigParams.push_back(cppObjectType(ft.classId, classes) + "& " + fld);
+                }
+            } else if (is2DMatrixType(ft) || (ft.isConcrete() && ft.shape.isNDims())
+                       || isBufferArrayType(ft)) {
+                registerOutRefArray(fld, ft);
+            } else {
+                unsupported("struct output field '" + dp + "' has unsupported type " + ft.str());
             }
-        };
+        }
+    };
 
     // Return classification:
     //   0 outputs -> void (e.g. a handle class's in-place mutator);
     //   1 output  -> scalar (by value) / array (out-param) / object (by value) / struct (out-params);
     //   N outputs -> void (or leading by-value array) + reference out-params per output.
-    std::string retCpp             = "void";
-    std::string retName;
-    bool        arrayReturn        = false;
-    bool        dynamicReturn      = false;
-    bool        multiByValueReturn = false;  // nout>=2 + leading array (output 0 by value)
+    keel::String retCpp             = keel::String::from("void");
+    keel::String retName;
+    bool         arrayReturn        = false;
+    bool         dynamicReturn      = false;
+    bool         multiByValueReturn = false;  // nout>=2 + leading array (output 0 by value)
     if (nout == 1) {
-        retName                  = funcDef.returnNames[0];
-        const std::string cRet   = cppIdent(retName);
-        const auto        retIt  = decls.find(retName);
-        if (retIt == decls.end())
+        retName                   = funcDef.returnNames[0].clone();
+        const keel::String  cRet  = cppIdent(retName);
+        const InferredType *retP  = decls.get(retName);
+        if (!retP)
             unsupported("output '" + retName + "' is never assigned");
-        const InferredType retType = retIt->second;
+        const InferredType retType = *retP;
         if (isUnboxableScalarType(retType)) {
             retCpp = cppScalarType(retType.dtype);
         } else if (interprocByValueReturn && isByValueReturnArrayType(retType)) {
             retCpp = "std::vector<" + cppArrayElemType(retType.dtype) + ">";
         } else if (retType.isConcrete() && retType.shape.isNDims()) {
             arrayReturn = true;
-            retCpp      = "void";
+            retCpp.assign("void");
             ArrayInfo ai;
             ai.dtype    = retType.dtype;
             ai.isND     = true;
             ai.isOutput = true;
-            ai.dataExpr = cRet;
-            std::string sig  = cppArrayElemType(retType.dtype) + "* __restrict " + cRet;
-            std::string prod;  // total length = product of the companions
-            for (std::size_t d = 0; d < retType.shape.nd.size(); ++d) {
-                const std::string dv = companion(retName, "_d" + std::to_string(d));
-                ai.ndDims.push_back(dv);
+            ai.dataExpr = cRet.clone();
+            keel::String sig = cppArrayElemType(retType.dtype) + "* __restrict " + cRet;
+            keel::String prod;  // total length = product of the companions
+            for (keel::usize d = 0; d < retType.shape.nd.size(); ++d) {
+                keel::String dv = companion(retName, "_d" + toStr(d));
                 sig  += ", std::size_t " + dv;
                 prod += (prod.empty() ? "" : " * ") + dv;
+                ai.ndDims.push_back(keel::move(dv));
             }
-            ai.lenVar       = "(" + prod + ")";  // drives the zeros/ones fill loop
-            arrays[retName] = ai;
-            sigParams.push_back(sig);
+            ai.lenVar = "(" + prod + ")";  // drives the zeros/ones fill loop
+            arrays.put(retName.clone(), keel::move(ai));
+            sigParams.push_back(keel::move(sig));
         } else if (is2DMatrixType(retType)) {
             arrayReturn = true;
-            retCpp      = "void";
+            retCpp.assign("void");
             ArrayInfo ai;
             ai.dtype    = retType.dtype;
             ai.is2D     = true;
             ai.isOutput = true;
-            ai.dataExpr = cRet;
+            ai.dataExpr = cRet.clone();
             ai.rowsVar  = companion(retName, "_rows");
             ai.colsVar  = companion(retName, "_cols");
             ai.lenVar   = "(" + ai.rowsVar + " * " + ai.colsVar + ")";  // zeros/ones fill bound
-            arrays[retName] = ai;
             sigParams.push_back(cppArrayElemType(retType.dtype) + "* __restrict " + cRet
                                 + ", std::size_t " + ai.rowsVar + ", std::size_t " + ai.colsVar);
+            arrays.put(retName.clone(), keel::move(ai));
         } else if (isBufferArrayType(retType)) {
             arrayReturn = true;
-            retCpp      = "void";
+            retCpp.assign("void");
             ArrayInfo ai;
-            ai.dtype        = retType.dtype;
-            ai.lenVar       = companion(retName, "_len");
-            ai.isOutput     = true;
-            ai.dataExpr     = cRet;
-            ai.orient       = orientOf(retType);
-            arrays[retName] = ai;
+            ai.dtype    = retType.dtype;
+            ai.lenVar   = companion(retName, "_len");
+            ai.isOutput = true;
+            ai.dataExpr = cRet.clone();
+            ai.orient   = orientOf(retType);
             sigParams.push_back(cppArrayElemType(retType.dtype) + "* __restrict " + cRet
                                 + ", std::size_t " + ai.lenVar);
+            arrays.put(retName.clone(), keel::move(ai));
         } else if (retType.isObject()) {
             // returned BY VALUE (value class) / handle wrapper — not an
             // out-param; the scalar-return path (return retName;) applies.
@@ -816,33 +815,35 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             if (!retType.structLayout)
                 unsupported("struct output '" + retName + "' has no field layout");
             arrayReturn = true;  // void; body fills the out-params; no scalar return emitted
-            retCpp      = "void";
-            explodeStructOutput("_numkit_fld_" + retName, retName, *retType.structLayout);
+            retCpp.assign("void");
+            explodeStructOutput(explodeStructOutput, "_numkit_fld_" + retName, retName,
+                                *retType.structLayout);
         } else if (bridge
                    && (retType.isDynamic()
                        || (retType.isConcrete() && retType.shape.kind == ShapeKind::Unknown))) {
-            retCpp        = "numkit_val";
+            retCpp.assign("numkit_val");
             dynamicReturn = true;
         } else {
             unsupported("output '" + retName + "' has an unsupported type");
         }
     } else if (nout >= 2) {
-        for (std::size_t oi = 0; oi < funcDef.returnNames.size(); ++oi) {
-            const std::string &rn  = funcDef.returnNames[oi];
-            const std::string  cRn = cppIdent(rn);
+        for (keel::usize oi = 0; oi < funcDef.returnNames.size(); ++oi) {
+            const keel::String &rn  = funcDef.returnNames[oi];
+            const keel::String  cRn = cppIdent(rn);
             if (rn.empty()) unsupported("multi-output with an unnamed output");
-            const auto         it = decls.find(rn);
-            const InferredType t  = (it != decls.end()) ? it->second : InferredType::dynamic();
+            const InferredType *tp = decls.get(rn);
+            const InferredType  t  = tp ? *tp : InferredType::dynamic();
             if (oi == 0 && isByValueReturnArrayType(t)) {
                 retCpp             = "std::vector<" + cppArrayElemType(t.dtype) + ">";
-                retName            = rn;
+                retName            = rn.clone();
                 multiByValueReturn = true;
                 continue;
             }
             if (t.isStruct()) {
                 if (!t.structLayout)
                     unsupported("struct multi-output '" + rn + "' has no field layout");
-                explodeStructOutput("_numkit_fld_" + rn, rn, *t.structLayout);
+                explodeStructOutput(explodeStructOutput, "_numkit_fld_" + rn, rn,
+                                    *t.structLayout);
                 continue;
             }
             if (is2DMatrixType(t) || (t.isConcrete() && t.shape.isNDims())
@@ -851,25 +852,25 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
                 continue;
             }
             if (t.isObject()) {
-                if (paramSet.count(rn)) {
-                    const std::string outRef = "_numkit_out_" + rn;
+                if (paramSet.contains(rn)) {
+                    const keel::String outRef = "_numkit_out_" + rn;
                     sigParams.push_back(cppObjectType(t.classId, classes) + "& " + outRef);
-                    epilogueAssigns.push_back({outRef, cRn});
+                    epilogueAssigns.push_back(StrPair(outRef, cRn));
                 } else {
                     sigParams.push_back(cppObjectType(t.classId, classes) + "& " + cRn);
-                    paramSet.insert(rn);
+                    paramSet.insert(rn.clone());
                 }
                 continue;
             }
             if (!isUnboxableScalarType(t))
                 unsupported("multi-output '" + rn + "' has unsupported type " + t.str());
-            if (paramSet.count(rn)) {
-                const std::string outRef = "_numkit_out_" + rn;
+            if (paramSet.contains(rn)) {
+                const keel::String outRef = "_numkit_out_" + rn;
                 sigParams.push_back(cppScalarType(t.dtype) + "& " + outRef);
-                epilogueAssigns.push_back({outRef, cRn});
+                epilogueAssigns.push_back(StrPair(outRef, cRn));
             } else {
                 sigParams.push_back(cppScalarType(t.dtype) + "& " + cRn);
-                paramSet.insert(rn);  // a reference param, not a hoisted local
+                paramSet.insert(rn.clone());  // a reference param, not a hoisted local
             }
         }
     }
@@ -877,19 +878,19 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
     // Array LOCALS: a 1-D buffer-array-typed variable that is neither a
     // parameter nor the output is an owned, runtime-sized std::vector. Register
     // it so index / numel / call-arg resolve to `<name>.data()` / `.size()`.
-    for (const auto &[name, t] : decls) {
-        if (paramSet.count(name) || arrays.count(name)) continue;  // params + the output
-        const std::string cName = cppIdent(name);
+    for (auto [name, t] : decls) {
+        if (paramSet.contains(name) || arrays.contains(name)) continue;  // params + the output
+        const keel::String cName = cppIdent(name);
         if (is2DMatrixType(t)) {
             ArrayInfo ai;
-            ai.dtype     = t.dtype;
-            ai.isLocal   = true;
-            ai.is2D      = true;
-            ai.dataExpr  = cName + ".data()";
-            ai.lenVar    = cName + ".size()";
-            ai.rowsVar   = std::to_string(t.shape.rows);
-            ai.colsVar   = std::to_string(t.shape.cols);
-            arrays[name] = ai;
+            ai.dtype    = t.dtype;
+            ai.isLocal  = true;
+            ai.is2D     = true;
+            ai.dataExpr = cName + ".data()";
+            ai.lenVar   = cName + ".size()";
+            ai.rowsVar  = toStr(t.shape.rows);
+            ai.colsVar  = toStr(t.shape.cols);
+            arrays.put(name.clone(), keel::move(ai));
         } else if (t.isConcrete() && t.shape.isNDims()) {
             ArrayInfo ai;
             ai.dtype    = t.dtype;
@@ -898,45 +899,50 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             ai.dataExpr = cName + ".data()";
             ai.lenVar   = cName + ".size()";
             bool allKnown = true;
-            for (std::size_t d : t.shape.nd)
+            for (keel::usize d : t.shape.nd)
                 if (d == 0) { allKnown = false; break; }
             if (allKnown) {
-                for (std::size_t d : t.shape.nd) ai.ndDims.push_back(std::to_string(d));
+                for (keel::usize d : t.shape.nd) ai.ndDims.push_back(toStr(d));
             } else {
                 ai.ndRuntimeLocal = true;
-                for (std::size_t d = 0; d < t.shape.nd.size(); ++d)
-                    ai.ndDims.push_back(companion(name, "_d" + std::to_string(d)));
+                for (keel::usize d = 0; d < t.shape.nd.size(); ++d)
+                    ai.ndDims.push_back(companion(name, "_d" + toStr(d)));
             }
-            arrays[name] = ai;
+            arrays.put(name.clone(), keel::move(ai));
         } else if (isBufferArrayType(t)) {
             ArrayInfo ai;
-            ai.dtype     = t.dtype;
-            ai.isLocal   = true;
-            ai.dataExpr  = cName + ".data()";
-            ai.lenVar    = cName + ".size()";
-            ai.orient    = orientOf(t);
-            arrays[name] = ai;
+            ai.dtype    = t.dtype;
+            ai.isLocal  = true;
+            ai.dataExpr = cName + ".data()";
+            ai.lenVar   = cName + ".size()";
+            ai.orient   = orientOf(t);
+            arrays.put(name.clone(), keel::move(ai));
         }
     }
 
-    const std::string symbol = cppName.empty() ? cppGlobalIdent(funcDef.strValue) : cppName;
-    std::string       sig    = retCpp + " " + symbol + "(";
-    for (std::size_t i = 0; i < sigParams.size(); ++i)
+    const keel::String symbol = cppName.empty() ? cppGlobalIdent(funcDef.strValue) : keel::String::from(cppName);
+    keel::String       sig    = retCpp + " " + symbol + "(";
+    for (keel::usize i = 0; i < sigParams.size(); ++i)
         sig += (i ? ", " : "") + sigParams[i];
     sig += ")";
 
     // Optimisation facts (brick 6). Empty facts => the always-correct
     // checked form; the analysis only enables faster lowering.
     const OptFacts opt = analyzeOptimizations(body, arrays);
-    std::set<std::string> promotedVars;  // their counter is declared in the for, not hoisted
-    for (const ASTNode *f : opt.promotedLoops) promotedVars.insert(f->strValue);
+    keel::HashSet<keel::String> promotedVars;  // their counter is declared in the for, not hoisted
+    for (const ASTNode *f : opt.promotedLoops) promotedVars.insert(f->strValue.clone());
 
     // Emit hoisted local declarations (deterministic order) + the body.
-    Emitter em(entry, reg, arrays, opt, ctx, classes, bridge, opsKernels);
+    keel::Array<keel::String> orderedDecls;
+    orderedDecls.reserve(decls.size());
+    for (auto [name, t] : decls) orderedDecls.push_back(name.clone());
+    keel::sort(orderedDecls);
+
+    Emitter em(keel::move(entry), reg, arrays.clone(), opt.clone(), ctx, classes, bridge, opsKernels);
     em.hoistArrayLocals();  // owned-vector array locals first
-    std::map<std::string, InferredType> ordered(decls.begin(), decls.end());
-    for (const auto &[name, t] : ordered) {
-        if (paramSet.count(name) || arrays.count(name) || promotedVars.count(name))
+    for (const keel::String &name : orderedDecls) {
+        const InferredType &t = *decls.get(name);
+        if (paramSet.contains(name) || arrays.contains(name) || promotedVars.contains(name))
             continue;  // signature params / arrays / promoted loop counters
         if (t.isStruct())
             continue;  // a plain struct is VIRTUAL: no storage of its own -- its fields are
@@ -952,9 +958,9 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
         em.hoistLocal(name, isBoxedDynamic ? InferredType::dynamic() : t);
         if (bridge && isBoxedDynamic) em.addDynamicLocal(name);  // boxed-assign discipline
     }
-    for (const std::string &ps : prologueStmts) em.emitRawLine(ps);
+    for (const keel::String &ps : prologueStmts) em.emitRawLine(ps);
     em.setReturnInfo(multiByValueReturn || (nout == 1 && !arrayReturn), retName, dynamicReturn);
-    em.setEpilogueAssigns(epilogueAssigns);
+    em.setEpilogueAssigns(keel::move(epilogueAssigns));
     em.emitStmt(body);
     // Trailing return for the fall-through path. Skipped when the body already
     // ends in an explicit `return` (its emitStmt emitted the return), so we don't
@@ -969,10 +975,10 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
             dynamicReturn ? em.emitReturnDynamic(retName) : em.emitReturnScalar(retName);
     }
 
-    std::string definition = sig + " {\n";
+    keel::String definition = sig + " {\n";
     definition += em.out();
     definition += "}\n";
-    return {sig, definition};
+    return OneFn(keel::move(sig), keel::move(definition));
 }
 
 } // namespace detail
@@ -980,35 +986,35 @@ OneFn emitOneFunction(const ASTNode &funcDef, const std::vector<ParamSpec> &para
 using namespace detail;
 
 // Emit the C++ struct for every class in `classes` (empty when null).
-static std::string emitAllStructs(const ClassRegistry *classes)
+static keel::String emitAllStructs(const ClassRegistry *classes)
 {
-    std::string s;
+    keel::String s;
     if (classes)
-        for (std::size_t i = 0; i < classes->size(); ++i)
+        for (keel::usize i = 0; i < classes->size(); ++i)
             s += emitClassStruct(*classes->byId(static_cast<int>(i)));
     return s;
 }
 
 // ── whole-function emission (3f) ──────────────────────────────────────
 EmittedFunction emitFunction(const ASTNode &funcDef,
-                             const std::vector<ParamSpec> &params,
+                             keel::ArrayRef<ParamSpec> params,
                              const TransferRegistry &reg, const ClassRegistry *classes,
                              const BridgeOptions &bridge, const OpsKernelOptions &opsKernels)
 {
     const OneFn f = emitOneFunction(funcDef, params, reg, /*ctx=*/nullptr, /*cppName=*/"", classes,
                                     /*extraSeed=*/{}, bridge.enabled, opsKernels.enabled);
-    std::string source = kPrelude;
+    keel::String source = keel::String::from(kPrelude);
     source += "\n";
     if (opsKernels.enabled) source += "#include <numkit/ops/kernels.hpp>\n";
     if (bridge.enabled) source += bridgePrelude(bridge.runtimeHeader);
     source += emitAllStructs(classes);
     source += f.definition;
-    return {source, cppGlobalIdent(funcDef.strValue), f.signature};
+    return EmittedFunction(keel::move(source), cppGlobalIdent(funcDef.strValue), f.signature.clone());
 }
 
 // ── whole-program emission (§12 brick 1b) ─────────────────────────────
 EmittedFunction emitProgram(const ASTNode &entryDef,
-                            const std::vector<ParamSpec> &params,
+                            keel::ArrayRef<ParamSpec> params,
                             const FunctionTable &table, const TransferRegistry &reg,
                             const ClassRegistry *classes, const BridgeOptions &bridge,
                             const OpsKernelOptions &opsKernels)
@@ -1016,37 +1022,37 @@ EmittedFunction emitProgram(const ASTNode &entryDef,
     ProgramEmitCtx ctx;
     ctx.funcs = &table;
 
-    std::vector<InferredType> entryArgTypes;
+    keel::Array<InferredType> entryArgTypes;
     entryArgTypes.reserve(params.size());
     for (const auto &p : params) entryArgTypes.push_back(p.type);
-    const std::string entryMangled = mangle(entryDef.strValue, entryArgTypes);
-    ctx.seen.insert(entryMangled);
+    const keel::String entryMangled = mangle(entryDef.strValue, entryArgTypes);
+    ctx.seen.insert(entryMangled.clone());
 
-    std::vector<std::string> sigs, defs;
+    keel::Array<keel::String> sigs, defs;
     const OneFn ef = emitOneFunction(entryDef, params, reg, &ctx, entryMangled, classes, {},
                                      bridge.enabled, opsKernels.enabled);
-    const std::string entrySig = ef.signature;
-    sigs.push_back(ef.signature);
-    defs.push_back(ef.definition);
+    const keel::String entrySig = ef.signature.clone();
+    sigs.push_back(ef.signature.clone());
+    defs.push_back(ef.definition.clone());
 
     // Drain the worklist: each specialisation may discover more calls.
     while (!ctx.pending.empty()) {
-        const CallSite cs = ctx.pending.back();
+        CallSite cs = keel::move(ctx.pending.back());
         ctx.pending.pop_back();
         if (cs.argTypes.size() != cs.def->paramNames.size())
             unsupported("arity mismatch emitting '" + cs.def->strValue + "'");
-        std::vector<ParamSpec> ps;
+        keel::Array<ParamSpec> ps;
         ps.reserve(cs.argTypes.size());
-        for (std::size_t i = 0; i < cs.argTypes.size(); ++i)
-            ps.push_back({cs.def->paramNames[i], cs.argTypes[i]});
+        for (keel::usize i = 0; i < cs.argTypes.size(); ++i)
+            ps.push_back(ParamSpec(cs.def->paramNames[i], cs.argTypes[i]));
         const OneFn cf = emitOneFunction(*cs.def, ps, reg, &ctx, cs.mangled, classes, cs.extraSeed,
                                          bridge.enabled, opsKernels.enabled,
                                          /*interprocByValueReturn=*/true);
-        sigs.push_back(cf.signature);
-        defs.push_back(cf.definition);
+        sigs.push_back(cf.signature.clone());
+        defs.push_back(cf.definition.clone());
     }
 
-    std::string source = kPrelude;
+    keel::String source = keel::String::from(kPrelude);
     source += "\n";
     if (opsKernels.enabled) source += "#include <numkit/ops/kernels.hpp>\n";
     if (bridge.enabled) source += bridgePrelude(bridge.runtimeHeader);
@@ -1055,24 +1061,24 @@ EmittedFunction emitProgram(const ASTNode &entryDef,
     for (const auto &s : sigs) source += s + ";\n";  // forward declarations
     source += "\n";
     for (const auto &d : defs) source += d;
-    return {source, entryMangled, entrySig};
+    return EmittedFunction(keel::move(source), entryMangled.clone(), entrySig.clone());
 }
 
 // ── codegen-as-plugin (tiered acceleration, §6b) ──────────────────────
-std::string emitScalarPlugin(const ASTNode &funcDef,
-                             const std::vector<ParamSpec> &params,
-                             const TransferRegistry &reg, const std::string &exportName,
-                             const std::string &abiHeaderPath, const ClassRegistry *classes)
+keel::String emitScalarPlugin(const ASTNode &funcDef,
+                              keel::ArrayRef<ParamSpec> params,
+                              const TransferRegistry &reg, keel::StringRef exportName,
+                              keel::StringRef abiHeaderPath, const ClassRegistry *classes)
 {
     // Preconditions (the sound boundary): a SCALAR single output (the
     // output-size protocol for an array result is a later layer), and each
     // parameter is a scalar OR a double row vector. inferFunctionReturn yields
     // Dynamic for a multi-output / untypeable function, so the
     // isUnboxableScalar() return check covers those too.
-    std::vector<ArgInfo> args;
+    keel::Array<ArgInfo> args;
     args.reserve(params.size());
     for (const auto &p : params) {
-        const bool scalar   = p.type.isUnboxableScalar();
+        const bool scalar    = p.type.isUnboxableScalar();
         const bool dblVector = isBufferArrayType(p.type) && p.type.dtype == ValueType::DOUBLE;
         if (!scalar && !dblVector)
             unsupported("plugin export: parameter '" + p.name
@@ -1087,19 +1093,19 @@ std::string emitScalarPlugin(const ASTNode &funcDef,
 
     // The compiled function (throws if its body is outside the subset).
     const EmittedFunction ef = emitFunction(funcDef, params, reg, classes);
-    const std::size_t     n  = params.size();
+    const keel::usize     n  = params.size();
 
     // Per-parameter marshalling: a scalar unboxes inline; a double vector
     // unboxes into a buffer (sized by the runtime value) passed as ptr+len.
-    std::string preDecls, callArgs;
-    for (std::size_t i = 0; i < n; ++i) {
-        const std::string ix = std::to_string(i);
+    keel::String preDecls, callArgs;
+    for (keel::usize i = 0; i < n; ++i) {
+        const keel::String ix = toStr(i);
         if (i) callArgs += ", ";
         if (params[i].type.isUnboxableScalar()) {
             callArgs += "static_cast<" + cppScalarType(params[i].type.dtype)
                         + ">(numkit__host->unbox_scalar(a[" + ix + "]))";
         } else {  // double vector
-            const std::string b = "__b" + ix;
+            const keel::String b = "__b" + ix;
             preDecls += "    std::vector<double> " + b + "(numkit__host->numel(a[" + ix + "]));\n";
             preDecls += "    numkit__host->unbox_array(a[" + ix + "], " + b + ".data(), " + b
                         + ".size());\n";
@@ -1107,7 +1113,7 @@ std::string emitScalarPlugin(const ASTNode &funcDef,
         }
     }
 
-    std::string s = ef.source;
+    keel::String s = ef.source.clone();
     s += "\n#include \"" + abiHeaderPath + "\"\n";
     s += "#include <cstdio>\n";
     s += "#include <vector>\n";
@@ -1116,9 +1122,9 @@ std::string emitScalarPlugin(const ASTNode &funcDef,
     s += "numkit_val numkit__wrap(const numkit_val *a, size_t nargs, size_t nargout,\n";
     s += "                numkit_val *extra_outs, numkit_error *err) {\n";
     s += "    (void)nargout; (void)extra_outs;\n";
-    s += "    if (nargs < " + std::to_string(n) + ") {\n";
+    s += "    if (nargs < " + toStr(n) + ") {\n";
     s += "        if (err) { err->code = 1; std::snprintf(err->message, sizeof(err->message),\n";
-    s += "            \"" + exportName + ": expected " + std::to_string(n) + " argument(s)\"); }\n";
+    s += "            \"" + exportName + ": expected " + toStr(n) + " argument(s)\"); }\n";
     s += "        return nullptr;\n";
     s += "    }\n";
     s += preDecls;
@@ -1136,14 +1142,14 @@ std::string emitScalarPlugin(const ASTNode &funcDef,
 }
 
 // ── class struct emission (§12 brick 5) ───────────────────────────────
-std::string emitClassStruct(const ClassInfo &ci)
+keel::String emitClassStruct(const ClassInfo &ci)
 {
-    std::string s = "struct " + cppGlobalIdent(ci.name) + " {\n";
+    keel::String s = "struct " + cppGlobalIdent(ci.name) + " {\n";
     for (const auto &f : ci.fields) {
         if (!f.type.isUnboxableScalar())
             unsupported("class '" + ci.name + "' field '" + f.name
                         + "' is not an unboxed scalar (v1)");
-        const std::string init =
+        const keel::String init =
             f.defaultExpr ? emitScalarExpr(*f.defaultExpr) : zeroLiteral(f.type.dtype);
         s += "    " + cppScalarType(f.type.dtype) + " " + cppIdent(f.name) + " = " + init + ";\n";
     }

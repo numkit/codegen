@@ -10,9 +10,9 @@ namespace numkit::codegen::detail {
 // Builtins outside this set (sqrt/log/asin/… not yet typed; sign no clean
 // std form) hit the explicit boundary in emitBuiltinCall and throw — never
 // silently wrong, never dead-but-unreachable speculation.
-const char *unaryMathStd(const std::string &name)
+const char *unaryMathStd(keel::StringRef name)
 {
-    static const std::unordered_map<std::string, const char *> kMap = {
+    static constexpr struct { keel::StringRef k; const char *v; } kMap[] = {
         {"sin", "sin"},     {"cos", "cos"},   {"tan", "tan"},   {"atan", "atan"},
         {"sinh", "sinh"},   {"cosh", "cosh"}, {"tanh", "tanh"}, {"exp", "exp"},
         {"floor", "floor"}, {"ceil", "ceil"}, {"round", "round"},
@@ -21,8 +21,9 @@ const char *unaryMathStd(const std::string &name)
         // realOnlyMathUnaryTransfer
         {"asinh", "asinh"}, {"erf", "erf"}, {"erfc", "erfc"}, {"expm1", "expm1"},
         {"gammaln", "lgamma"}};  // nk gammaln(x) == std::lgamma(x) (bit-identical)
-    const auto it = kMap.find(name);
-    return it == kMap.end() ? nullptr : it->second;
+    for (const auto &e : kMap)
+        if (e.k == name) return e.v;
+    return nullptr;
 }
 
 // MATLAB unary-math name -> the numkit::ops:: SIMD transcendental facade entry
@@ -31,23 +32,24 @@ const char *unaryMathStd(const std::string &name)
 // codegen also lowers inline — so routing here is a faithful, faster swap
 // (inline std::<fn> does not auto-vectorise on MSVC). floor/ceil/round/abs/fix/
 // erf/erfc are NOT here (cheap or no SIMD kernel) -> they stay inline.
-const char *opsTranscendentalFn(const std::string &name)
+const char *opsTranscendentalFn(keel::StringRef name)
 {
-    static const std::unordered_map<std::string, const char *> kMap = {
+    static constexpr struct { keel::StringRef k; const char *v; } kMap[] = {
         {"sin", "sinDouble"},     {"cos", "cosDouble"},   {"tan", "tanDouble"},
         {"atan", "atanDouble"},   {"sinh", "sinhDouble"}, {"cosh", "coshDouble"},
         {"tanh", "tanhDouble"},   {"exp", "expDouble"},   {"asinh", "asinhDouble"},
         {"expm1", "expm1Double"}};
-    const auto it = kMap.find(name);
-    return it == kMap.end() ? nullptr : it->second;
+    for (const auto &e : kMap)
+        if (e.k == name) return e.v;
+    return nullptr;
 }
 
 // MATLAB binary-math name -> std:: name. Total on ℝ², typed scalar->scalar by
 // realBinaryMathTransfer (complex/array -> Dynamic, so this only fires for a
 // real scalar result).
-const char *binaryMathStd(const std::string &name)
+const char *binaryMathStd(keel::StringRef name)
 {
-    static const std::unordered_map<std::string, const char *> kMap = {
+    static constexpr struct { keel::StringRef k; const char *v; } kMap[] = {
         {"atan2", "atan2"}, {"hypot", "hypot"},
         {"rem", "fmod"},   // nk rem(a,b) == std::fmod(a,b) (bit-identical)
         // MATLAB's 2-arg max/min ignore NaN (the result is the non-NaN operand), which is
@@ -55,11 +57,12 @@ const char *binaryMathStd(const std::string &name)
         // different arity (handled at the statement level), so it never reaches this 2-arg
         // path. maxMinTransfer types the 2-arg form (real DOUBLE) for the elementwise fill.
         {"max", "fmax"}, {"min", "fmin"}};
-    const auto it = kMap.find(name);
-    return it == kMap.end() ? nullptr : it->second;
+    for (const auto &e : kMap)
+        if (e.k == name) return e.v;
+    return nullptr;
 }
 
-std::string Emitter::emitExpr(const ASTNode &e)
+keel::String Emitter::emitExpr(const ASTNode &e)
 {
     switch (e.type) {
     case NodeType::NUMBER_LITERAL:
@@ -67,7 +70,7 @@ std::string Emitter::emitExpr(const ASTNode &e)
     case NodeType::IMAG_LITERAL:
         return "std::complex<double>(0.0, " + formatDoubleLiteral(e.numValue) + ")";
     case NodeType::BOOL_LITERAL:
-        return e.boolValue ? "true" : "false";
+        return keel::String::from(e.boolValue ? "true" : "false");
     case NodeType::STRING_LITERAL:
         // A 1x1 char literal ('a') is a uint16 code-unit scalar. A multi-char
         // literal is a char ARRAY -> handled at the statement level (emitAssign);
@@ -75,16 +78,16 @@ std::string Emitter::emitExpr(const ASTNode &e)
         if (e.strValue.size() != 1)
             unsupported("multi-char string literal in expression position (char array)");
         return "std::uint16_t("
-               + std::to_string(static_cast<unsigned>(static_cast<unsigned char>(e.strValue[0])))
+               + toStr(static_cast<unsigned>(static_cast<unsigned char>(e.strValue[0])))
                + ")";
     case NodeType::IDENTIFIER:
         if (isArrayVar(e.strValue)) {
             // Inside an elementwise-array fill loop a whole array means its
             // current element; in any other (scalar) context it is an error.
-            if (auto it = elementIdxMap_.find(e.strValue); it != elementIdxMap_.end())
-                return arrays_.at(e.strValue).dataExpr + "[" + it->second + "]";
+            if (const keel::String *idx = elementIdxMap_.get(e.strValue))
+                return arrayAt(e.strValue).dataExpr + "[" + *idx + "]";
             if (!elementCtx_.empty())
-                return arrays_.at(e.strValue).dataExpr + "[" + elementCtx_ + "]";
+                return arrayAt(e.strValue).dataExpr + "[" + elementCtx_ + "]";
             unsupported("bare array identifier '" + e.strValue + "' in scalar context");
         }
         return cppIdent(e.strValue);
@@ -110,10 +113,10 @@ std::string Emitter::emitExpr(const ASTNode &e)
             const AbstractValue a = inferExpr(*e.children[0], types_, reg_, classes_);
             if (!a.type.shape.isScalar())
                 unsupported("transpose of a non-scalar sub-expression");
-            const std::string inner = emitExpr(*e.children[0]);
+            keel::String inner = emitExpr(*e.children[0]);
             return (e.strValue == "'" && a.type.dtype == ValueType::COMPLEX)
-                       ? "std::conj(" + inner + ")"
-                       : inner;
+                       ? ("std::conj(" + inner + ")")
+                       : keel::move(inner);
         }
         return emitUnOpJoin(e.strValue, emitExpr(*e.children[0]));
     case NodeType::CALL: {
@@ -121,7 +124,7 @@ std::string Emitter::emitExpr(const ASTNode &e)
         const ASTNode &callee = *e.children[0];
         if (callee.type == NodeType::FIELD_ACCESS
             || callee.type == NodeType::DYNAMIC_FIELD_ACCESS) {
-            const std::string fld = resolveArrayVar(callee);
+            const keel::String fld = resolveArrayVar(callee);
             if (!fld.empty()) return emitIndexRead(fld, e);
             if (callee.type == NodeType::FIELD_ACCESS && classes_)
                 return emitMethodCall(e);  // obj.method(args)
@@ -147,8 +150,8 @@ std::string Emitter::emitExpr(const ASTNode &e)
         // i (s is not a value; only its field-arrays exist). Matched before inferring the base.
         if (e.children[0]->type == NodeType::CALL && !e.children[0]->children.empty()
             && e.children[0]->children[0]->type == NodeType::IDENTIFIER) {
-            const std::string sv  = e.children[0]->children[0]->strValue;
-            const std::string fld = "_numkit_fld_" + sv + "_" + e.strValue;
+            const keel::String &sv = e.children[0]->children[0]->strValue;
+            const keel::String fld = "_numkit_fld_" + sv + "_" + e.strValue;
             if (isArrayVar(fld) && !types_.has(sv))
                 return emitIndexRead(fld, *e.children[0]);  // _numkit_fld_s_a indexed by s(i)'s subscript
         }
@@ -157,13 +160,13 @@ std::string Emitter::emitExpr(const ASTNode &e)
         // to a NESTED chain s.a.b via the chain helper. The immediate base being
         // non-object gates struct-vs-object at every level.
         if (!base.type.isObject()) {
-            const std::string fld = structFieldLocal(e);
+            keel::String fld = structFieldLocal(e);
             if (!fld.empty()) {
                 if (isArrayVar(fld)) {
-                    if (auto it = elementIdxMap_.find(fld); it != elementIdxMap_.end())
-                        return arrays_.at(fld).dataExpr + "[" + it->second + "]";
+                    if (const keel::String *idx = elementIdxMap_.get(fld))
+                        return arrayAt(fld).dataExpr + "[" + *idx + "]";
                     if (!elementCtx_.empty())
-                        return arrays_.at(fld).dataExpr + "[" + elementCtx_ + "]";
+                        return arrayAt(fld).dataExpr + "[" + elementCtx_ + "]";
                 }
                 return fld;
             }
@@ -186,14 +189,14 @@ std::string Emitter::emitExpr(const ASTNode &e)
 // `nestedAnon` (refused — its own param scope is not modeled here). Everything else
 // recurses into all children (so a CALL callee and a DYNAMIC_FIELD_ACCESS name expr
 // are both collected, which is what the capture check wants).
-static void collectAnonRefIds(const ASTNode &n, std::set<std::string> &out, bool &nestedAnon)
+static void collectAnonRefIds(const ASTNode &n, keel::HashSet<keel::String> &out, bool &nestedAnon)
 {
     switch (n.type) {
     case NodeType::ANON_FUNC:
         nestedAnon = true;
         return;
     case NodeType::IDENTIFIER:
-        out.insert(n.strValue);
+        out.insert(n.strValue.clone());
         return;
     case NodeType::FIELD_ACCESS:  // s.field — the field name is not a variable
         if (!n.children.empty() && n.children[0])
@@ -212,7 +215,7 @@ static void collectAnonRefIds(const ASTNode &n, std::set<std::string> &out, bool
 // un-typeable builtin result stays boxed (call_dyn). v1 covers real-double
 // scalars + Dynamic values — a complex/array operand, a Dynamic call argument,
 // or short-circuit && / || is an explicit boundary (A3/A4/A5), never wrong code.
-std::string Emitter::emitDynamicExpr(const ASTNode &e)
+keel::String Emitter::emitDynamicExpr(const ASTNode &e)
 {
     switch (e.type) {
     case NodeType::NUMBER_LITERAL:
@@ -220,13 +223,13 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
     case NodeType::IDENTIFIER: {
         if (isArrayVar(e.strValue)) {
             // Box a typed array at the boundary (shape-preserving, column-major).
-            const ArrayInfo &ai = arrays_.at(e.strValue);
+            const ArrayInfo &ai = arrayAt(e.strValue);
             if (ai.dtype == ValueType::DOUBLE) {
                 if (ai.is2D)
                     return "numkit_rt::val::matrix(" + ai.dataExpr + ", " + ai.rowsVar + ", "
                            + ai.colsVar + ")";
                 if (ai.isND) {
-                    std::string dims;
+                    keel::String dims;
                     for (std::size_t k = 0; k < ai.ndDims.size(); ++k)
                         dims += (k ? ", " : "") + ai.ndDims[k];
                     return "numkit_rt::val::array_nd(" + ai.dataExpr + ", {" + dims + "})";
@@ -238,7 +241,7 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
                     return "numkit_rt::val::complex_matrix(" + ai.dataExpr + ", " + ai.rowsVar + ", "
                            + ai.colsVar + ")";
                 if (ai.isND) {
-                    std::string dims;
+                    keel::String dims;
                     for (std::size_t k = 0; k < ai.ndDims.size(); ++k)
                         dims += (k ? ", " : "") + ai.ndDims[k];
                     return "numkit_rt::val::complex_array_nd(" + ai.dataExpr + ", {" + dims + "})";
@@ -247,7 +250,7 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
             }
             unsupported("Dynamic tier: array operand '" + e.strValue + "' unsupported dtype (v1)");
         }
-        if (dynamicLocals_.count(e.strValue))
+        if (dynamicLocals_.contains(e.strValue))
             return cppIdent(e.strValue);
         const AbstractValue av = inferExpr(e, types_, reg_, classes_);
         if (av.type.isDynamic())
@@ -281,10 +284,10 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
         // the runtime (numkit_index) resolves it. v1: a single subscript.
         if ((types_.has(callee.strValue)
              && inferExpr(callee, types_, reg_, classes_).type.isDynamic())
-            || dynamicLocals_.count(callee.strValue)) {
+            || dynamicLocals_.contains(callee.strValue)) {
             if (e.children.size() < 2)
                 unsupported("Dynamic tier: index with no subscript");
-            std::string subs;
+            keel::String subs;
             for (std::size_t k = 1; k < e.children.size(); ++k)
                 subs += (k > 1 ? ", " : "") + emitDynamicExpr(*e.children[k]);
             return "numkit_rt::index_dyn(" + cppIdent(callee.strValue) + ", {" + subs + "})";
@@ -310,7 +313,7 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
         bool allDoubleScalar = true;
         for (std::size_t i = 1; i < e.children.size(); ++i) {
             if (e.children[i]->type == NodeType::IDENTIFIER
-                && dynamicLocals_.count(e.children[i]->strValue)) {
+                && dynamicLocals_.contains(e.children[i]->strValue)) {
                 allDoubleScalar = false;
                 continue;
             }
@@ -319,7 +322,7 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
                   && av.type.shape.isScalar()))
                 allDoubleScalar = false;  // Dynamic / array arg -> call_dynv (emitDynamicExpr boxes)
         }
-        std::string args;
+        keel::String args;
         for (std::size_t i = 1; i < e.children.size(); ++i)
             args += (i > 1 ? ", " : "")
                     + (allDoubleScalar ? emitExpr(*e.children[i]) : emitDynamicExpr(*e.children[i]));
@@ -334,7 +337,7 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
         // a char/string literal as a Dynamic value -> box via numkit_box_string (printable
         // ASCII only; cEscape refuses a non-printable byte, sound).
         bool              ok  = false;
-        const std::string esc = cEscape(e.strValue, ok);
+        const keel::String esc = cEscape(e.strValue, ok);
         if (!ok) unsupported("Dynamic tier: char-literal with a non-printable byte (v1)");
         return "numkit_rt::val::string(\"" + esc + "\")";
     }
@@ -346,15 +349,15 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
         // -> a 1xN row of direct elements; else each child is a row BLOCK (a 2-D
         // {a,b; c,d} builds an RxC cell, column-major; a ragged literal -- a MATLAB
         // error -- refuses to interpreted fallback).
-        if (e.children.empty()) return "numkit_rt::val::cell({})";  // {}
-        auto boxRow = [&](const std::vector<ASTNodePtr> &els, std::string &out) {
+        if (e.children.empty()) return keel::String::from("numkit_rt::val::cell({})");  // {}
+        auto boxRow = [&](const keel::Array<ASTNodePtr> &els, keel::String &out) {
             for (const auto &el : els) {
                 if (!el) unsupported("Dynamic tier: null cell element (v1)");
                 out += (out.empty() ? "" : ", ") + emitDynamicExpr(*el);
             }
         };
         if (e.children[0]->type != NodeType::BLOCK) {  // children are elements directly (1 row)
-            std::string elems;
+            keel::String elems;
             boxRow(e.children, elems);
             return "numkit_rt::val::cell({" + elems + "})";
         }
@@ -364,11 +367,11 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
         for (const auto &row : e.children)
             if (!row || row->type != NodeType::BLOCK || row->children.size() != C)
                 unsupported("Dynamic tier: ragged / malformed cell literal (v1)");
-        std::string elems;
+        keel::String elems;
         for (const auto &row : e.children) boxRow(row->children, elems);
         if (R == 1) return "numkit_rt::val::cell({" + elems + "})";  // 1 x C
-        return "numkit_rt::val::cell_2d({" + elems + "}, " + std::to_string(R) + ", "
-               + std::to_string(C) + ")";
+        return "numkit_rt::val::cell_2d({" + elems + "}, " + toStr(R) + ", "
+               + toStr(C) + ")";
     }
     case NodeType::CELL_INDEX: {
         // c{i} or c{i,j} content extraction. v1: one or two unboxed-scalar
@@ -380,7 +383,7 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
         for (std::size_t k = 1; k <= nsub; ++k)
             if (!isUnboxableScalarType(inferExpr(*e.children[k], types_, reg_, classes_).type))
                 unsupported("Dynamic tier: cell content index must be unboxed scalar(s) (v1)");
-        const std::string base = emitDynamicExpr(*e.children[0]);
+        const keel::String base = emitDynamicExpr(*e.children[0]);
         if (nsub == 1)
             return "numkit_rt::cell_get(" + base + ", " + emitExpr(*e.children[1]) + ")";
         return "numkit_rt::cell_get_2d(" + base + ", " + emitExpr(*e.children[1]) + ", "
@@ -406,21 +409,22 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
         // numkit_eval would resolve them differently than the interpreter would capture
         // them. A nested anonymous function is also refused (v1). Each such case
         // falls back to the fully-interpreted tier (which captures correctly).
-        std::set<std::string> freeIds;
+        keel::HashSet<keel::String> freeIds;
         bool                  nestedAnon = false;
         collectAnonRefIds(*e.children[0], freeIds, nestedAnon);
         if (nestedAnon)
             unsupported("Dynamic tier: nested anonymous function (v1)");
-        const std::set<std::string> params(e.paramNames.begin(), e.paramNames.end());
+        keel::HashSet<keel::String> params;
+        for (const auto &pn : e.paramNames) params.insert(pn.clone());
         // Free identifiers (excluding the anon's own params) split three ways: a
         // co-compiled USER fn reference -> REFUSE (the runtime cannot resolve the
         // compiled spec by name inside the closure); a captured enclosing LOCAL ->
         // bind it by value (G5c); a builtin / global -> resolved by the runtime at
         // call time (nothing to capture). v1 captures UNBOXABLE-SCALAR locals only
         // (an array / Dynamic capture refuses -> interpreted fallback, sound).
-        std::vector<std::string> captures;
-        for (const std::string &id : freeIds) {
-            if (params.count(id)) continue;  // bound by the anon's own params
+        keel::Array<keel::String> captures;
+        for (const keel::String &id : sortedKeys(freeIds)) {
+            if (params.contains(id)) continue;  // bound by the anon's own params
             if (ctx_ && ctx_->funcs && ctx_->funcs->has(id))
                 unsupported("Dynamic tier: closure references a co-compiled user function '" + id
                             + "' (not resolvable by name in the runtime) (v1)");
@@ -430,21 +434,21 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
                 if (!isUnboxableScalarType(types_.get(id).type))
                     unsupported("Dynamic tier: closure captures a non-scalar local '" + id
                                 + "' (v1)");
-                captures.push_back(id);  // an unboxable-scalar captured local
+                captures.push_back(id.clone());  // an unboxable-scalar captured local
             }
             // else: a builtin / global -> resolved at call time (no capture).
         }
         if (e.strValue.empty())
             unsupported("Dynamic tier: anonymous function with no reconstructed source");
         bool              ok  = false;
-        const std::string esc = cEscape(e.strValue, ok);
+        const keel::String esc = cEscape(e.strValue, ok);
         if (!ok)
             unsupported("Dynamic tier: anonymous function source has a non-printable byte (v1)");
         if (captures.empty())
             return "numkit_rt::make_closure(\"" + esc + "\")";  // capture-free (G5b)
         // capturing (G5c): box each captured scalar local + bind it by name.
-        std::string names, vals;
-        for (const std::string &id : captures) {
+        keel::String names, vals;
+        for (const keel::String &id : captures) {
             names += (names.empty() ? "" : ", ") + ("\"" + id + "\"");
             vals  += (vals.empty() ? "" : ", ") + ("numkit_rt::val::scalar(" + cppIdent(id) + ")");
         }
@@ -452,11 +456,11 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
     }
     case NodeType::MATRIX_LITERAL: {
         if (e.children.empty())
-            return "numkit_rt::val::matrix(nullptr, 0, 0)";
+            return keel::String::from("numkit_rt::val::matrix(nullptr, 0, 0)");
         const std::size_t R = e.children.size();
         const std::size_t C = e.children[0] ? e.children[0]->children.size() : 0;
         if (C == 0)
-            return "numkit_rt::val::matrix(nullptr, 0, 0)";
+            return keel::String::from("numkit_rt::val::matrix(nullptr, 0, 0)");
         bool rectDoubleScalar = true;
         for (const auto &rowN : e.children) {
             if (!rowN || rowN->children.size() != C) {
@@ -475,15 +479,15 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
             if (!rectDoubleScalar) break;
         }
         if (!rectDoubleScalar) {
-            std::string rowVals;
+            keel::String rowVals;
             for (const auto &rowN : e.children) {
                 if (!rowN || rowN->children.empty())
                     unsupported("Dynamic tier: empty matrix row");
-                std::string rowExpr;
+                keel::String rowExpr;
                 if (rowN->children.size() == 1) {
                     rowExpr = emitDynamicExpr(*rowN->children[0]);
                 } else {
-                    std::string cols;
+                    keel::String cols;
                     for (const auto &el : rowN->children) {
                         if (!el) unsupported("Dynamic tier: null matrix element");
                         cols += (cols.empty() ? "" : ", ") + emitDynamicExpr(*el);
@@ -495,7 +499,7 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
             if (e.children.size() == 1) return rowVals;
             return "numkit_rt::call_dynv(\"vertcat\", {" + rowVals + "})";
         }
-        std::string elems;
+        keel::String elems;
         for (std::size_t c = 0; c < C; ++c) {
             for (std::size_t r = 0; r < R; ++r) {
                 if (!elems.empty()) elems += ", ";
@@ -503,15 +507,15 @@ std::string Emitter::emitDynamicExpr(const ASTNode &e)
             }
         }
         return "([&]() { const double _numkit_m[] = {" + elems
-               + "}; return numkit_rt::val::matrix(_numkit_m, " + std::to_string(R) + ", "
-               + std::to_string(C) + "); }())";
+               + "}; return numkit_rt::val::matrix(_numkit_m, " + toStr(R) + ", "
+               + toStr(C) + "); }())";
     }
     default:
         unsupported("Dynamic tier: expression node kind");
     }
 }
 
-std::string Emitter::emitCondition(const ASTNode &c)
+keel::String Emitter::emitCondition(const ASTNode &c)
 {
     const AbstractValue cv = inferExpr(c, types_, reg_, classes_);
     // Dynamic tier (DESIGN.md §10 C1): a Dynamic condition reduces to MATLAB
@@ -522,21 +526,21 @@ std::string Emitter::emitCondition(const ASTNode &c)
     return emitExpr(c);
 }
 
-std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &call)
+keel::String Emitter::emitBuiltinCall(keel::StringRef name, const ASTNode &call)
 {
     const std::size_t nargs = call.children.size() - 1;
 
     // numel / length / ndims of an array variable (or struct array field). 1-D: the length
     // companion. 2-D: numel = rows*cols; length = max(rows,cols). N-D: product / max of dims.
     if ((name == "numel" || name == "length" || name == "ndims") && nargs == 1) {
-        const std::string arrVar = resolveArrayVar(*call.children[1]);
+        const keel::String arrVar = resolveArrayVar(*call.children[1]);
         if (!arrVar.empty()) {
-            const ArrayInfo &ai = arrays_.at(arrVar);
+            const ArrayInfo &ai = arrayAt(arrVar);
             if (name == "ndims")
                 return "static_cast<double>("
-                       + std::to_string(ai.isND ? ai.ndDims.size() : std::size_t{2}) + ")";
+                       + toStr(ai.isND ? ai.ndDims.size() : std::size_t{2}) + ")";
             if (ai.isND) {
-                std::string e = ai.ndDims[0];
+                keel::String e = ai.ndDims[0].clone();
                 for (std::size_t i = 1; i < ai.ndDims.size(); ++i)
                     e = name == "numel" ? (e + " * " + ai.ndDims[i])
                                         : ("(" + e + " > " + ai.ndDims[i] + " ? " + e + " : "
@@ -563,12 +567,12 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     if ((name == "isempty" || name == "isscalar") && nargs == 1) {
         const ASTNode    &arg    = *call.children[1];
         const char       *cmp    = name == "isempty" ? ") == 0)" : ") == 1)";
-        const std::string arrVar = resolveArrayVar(arg);
+        const keel::String arrVar = resolveArrayVar(arg);
         if (!arrVar.empty()) {
-            const ArrayInfo &ai = arrays_.at(arrVar);
-            std::string      n  = ai.lenVar;
+            const ArrayInfo &ai = arrayAt(arrVar);
+            keel::String     n  = ai.lenVar.clone();
             if (ai.isND) {
-                n = ai.ndDims[0];
+                n = ai.ndDims[0].clone();
                 for (std::size_t i = 1; i < ai.ndDims.size(); ++i) n += " * " + ai.ndDims[i];
             } else if (ai.is2D) {
                 n = ai.rowsVar + " * " + ai.colsVar;
@@ -576,7 +580,7 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
             return "((" + n + cmp;
         }
         if (inferExpr(arg, types_, reg_, classes_).type.shape.kind == ShapeKind::Scalar)
-            return name == "isempty" ? "false" : "true";
+            return keel::String::from(name == "isempty" ? "false" : "true");
     }
 
     // isreal(x): true iff x has no imaginary part. A codegen value's complexity is
@@ -586,31 +590,31 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     if (name == "isreal" && nargs == 1) {
         const InferredType at = inferExpr(*call.children[1], types_, reg_, classes_).type;
         if (at.isConcrete())
-            return at.dtype == ValueType::COMPLEX ? "false" : "true";
+            return keel::String::from(at.dtype == ValueType::COMPLEX ? "false" : "true");
     }
 
     // isrow / iscolumn / isvector: 2-D orientation predicates -> a LOGICAL scalar.
     if ((name == "isrow" || name == "iscolumn" || name == "isvector") && nargs == 1) {
         const ASTNode    &arg    = *call.children[1];
-        const std::string arrVar = resolveArrayVar(arg);
+        const keel::String arrVar = resolveArrayVar(arg);
         if (!arrVar.empty()) {
-            const ArrayInfo &ai = arrays_.at(arrVar);
+            const ArrayInfo &ai = arrayAt(arrVar);
             if (ai.isND)
-                return "false";  // ndims >= 3 -> not a row / column / vector
+                return keel::String::from("false");  // ndims >= 3 -> not a row / column / vector
             if (ai.is2D) {
                 if (name == "isrow")    return "((" + ai.rowsVar + ") == 1)";
                 if (name == "iscolumn") return "((" + ai.colsVar + ") == 1)";
                 return "((" + ai.rowsVar + ") == 1 || (" + ai.colsVar + ") == 1)";
             }
             if (name == "isvector")
-                return "true";  // a 1-D buffer is always a vector
+                return keel::String::from("true");  // a 1-D buffer is always a vector
             if (ai.orient == VecOrient::Row)
-                return name == "isrow" ? std::string("true") : "(" + ai.lenVar + " == 1)";
+                return name == "isrow" ? keel::String::from("true") : ("(" + ai.lenVar + " == 1)");
             if (ai.orient == VecOrient::Col)
-                return name == "iscolumn" ? std::string("true") : "(" + ai.lenVar + " == 1)";
+                return name == "iscolumn" ? keel::String::from("true") : ("(" + ai.lenVar + " == 1)");
             // orientation erased -> can't decide isrow/iscolumn -> fall through (boundary)
         } else if (inferExpr(arg, types_, reg_, classes_).type.shape.kind == ShapeKind::Scalar) {
-            return "true";  // a 1x1 scalar is a row, a column, and a vector
+            return keel::String::from("true");  // a 1x1 scalar is a row, a column, and a vector
         }
     }
 
@@ -638,16 +642,16 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
                 v = dt == ValueType::CHAR;
             else  // islogical
                 v = dt == ValueType::LOGICAL;
-            return v ? "true" : "false";
+            return keel::String::from(v ? "true" : "false");
         }
     }
 
     // size(A, dim) with a compile-time literal dim: the dim's size (2-D
     // rows/cols, N-D the dim, out-of-range -> 1).
     if (name == "size" && nargs == 2 && call.children[2]->type == NodeType::NUMBER_LITERAL) {
-        const std::string arrVar = resolveArrayVar(*call.children[1]);
+        const keel::String arrVar = resolveArrayVar(*call.children[1]);
         if (!arrVar.empty()) {
-            const ArrayInfo &ai  = arrays_.at(arrVar);
+            const ArrayInfo &ai  = arrayAt(arrVar);
             const double     kd  = call.children[2]->numValue;
             const auto       k   = static_cast<std::size_t>(kd);
             const bool       kok = kd >= 1.0 && static_cast<double>(k) == kd;
@@ -662,7 +666,7 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     // real-preserving transfer), so emit the bare value there.
     if (nargs == 1
         && (name == "real" || name == "imag" || name == "angle" || name == "conj")) {
-        const std::string arg = emitExpr(*call.children[1]);
+        const keel::String arg = emitExpr(*call.children[1]);
         if (name == "real")  return "std::real(" + arg + ")";
         if (name == "imag")  return "std::imag(" + arg + ")";
         if (name == "angle") return "std::arg(" + arg + ")";
@@ -675,23 +679,23 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     // it is bit-identical to the interpreter. Typed scalar-only (realScalarMathUnary-
     // Transfer); an array / complex arg is Dynamic -> bridged.
     if (nargs == 1 && (name == "deg2rad" || name == "rad2deg")) {
-        const std::string x = emitExpr(*call.children[1]);
+        const keel::String x = emitExpr(*call.children[1]);
         return name == "deg2rad" ? "((" + x + ") * (3.14159265358979323846 / 180.0))"
                                  : "((" + x + ") * (180.0 / 3.14159265358979323846))";
     }
 
     if (!elementCtx_.empty() && !elementRows_.empty() && !elementCols_.empty()
         && (nargs == 1 || nargs == 2) && (name == "zeros" || name == "ones")) {
-        auto dimArg = [&](const ASTNode &n) -> std::string {
+        auto dimArg = [&](const ASTNode &n) -> keel::String {
             if (n.type == NodeType::NUMBER_LITERAL && n.numValue >= 0.0
                 && std::floor(n.numValue) == n.numValue)
-                return std::to_string(static_cast<std::size_t>(n.numValue));
+                return toStr(static_cast<std::size_t>(n.numValue));
             return "numkit_rt::dim(" + emitExpr(n) + ")";
         };
-        const std::string rExpr = dimArg(*call.children[1]);
-        const std::string cExpr = nargs == 2 ? dimArg(*call.children[2]) : rExpr;
-        const std::string val   = name == "zeros" ? "0.0" : "1.0";
-        if (rExpr == elementRows_ && cExpr == elementCols_) return val;
+        const keel::String    rExpr = dimArg(*call.children[1]);
+        const keel::String    cExpr = nargs == 2 ? dimArg(*call.children[2]) : rExpr.clone();
+        const keel::StringRef val   = name == "zeros" ? "0.0" : "1.0";
+        if (rExpr == elementRows_ && cExpr == elementCols_) return keel::String::from(val);
         return "([&]() -> double { if ((" + rExpr + ") != (" + elementRows_ + ") || (" + cExpr
                + ") != (" + elementCols_
                + ")) throw std::out_of_range(\"numkit: array dimensions must match\"); return " + val
@@ -704,7 +708,7 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     // the operand here is always real. Lights up the scalar form AND the elementwise fill
     // (collectElementwise recognises sign), e.g. C = sign(A).
     if (nargs == 1 && name == "sign") {
-        const std::string x = emitExpr(*call.children[1]);
+        const keel::String x = emitExpr(*call.children[1]);
         return "([](double _numkit_x){ return _numkit_x > 0.0 ? 1.0 : (_numkit_x < 0.0 ? -1.0 "
                ": (_numkit_x != _numkit_x ? _numkit_x : 0.0)); })(" + x + ")";
     }
@@ -717,26 +721,26 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     // elementwise only; a 2-D any(A) is column-wise (a ROW VECTOR, not a scalar -> the scalar
     // gate fails -> bridged). A bare-VAR arg works too (collectElementwise of a whole array).
     if (nargs == 1 && (name == "any" || name == "all")) {
-        std::set<std::string> srcArrays;
+        keel::HashSet<keel::String> srcArrays;
         const bool            pureEw = collectElementwise(*call.children[1], srcArrays);
-        if (pureEw && srcArrays.size() == 1 && !arrays_.at(*srcArrays.begin()).is2D
-            && !arrays_.at(*srcArrays.begin()).isND
+        if (pureEw && srcArrays.size() == 1 && !arrayAt(*srcArrays.begin()).is2D
+            && !arrayAt(*srcArrays.begin()).isND
             && inferExpr(call, types_, reg_, classes_).type.shape.isScalar()) {
-            const ArrayInfo  &ba       = arrays_.at(*srcArrays.begin());
+            const ArrayInfo  &ba       = arrayAt(*srcArrays.begin());
             const bool        isAny    = name == "any";
-            const std::string saved     = elementCtx_;
-            const std::string savedRows = elementRows_;
-            const std::string savedCols = elementCols_;
-            const auto        savedMap  = elementIdxMap_;
+            keel::String      saved     = keel::move(elementCtx_);
+            keel::String      savedRows = keel::move(elementRows_);
+            keel::String      savedCols = keel::move(elementCols_);
+            auto              savedMap  = keel::move(elementIdxMap_);
             elementIdxMap_.clear();
-            elementRows_               = ba.orient == VecOrient::Col ? ba.lenVar : std::string("1");
-            elementCols_               = ba.orient == VecOrient::Row ? ba.lenVar : std::string("1");
-            elementCtx_                = "_numkit_aa_i";  // whole array in the arg -> arr[_numkit_aa_i]
-            const std::string maskExpr = emitExpr(*call.children[1]);
-            elementCtx_                = saved;
-            elementRows_               = savedRows;
-            elementCols_               = savedCols;
-            elementIdxMap_             = savedMap;
+            elementRows_               = ba.orient == VecOrient::Col ? ba.lenVar.clone() : keel::String::from("1");
+            elementCols_               = ba.orient == VecOrient::Row ? ba.lenVar.clone() : keel::String::from("1");
+            elementCtx_.assign("_numkit_aa_i");  // whole array in the arg -> arr[_numkit_aa_i]
+            const keel::String maskExpr = emitExpr(*call.children[1]);
+            elementCtx_                = keel::move(saved);
+            elementRows_               = keel::move(savedRows);
+            elementCols_               = keel::move(savedCols);
+            elementIdxMap_             = keel::move(savedMap);
             return "([&]() -> bool { for (std::size_t _numkit_aa_i = 0; _numkit_aa_i < (" + ba.lenVar
                    + "); ++_numkit_aa_i) if ((" + maskExpr + ") "
                    + (isAny ? "!= 0) return true; return false; }())"
@@ -753,29 +757,29 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     // bridged). A bare-VAR arg works too (the statement-level VAR reduction takes a whole-rhs
     // r=min(v); this catches min(v) in expr position).
     if (nargs == 1 && (name == "min" || name == "max")) {
-        std::set<std::string> srcArrays;
+        keel::HashSet<keel::String> srcArrays;
         const bool            pureEw = collectElementwise(*call.children[1], srcArrays);
-        if (pureEw && srcArrays.size() == 1 && !arrays_.at(*srcArrays.begin()).is2D
-            && !arrays_.at(*srcArrays.begin()).isND
-            && arrays_.at(*srcArrays.begin()).dtype == ValueType::DOUBLE
+        if (pureEw && srcArrays.size() == 1 && !arrayAt(*srcArrays.begin()).is2D
+            && !arrayAt(*srcArrays.begin()).isND
+            && arrayAt(*srcArrays.begin()).dtype == ValueType::DOUBLE
             && inferExpr(call, types_, reg_, classes_).type.shape.isScalar()) {
-            const ArrayInfo  &ba       = arrays_.at(*srcArrays.begin());
-            const std::string cmp      = name == "max" ? ">" : "<";
-            const std::string saved     = elementCtx_;
-            const std::string savedRows = elementRows_;
-            const std::string savedCols = elementCols_;
-            const auto        savedMap  = elementIdxMap_;
+            const ArrayInfo     &ba       = arrayAt(*srcArrays.begin());
+            const keel::StringRef cmp     = name == "max" ? ">" : "<";
+            keel::String         saved     = keel::move(elementCtx_);
+            keel::String         savedRows = keel::move(elementRows_);
+            keel::String         savedCols = keel::move(elementCols_);
+            auto                 savedMap  = keel::move(elementIdxMap_);
             elementIdxMap_.clear();
-            elementRows_               = ba.orient == VecOrient::Col ? ba.lenVar : std::string("1");
-            elementCols_               = ba.orient == VecOrient::Row ? ba.lenVar : std::string("1");
-            elementCtx_                = "0";  // seed: expr at element 0
-            const std::string seed     = emitExpr(*call.children[1]);
-            elementCtx_                = "_numkit_aa_i";  // body: expr at the loop index
-            const std::string bodyE    = emitExpr(*call.children[1]);
-            elementCtx_                = saved;
-            elementRows_               = savedRows;
-            elementCols_               = savedCols;
-            elementIdxMap_             = savedMap;
+            elementRows_               = ba.orient == VecOrient::Col ? ba.lenVar.clone() : keel::String::from("1");
+            elementCols_               = ba.orient == VecOrient::Row ? ba.lenVar.clone() : keel::String::from("1");
+            elementCtx_.assign("0");  // seed: expr at element 0
+            const keel::String seed     = emitExpr(*call.children[1]);
+            elementCtx_.assign("_numkit_aa_i");  // body: expr at the loop index
+            const keel::String bodyE    = emitExpr(*call.children[1]);
+            elementCtx_                = keel::move(saved);
+            elementRows_               = keel::move(savedRows);
+            elementCols_               = keel::move(savedCols);
+            elementIdxMap_             = keel::move(savedMap);
             return "([&]() -> double { if ((" + ba.lenVar
                    + ") == 0) throw std::out_of_range(\"numkit: min/max of empty array requires array output\"); double _numkit_acc = ("
                    + seed + "); for (std::size_t _numkit_aa_i = 1; _numkit_aa_i < (" + ba.lenVar
@@ -785,33 +789,33 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
     }
 
     if (!bridge_ && nargs == 1 && (name == "sum" || name == "prod" || name == "mean")) {
-        std::set<std::string> srcArrays;
+        keel::HashSet<keel::String> srcArrays;
         const bool            pureEw = collectElementwise(*call.children[1], srcArrays);
-        if (pureEw && srcArrays.size() == 1 && !arrays_.at(*srcArrays.begin()).is2D
-            && !arrays_.at(*srcArrays.begin()).isND
-            && arrays_.at(*srcArrays.begin()).dtype == ValueType::DOUBLE
+        if (pureEw && srcArrays.size() == 1 && !arrayAt(*srcArrays.begin()).is2D
+            && !arrayAt(*srcArrays.begin()).isND
+            && arrayAt(*srcArrays.begin()).dtype == ValueType::DOUBLE
             && inferExpr(call, types_, reg_, classes_).type.shape.isScalar()) {
-            const ArrayInfo  &ba       = arrays_.at(*srcArrays.begin());
+            const ArrayInfo  &ba       = arrayAt(*srcArrays.begin());
             const bool        isProd   = name == "prod";
             const bool        isMean   = name == "mean";
-            const std::string saved     = elementCtx_;
-            const std::string savedRows = elementRows_;
-            const std::string savedCols = elementCols_;
-            const auto        savedMap  = elementIdxMap_;
+            keel::String      saved     = keel::move(elementCtx_);
+            keel::String      savedRows = keel::move(elementRows_);
+            keel::String      savedCols = keel::move(elementCols_);
+            auto              savedMap  = keel::move(elementIdxMap_);
             elementIdxMap_.clear();
-            elementRows_               = ba.orient == VecOrient::Col ? ba.lenVar : std::string("1");
-            elementCols_               = ba.orient == VecOrient::Row ? ba.lenVar : std::string("1");
-            elementCtx_                = "_numkit_aa_i";
-            const std::string bodyE    = emitExpr(*call.children[1]);
-            elementCtx_                = saved;
-            elementRows_               = savedRows;
-            elementCols_               = savedCols;
-            elementIdxMap_             = savedMap;
-            const std::string init   = isProd ? "1.0" : "0.0";
-            const std::string op     = isProd ? "*=" : "+=";
-            const std::string ret    = isMean
-                                           ? ("_numkit_acc / static_cast<double>(" + ba.lenVar + ")")
-                                           : std::string("_numkit_acc");
+            elementRows_               = ba.orient == VecOrient::Col ? ba.lenVar.clone() : keel::String::from("1");
+            elementCols_               = ba.orient == VecOrient::Row ? ba.lenVar.clone() : keel::String::from("1");
+            elementCtx_.assign("_numkit_aa_i");
+            const keel::String bodyE    = emitExpr(*call.children[1]);
+            elementCtx_                = keel::move(saved);
+            elementRows_               = keel::move(savedRows);
+            elementCols_               = keel::move(savedCols);
+            elementIdxMap_             = keel::move(savedMap);
+            const keel::StringRef init = isProd ? "1.0" : "0.0";
+            const keel::StringRef op   = isProd ? "*=" : "+=";
+            const keel::String    ret  = isMean
+                                             ? ("_numkit_acc / static_cast<double>(" + ba.lenVar + ")")
+                                             : keel::String::from("_numkit_acc");
             return "([&]() -> double { double _numkit_acc = " + init
                    + "; for (std::size_t _numkit_aa_i = 0; _numkit_aa_i < (" + ba.lenVar
                    + "); ++_numkit_aa_i) { _numkit_acc " + op + " (" + bodyE
@@ -821,11 +825,11 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
 
     if (nargs == 1)
         if (const char *fn = unaryMathStd(name))
-            return std::string("std::") + fn + "(" + emitExpr(*call.children[1]) + ")";
+            return keel::String::from("std::") + fn + "(" + emitExpr(*call.children[1]) + ")";
 
     if (nargs == 2)
         if (const char *fn = binaryMathStd(name))
-            return std::string("std::") + fn + "(" + emitExpr(*call.children[1]) + ", "
+            return keel::String::from("std::") + fn + "(" + emitExpr(*call.children[1]) + ", "
                    + emitExpr(*call.children[2]) + ")";
 
     // Bridged fallback (opt-in, DESIGN.md §6a): a builtin the emitter cannot
@@ -844,51 +848,51 @@ std::string Emitter::emitBuiltinCall(const std::string &name, const ASTNode &cal
                 }
             }
             if (allScalarArgs) {
-                std::string out = "numkit_rt::bridge_scalar(\"" + name + "\", {";
+                keel::String out = "numkit_rt::bridge_scalar(\"" + name + "\", {";
                 for (std::size_t i = 1; i < call.children.size(); ++i)
                     out += (i > 1 ? ", " : "") + emitExpr(*call.children[i]);
                 out += "})";
                 return out;
             }
-            std::string dynArgs;
+            keel::String dynArgs;
             for (std::size_t i = 1; i < call.children.size(); ++i)
                 dynArgs += (i > 1 ? ", " : "") + emitDynamicExpr(*call.children[i]);
-            const std::string unbox =
+            const keel::StringRef unbox =
                 res.type.dtype == ValueType::LOGICAL ? ".truth()" : ".to_scalar()";
             return "numkit_rt::call_dynv(\"" + name + "\", {" + dynArgs + "})" + unbox;
         }
     }
 
-    unsupported("builtin call '" + name + "' (arity " + std::to_string(nargs) + ")");
+    unsupported("builtin call '" + name + "' (arity " + toStr(nargs) + ")");
 }
 
-void Emitter::appendStructCallArgs(const std::string &prefix, const StructLayout &layout,
-                                   std::string &argList)
+void Emitter::appendStructCallArgs(keel::StringRef prefix, const StructLayout &layout,
+                                   keel::String &argList)
 {
     for (const auto &f : layout.fields) {
-        const std::string   fld = prefix + "_" + f.first;
+        const keel::String   fld = prefix + "_" + f.first;
         const InferredType &ft  = f.second;
         if (isUnboxableScalarType(ft) || ft.isObject()) {
             if (!argList.empty()) argList += ", ";
             argList += cppIdent(fld);
         } else if (is2DMatrixType(ft) && isArrayVar(fld)) {
-            const ArrayInfo &ai      = arrays_.at(fld);
-            const auto       aliasIt = callAliasInputs_.find(fld);
-            const std::string ptr    = aliasIt != callAliasInputs_.end() ? aliasIt->second.first : ai.dataExpr;
+            const ArrayInfo     &ai     = arrayAt(fld);
+            const StrPair       *alias  = callAliasInputs_.get(fld);
+            const keel::StringRef ptr   = alias ? alias->first.as_ref() : ai.dataExpr.as_ref();
             if (!argList.empty()) argList += ", ";
             argList += ptr + ", " + ai.rowsVar + ", " + ai.colsVar;
         } else if (ft.isConcrete() && ft.shape.isNDims() && isArrayVar(fld)) {
-            const ArrayInfo &ai      = arrays_.at(fld);
-            const auto       aliasIt = callAliasInputs_.find(fld);
-            const std::string ptr    = aliasIt != callAliasInputs_.end() ? aliasIt->second.first : ai.dataExpr;
+            const ArrayInfo     &ai     = arrayAt(fld);
+            const StrPair       *alias  = callAliasInputs_.get(fld);
+            const keel::StringRef ptr   = alias ? alias->first.as_ref() : ai.dataExpr.as_ref();
             if (!argList.empty()) argList += ", ";
             argList += ptr;
-            for (const std::string &dv : ai.ndDims) argList += ", " + dv;
+            for (const keel::String &dv : ai.ndDims) argList += ", " + dv;
         } else if (isBufferArrayType(ft) && isArrayVar(fld)) {
-            const ArrayInfo &ai      = arrays_.at(fld);
-            const auto       aliasIt = callAliasInputs_.find(fld);
-            const std::string ptr    = aliasIt != callAliasInputs_.end() ? aliasIt->second.first : ai.dataExpr;
-            const std::string len    = aliasIt != callAliasInputs_.end() ? aliasIt->second.second : ai.lenVar;
+            const ArrayInfo     &ai     = arrayAt(fld);
+            const StrPair       *alias  = callAliasInputs_.get(fld);
+            const keel::StringRef ptr   = alias ? alias->first.as_ref() : ai.dataExpr.as_ref();
+            const keel::StringRef len   = alias ? alias->second.as_ref() : ai.lenVar.as_ref();
             if (!argList.empty()) argList += ", ";
             argList += ptr + ", " + len;
         } else if (ft.isStruct() && ft.structLayout && !ft.structLayout->fields.empty()) {
@@ -899,11 +903,11 @@ void Emitter::appendStructCallArgs(const std::string &prefix, const StructLayout
     }
 }
 
-void Emitter::appendStructOutArgs(const std::string &prefix, const StructLayout &layout,
-                                  std::string &argList)
+void Emitter::appendStructOutArgs(keel::StringRef prefix, const StructLayout &layout,
+                                  keel::String &argList)
 {
     for (const auto &f : layout.fields) {
-        const std::string   fld = prefix + "_" + f.first;
+        const keel::String   fld = prefix + "_" + f.first;
         const InferredType &ft  = f.second;
         if (isUnboxableScalarType(ft) || ft.isObject() || isBufferArrayType(ft)) {
             if (!argList.empty()) argList += ", ";
@@ -918,38 +922,38 @@ void Emitter::appendStructOutArgs(const std::string &prefix, const StructLayout 
     }
 }
 
-void Emitter::collectStructOutRefArrays(const std::string &prefix, const StructLayout &layout,
-                                        std::set<std::string> &out) const
+void Emitter::collectStructOutRefArrays(keel::StringRef prefix, const StructLayout &layout,
+                                        keel::HashSet<keel::String> &out) const
 {
     for (const auto &f : layout.fields) {
-        const std::string   fld = prefix + "_" + f.first;
+        const keel::String   fld = prefix + "_" + f.first;
         const InferredType &ft  = f.second;
         if (isBufferArrayType(ft) && isArrayVar(fld)) {
-            out.insert(fld);
+            out.insert(fld.clone());
         } else if (ft.isStruct() && ft.structLayout) {
             collectStructOutRefArrays(fld, *ft.structLayout, out);
         }
     }
 }
 
-void Emitter::prepareCallInputAliases(const ASTNode &call, std::size_t firstArgIdx,
-                                      const std::set<std::string> &outRefArrays,
-                                      std::vector<std::string> &aliasDecls)
+void Emitter::prepareCallInputAliases(const ASTNode &call, keel::usize firstArgIdx,
+                                      const keel::HashSet<keel::String> &outRefArrays,
+                                      keel::Array<keel::String> &aliasDecls)
 {
     callAliasInputs_.clear();
     if (outRefArrays.empty()) return;
-    auto aliasOne = [&](const std::string &arrVar) {
-        if (!outRefArrays.count(arrVar) || callAliasInputs_.count(arrVar)) return;
-        const ArrayInfo &ai = arrays_.at(arrVar);
+    auto aliasOne = [&](keel::StringRef arrVar) {
+        if (!outRefArrays.contains(arrVar) || callAliasInputs_.contains(arrVar)) return;
+        const ArrayInfo &ai = arrayAt(arrVar);
         if (!ai.isLocal) return;
-        const std::string tmp = "_numkit_in_alias_" + std::to_string(aliasCounter_++);
+        const keel::String tmp = "_numkit_in_alias_" + toStr(aliasCounter_++);
         aliasDecls.push_back("const auto " + tmp + " = " + cppIdent(arrVar) + ";");
-        callAliasInputs_[arrVar] = {tmp + ".data()", tmp + ".size()"};
+        callAliasInputs_.put(keel::String::from(arrVar), StrPair(tmp + ".data()", tmp + ".size()"));
     };
-    auto walkStructIn = [&](auto &self, const std::string &prefix,
+    auto walkStructIn = [&](auto &self, keel::StringRef prefix,
                             const StructLayout &layout) -> void {
         for (const auto &f : layout.fields) {
-            const std::string   fld = prefix + "_" + f.first;
+            const keel::String   fld = prefix + "_" + f.first;
             const InferredType &ft  = f.second;
             if (isBufferArrayType(ft) && isArrayVar(fld)) {
                 aliasOne(fld);
@@ -958,14 +962,14 @@ void Emitter::prepareCallInputAliases(const ASTNode &call, std::size_t firstArgI
             }
         }
     };
-    for (std::size_t i = firstArgIdx; i < call.children.size(); ++i) {
+    for (keel::usize i = firstArgIdx; i < call.children.size(); ++i) {
         const ASTNode      &arg    = *call.children[i];
-        const std::string   arrVar = resolveArrayVar(arg);
+        const keel::String  arrVar = resolveArrayVar(arg);
         const AbstractValue av     = inferExpr(arg, types_, reg_, classes_);
         if (!arrVar.empty()) {
             aliasOne(arrVar);
         } else if (av.type.isStruct() && av.type.structLayout) {
-            std::string prefix;
+            keel::String prefix;
             if (arg.type == NodeType::IDENTIFIER)
                 prefix = "_numkit_fld_" + arg.strValue;
             else if (arg.type == NodeType::FIELD_ACCESS
@@ -976,8 +980,8 @@ void Emitter::prepareCallInputAliases(const ASTNode &call, std::size_t firstArgI
     }
 }
 
-void Emitter::appendIgnoreOutArg(const std::string &tmpName, const InferredType &ot,
-                                 std::vector<std::string> &ignoreDecls, std::string &argList)
+void Emitter::appendIgnoreOutArg(keel::StringRef tmpName, const InferredType &ot,
+                                 keel::Array<keel::String> &ignoreDecls, keel::String &argList)
 {
     if (isUnboxableScalarType(ot)) {
         ignoreDecls.push_back(cppScalarType(ot.dtype) + " " + tmpName + " = "
@@ -987,7 +991,7 @@ void Emitter::appendIgnoreOutArg(const std::string &tmpName, const InferredType 
     } else if (ot.isObject()) {
         const ClassInfo *oci = classes_ ? classes_->byId(ot.classId) : nullptr;
         if (!oci) unsupported("ignored object output with no class registry");
-        const std::string clsName = cppGlobalIdent(oci->name);
+        const keel::String clsName = cppGlobalIdent(oci->name);
         ignoreDecls.push_back(oci->isHandle ? ("numkit_rt::handle<" + clsName + "> " + tmpName + ";")
                                             : (clsName + " " + tmpName + "{};"));
         if (!argList.empty()) argList += ", ";
@@ -1004,27 +1008,27 @@ void Emitter::appendIgnoreOutArg(const std::string &tmpName, const InferredType 
     }
 }
 
-void Emitter::emitStructCopy(const std::string &dstPrefix, const std::string &srcPrefix,
+void Emitter::emitStructCopy(keel::StringRef dstPrefix, keel::StringRef srcPrefix,
                              const StructLayout &layout)
 {
     for (const auto &f : layout.fields) {
-        const std::string   dstFld = dstPrefix + "_" + f.first;
-        const std::string   srcFld = srcPrefix + "_" + f.first;
+        const keel::String   dstFld = dstPrefix + "_" + f.first;
+        const keel::String   srcFld = srcPrefix + "_" + f.first;
         const InferredType &ft     = f.second;
         if (isUnboxableScalarType(ft) || ft.isObject()) {
             line(cppIdent(dstFld) + " = " + cppIdent(srcFld) + ";");
             types_.set(dstFld, {ft, ConstVal::unknown()});
         } else if (isBufferArrayType(ft) && isArrayVar(dstFld) && isArrayVar(srcFld)) {
-            const ArrayInfo &A = arrays_.at(srcFld);
-            const ArrayInfo &B = arrays_.at(dstFld);
-            std::string      numel;
+            const ArrayInfo &A = arrayAt(srcFld);
+            const ArrayInfo &B = arrayAt(dstFld);
+            keel::String     numel;
             if (A.isND) {
-                numel = A.ndDims[0];
+                numel = A.ndDims[0].clone();
                 for (std::size_t i = 1; i < A.ndDims.size(); ++i) numel += " * " + A.ndDims[i];
             } else if (A.is2D) {
                 numel = A.rowsVar + " * " + A.colsVar;
             } else {
-                numel = A.lenVar;
+                numel = A.lenVar.clone();
             }
             if (B.isND && B.ndRuntimeLocal)
                 for (std::size_t k = 0; k < B.ndDims.size(); ++k)
@@ -1040,13 +1044,13 @@ void Emitter::emitStructCopy(const std::string &dstPrefix, const std::string &sr
     }
 }
 
-std::string Emitter::emitMultiCallExpr(const std::string &mangled, const std::string &argList,
-                                       const std::vector<InferredType> &outs)
+keel::String Emitter::emitMultiCallExpr(keel::StringRef mangled, keel::StringRef argList,
+                                        keel::ArrayRef<InferredType> outs)
 {
     if (outs.empty()) unsupported("multi-output call with no outputs");
     const InferredType &out0        = outs[0];
     const bool          out0ByValue = isByValueReturnArrayType(out0);
-    std::string         retCpp;
+    keel::String        retCpp;
     if (isUnboxableScalarType(out0))
         retCpp = cppScalarType(out0.dtype);
     else if (out0.isObject())
@@ -1058,15 +1062,15 @@ std::string Emitter::emitMultiCallExpr(const std::string &mangled, const std::st
                     + "' requires a scalar, object, or by-value array first output");
 
     const int                id       = multiCallCounter_++;
-    std::string              callArgs = argList;
-    std::vector<std::string> decls;
-    const std::string        out0Tmp = "_numkit_mc_" + std::to_string(id) + "_0";
-    for (std::size_t i = (out0ByValue ? 1 : 0); i < outs.size(); ++i) {
-        const std::string tmp = "_numkit_mc_" + std::to_string(id) + "_" + std::to_string(i);
+    keel::String             callArgs = keel::String::from(argList);
+    keel::Array<keel::String> decls;
+    const keel::String       out0Tmp  = "_numkit_mc_" + toStr(id) + "_0";
+    for (keel::usize i = (out0ByValue ? 1 : 0); i < outs.size(); ++i) {
+        const keel::String tmp = "_numkit_mc_" + toStr(id) + "_" + toStr(i);
         appendIgnoreOutArg(tmp, outs[i], decls, callArgs);
     }
-    std::string joinedDecls;
-    for (const std::string &d : decls) joinedDecls += d + " ";
+    keel::String joinedDecls;
+    for (const keel::String &d : decls) joinedDecls += d + " ";
     if (out0ByValue)
         return "([&]() -> " + retCpp + " { " + joinedDecls + "return " + mangled + "(" + callArgs
                + "); }())";
@@ -1077,36 +1081,36 @@ std::string Emitter::emitMultiCallExpr(const std::string &mangled, const std::st
 // Append one interprocedural call argument: a scalar or object is passed by
 // value (one C++ arg); an array VARIABLE is passed as `ptr, len` / `ptr, rows, cols` /
 // `ptr, d0, ...`; a struct is recursively exploded into its field arguments.
-void Emitter::appendCallArg(const ASTNode &arg, std::vector<InferredType> &argTypes,
-                            std::string &argList)
+void Emitter::appendCallArg(const ASTNode &arg, keel::Array<InferredType> &argTypes,
+                            keel::String &argList)
 {
     const AbstractValue av     = inferExpr(arg, types_, reg_, classes_);
-    const std::string   arrVar = resolveArrayVar(arg);
+    const keel::String  arrVar = resolveArrayVar(arg);
     if (isUnboxableScalarType(av.type) || av.type.isObject()) {
         if (!argList.empty()) argList += ", ";
         argList += emitExpr(arg);
     } else if (is2DMatrixType(av.type) && !arrVar.empty()) {
-        const ArrayInfo &ai      = arrays_.at(arrVar);
-        const auto       aliasIt = callAliasInputs_.find(arrVar);
-        const std::string ptr    = aliasIt != callAliasInputs_.end() ? aliasIt->second.first : ai.dataExpr;
+        const ArrayInfo      &ai    = arrayAt(arrVar);
+        const StrPair        *alias = callAliasInputs_.get(arrVar);
+        const keel::StringRef ptr   = alias ? alias->first.as_ref() : ai.dataExpr.as_ref();
         if (!argList.empty()) argList += ", ";
         argList += ptr + ", " + ai.rowsVar + ", " + ai.colsVar;
     } else if (av.type.isConcrete() && av.type.shape.isNDims() && !arrVar.empty()) {
-        const ArrayInfo &ai      = arrays_.at(arrVar);
-        const auto       aliasIt = callAliasInputs_.find(arrVar);
-        const std::string ptr    = aliasIt != callAliasInputs_.end() ? aliasIt->second.first : ai.dataExpr;
+        const ArrayInfo      &ai    = arrayAt(arrVar);
+        const StrPair        *alias = callAliasInputs_.get(arrVar);
+        const keel::StringRef ptr   = alias ? alias->first.as_ref() : ai.dataExpr.as_ref();
         if (!argList.empty()) argList += ", ";
         argList += ptr;
-        for (const std::string &dv : ai.ndDims) argList += ", " + dv;
+        for (const keel::String &dv : ai.ndDims) argList += ", " + dv;
     } else if (isBufferArrayType(av.type) && !arrVar.empty()) {
-        const ArrayInfo &ai      = arrays_.at(arrVar);
-        const auto       aliasIt = callAliasInputs_.find(arrVar);
-        const std::string ptr    = aliasIt != callAliasInputs_.end() ? aliasIt->second.first : ai.dataExpr;
-        const std::string len    = aliasIt != callAliasInputs_.end() ? aliasIt->second.second : ai.lenVar;
+        const ArrayInfo      &ai    = arrayAt(arrVar);
+        const StrPair        *alias = callAliasInputs_.get(arrVar);
+        const keel::StringRef ptr   = alias ? alias->first.as_ref() : ai.dataExpr.as_ref();
+        const keel::StringRef len   = alias ? alias->second.as_ref() : ai.lenVar.as_ref();
         if (!argList.empty()) argList += ", ";
         argList += ptr + ", " + len;  // ptr + len (local: .data()/.size())
     } else if (av.type.isStruct()) {
-        std::string prefix;
+        keel::String prefix;
         if (arg.type == NodeType::IDENTIFIER)
             prefix = "_numkit_fld_" + arg.strValue;
         else if (arg.type == NodeType::FIELD_ACCESS || arg.type == NodeType::DYNAMIC_FIELD_ACCESS)
@@ -1123,26 +1127,26 @@ void Emitter::appendCallArg(const ASTNode &arg, std::vector<InferredType> &argTy
 // A call to a user-defined function within a program (ctx_ set). Arguments
 // may be scalars, objects, structs, or array variables. Emits a direct call
 // to the monomorphised specialisation and queues it for emission.
-std::string Emitter::emitUserCall(const std::string &name, const ASTNode &call)
+keel::String Emitter::emitUserCall(keel::StringRef name, const ASTNode &call)
 {
     const ASTNode *def = ctx_->funcs->find(name);
     if (!def) unsupported("user call to unknown function '" + name + "'");
 
-    std::vector<InferredType> argTypes;
-    std::string               argList;
+    keel::Array<InferredType> argTypes;
+    keel::String              argList;
     for (std::size_t i = 1; i < call.children.size(); ++i)
         appendCallArg(*call.children[i], argTypes, argList);
     if (argTypes.size() != def->paramNames.size())
         unsupported("arity mismatch calling '" + name + "'");
 
-    const std::size_t nout    = def->returnNames.size();
-    const std::string mangled = mangle(name, argTypes);
+    const std::size_t  nout    = def->returnNames.size();
+    const keel::String mangled = mangle(name, argTypes);
     if (nout >= 2) {
-        const std::vector<InferredType> outs = reg_.applyMulti(name, toArgInfos(argTypes));
+        const keel::Array<InferredType> outs = reg_.applyMulti(name, toArgInfos(argTypes));
         if (outs.size() != nout)
             unsupported("multi-output call '" + name + "' has unknown output types");
-        if (ctx_->seen.insert(mangled).second)
-            ctx_->pending.push_back({def, argTypes, mangled});
+        if (ctx_->seen.insert(mangled.clone()))
+            ctx_->pending.push_back(CallSite(def, keel::move(argTypes), mangled.clone()));
         return emitMultiCallExpr(mangled, argList, outs);
     }
     if (nout == 1) {  // 0 -> void function, result discarded
@@ -1153,15 +1157,15 @@ std::string Emitter::emitUserCall(const std::string &name, const ASTNode &call)
                         "2-D / fully-known-N-D double/complex array (v1): '" + name + "'");
     }
 
-    if (ctx_->seen.insert(mangled).second)
-        ctx_->pending.push_back({def, argTypes, mangled});
+    if (ctx_->seen.insert(mangled.clone()))
+        ctx_->pending.push_back(CallSite(def, keel::move(argTypes), mangled.clone()));
     return mangled + "(" + argList + ")";
 }
 
 // A method call `obj.m(args)` (ctx_ set). The object is the implicit first
 // argument; dispatch is monomorphic (the exact class is known). Emits a
 // direct call to the specialisation `Class__m(self, args)` and queues it.
-std::string Emitter::emitMethodCall(const ASTNode &call)
+keel::String Emitter::emitMethodCall(const ASTNode &call)
 {
     const ASTNode &callee = *call.children[0];  // FIELD_ACCESS: method on object
     if (callee.children.empty()) unsupported("method call arity");
@@ -1173,23 +1177,23 @@ std::string Emitter::emitMethodCall(const ASTNode &call)
     const ASTNode   *md = ci ? ci->method(callee.strValue) : nullptr;
     if (!md) unsupported("unknown method '" + callee.strValue + "'");
 
-    std::vector<InferredType> argTypes;
-    argTypes.push_back(base.type);                       // self is arg 0
-    std::string argList = emitExpr(*callee.children[0]);  // the object expr
+    keel::Array<InferredType> argTypes;
+    argTypes.push_back(base.type);                        // self is arg 0
+    keel::String argList = emitExpr(*callee.children[0]);  // the object expr
     for (std::size_t i = 1; i < call.children.size(); ++i)
         appendCallArg(*call.children[i], argTypes, argList);
     if (argTypes.size() != md->paramNames.size())
         unsupported("arity mismatch calling method '" + callee.strValue + "'");
 
-    const std::size_t nout    = md->returnNames.size();
-    const std::string mkey    = ci->name + "::" + callee.strValue;
-    const std::string mangled = mangle(ci->name + "__" + callee.strValue, argTypes);
+    const std::size_t  nout    = md->returnNames.size();
+    const keel::String mkey    = ci->name + "::" + callee.strValue;
+    const keel::String mangled = mangle(ci->name + "__" + callee.strValue, argTypes);
     if (nout >= 2) {
-        const std::vector<InferredType> outs = reg_.applyMulti(mkey, toArgInfos(argTypes));
+        const keel::Array<InferredType> outs = reg_.applyMulti(mkey, toArgInfos(argTypes));
         if (outs.size() != nout)
             unsupported("multi-output method '" + callee.strValue + "' has unknown output types");
-        if (ctx_->seen.insert(mangled).second)
-            ctx_->pending.push_back({md, argTypes, mangled});
+        if (ctx_->seen.insert(mangled.clone()))
+            ctx_->pending.push_back(CallSite(md, keel::move(argTypes), mangled.clone()));
         return emitMultiCallExpr(mangled, argList, outs);
     }
     if (nout == 1) {  // 0 -> void method (in-place mutator), result discarded
@@ -1199,8 +1203,8 @@ std::string Emitter::emitMethodCall(const ASTNode &call)
                         + callee.strValue + "'");
     }
 
-    if (ctx_->seen.insert(mangled).second)
-        ctx_->pending.push_back({md, argTypes, mangled});
+    if (ctx_->seen.insert(mangled.clone()))
+        ctx_->pending.push_back(CallSite(md, keel::move(argTypes), mangled.clone()));
     return mangled + "(" + argList + ")";
 }
 
@@ -1208,7 +1212,7 @@ std::string Emitter::emitMethodCall(const ASTNode &call)
 // value class -> Name{} (fields default-initialised), a handle class ->
 // numkit_rt::handle<Name>::make(). An explicit constructor (1b) and
 // argument-taking construction are refused for now.
-std::string Emitter::emitConstruct(const std::string &name, const ASTNode &call)
+keel::String Emitter::emitConstruct(keel::StringRef name, const ASTNode &call)
 {
     const ClassInfo *ci = classes_->byName(name);
     if (!ci) unsupported("construction of unknown class '" + name + "'");
@@ -1224,8 +1228,8 @@ std::string Emitter::emitConstruct(const std::string &name, const ASTNode &call)
             unsupported("constructor of '" + name + "' must have one output");
         if (ctor->paramNames.size() != nargs)
             unsupported("constructor of '" + name + "' arity mismatch");
-        std::vector<InferredType> argTypes;
-        std::string               argList;
+        keel::Array<InferredType> argTypes;
+        keel::String              argList;
         for (std::size_t i = 1; i < call.children.size(); ++i) {
             const AbstractValue av = inferExpr(*call.children[i], types_, reg_, classes_);
             if (!isUnboxableScalarType(av.type))
@@ -1233,14 +1237,14 @@ std::string Emitter::emitConstruct(const std::string &name, const ASTNode &call)
             argTypes.push_back(av.type);
             argList += (i > 1 ? ", " : "") + emitExpr(*call.children[i]);
         }
-        const std::string mangled = mangle(ci->name + "__ctor", argTypes);
-        if (ctx_->seen.insert(mangled).second) {
+        const keel::String mangled = mangle(ci->name + "__ctor", argTypes);
+        if (ctx_->seen.insert(mangled.clone())) {
             CallSite cs;
-            cs.def       = ctor;
-            cs.argTypes  = argTypes;
-            cs.mangled   = mangled;
-            cs.extraSeed = {{ctor->returnNames[0], InferredType::object(ci->id)}};
-            ctx_->pending.push_back(cs);
+            cs.def      = ctor;
+            cs.argTypes = keel::move(argTypes);
+            cs.mangled  = mangled.clone();
+            cs.extraSeed.push_back(ParamSpec(ctor->returnNames[0], InferredType::object(ci->id)));
+            ctx_->pending.push_back(keel::move(cs));
         }
         return mangled + "(" + argList + ")";
     }
@@ -1248,11 +1252,11 @@ std::string Emitter::emitConstruct(const std::string &name, const ASTNode &call)
     // No explicit constructor: default construction.
     if (nargs != 0)
         unsupported("class '" + name + "' has no constructor accepting arguments");
-    const std::string clsName = cppGlobalIdent(ci->name);
-    return ci->isHandle ? "numkit_rt::handle<" + clsName + ">::make()" : clsName + "{}";
+    const keel::String clsName = cppGlobalIdent(ci->name);
+    return ci->isHandle ? ("numkit_rt::handle<" + clsName + ">::make()") : (clsName + "{}");
 }
 
-bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays) const
+bool Emitter::collectElementwise(const ASTNode &e, keel::HashSet<keel::String> &arrays) const
 {
     switch (e.type) {
     case NodeType::NUMBER_LITERAL:
@@ -1260,16 +1264,16 @@ bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays
     case NodeType::IMAG_LITERAL:
         return true;
     case NodeType::IDENTIFIER:
-        if (isArrayVar(e.strValue)) arrays.insert(e.strValue);
+        if (isArrayVar(e.strValue)) arrays.insert(e.strValue.clone());
         return true;  // a scalar var, or a whole array (recorded)
     case NodeType::FIELD_ACCESS:
     case NodeType::DYNAMIC_FIELD_ACCESS: {
         if (e.children.empty() || !e.children[0]) return false;
         const AbstractValue base = inferExpr(*e.children[0], types_, reg_, classes_);
         if (base.type.isObject()) return false;
-        const std::string fld = structFieldLocal(e);
+        const keel::String fld = structFieldLocal(e);
         if (fld.empty()) return false;
-        if (isArrayVar(fld)) arrays.insert(fld);
+        if (isArrayVar(fld)) arrays.insert(fld.clone());
         return true;
     }
     case NodeType::BINARY_OP: {
@@ -1279,12 +1283,17 @@ bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays
         // mtimes (*) when EITHER operand is scalar (s*X == s.*X), mrdivide (/)
         // when the DENOMINATOR is scalar (X/s == X./s); s/X is a matrix divide.
         if (e.children.size() != 2) return false;
-        static const std::set<std::string> kElementwise = {
+        static constexpr keel::StringRef kElementwise[] = {
             "+", "-", ".*", "./", ".\\", ".^",
             // Relational + elementwise-logical ops: the same broadcast shape rules
             // as arithmetic, a LOGICAL result. (Short-circuit && / || are
             // scalar-only and stay excluded.)
             "<", ">", "<=", ">=", "==", "~=", "&", "|"};
+        auto inElementwise = [](keel::StringRef op) {
+            for (const keel::StringRef s : kElementwise)
+                if (s == op) return true;
+            return false;
+        };
         auto isScalarArg = [&](const ASTNode &n) {
             return inferExpr(n, types_, reg_, classes_).type.shape.isScalar();
         };
@@ -1292,7 +1301,7 @@ bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays
             if (!isScalarArg(*e.children[0]) && !isScalarArg(*e.children[1])) return false;
         } else if (e.strValue == "/") {
             if (!isScalarArg(*e.children[1])) return false;
-        } else if (kElementwise.count(e.strValue) == 0) {
+        } else if (!inElementwise(e.strValue)) {
             return false;
         }
         return collectElementwise(*e.children[0], arrays)
@@ -1306,7 +1315,7 @@ bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays
         // is itself elementwise — sin(x)[i] == std::sin(x[i]). An index `x(k)`
         // (callee is an array var) or any other call is not.
         if (e.children.empty() || e.children[0]->type != NodeType::IDENTIFIER) return false;
-        const std::string &callee = e.children[0]->strValue;
+        const keel::String &callee = e.children[0]->strValue;
         if (isArrayVar(callee)) return false;  // x(k) indexing -> not pure elementwise
         const std::size_t nargs = e.children.size() - 1;
         const bool isMath = (nargs == 1 && (unaryMathStd(callee) != nullptr || callee == "sign"))
@@ -1323,10 +1332,10 @@ bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays
                     || callee == "min" || callee == "max" || callee == "any"
                     || callee == "all" || callee == "numel" || callee == "length")
                 && inferExpr(e, types_, reg_, classes_).type.shape.isScalar()) {
-                std::set<std::string> innerArrays;
+                keel::HashSet<keel::String> innerArrays;
                 if (collectElementwise(*e.children[1], innerArrays) && innerArrays.size() == 1
-                    && !arrays_.at(*innerArrays.begin()).is2D
-                    && !arrays_.at(*innerArrays.begin()).isND) {
+                    && !arrayAt(*innerArrays.begin()).is2D
+                    && !arrayAt(*innerArrays.begin()).isND) {
                     return true;
                 }
             }
@@ -1341,13 +1350,13 @@ bool Emitter::collectElementwise(const ASTNode &e, std::set<std::string> &arrays
     }
 }
 
-std::string Emitter::dimExpr(const ArrayInfo &a, std::size_t k) const
+keel::String Emitter::dimExpr(const ArrayInfo &a, keel::usize k) const
 {
-    if (a.isND) return k < a.ndDims.size() ? a.ndDims[k] : std::string("1");
-    if (a.is2D) return k == 0 ? a.rowsVar : k == 1 ? a.colsVar : std::string("1");
-    if (a.orient == VecOrient::Row) return k == 1 ? a.lenVar : std::string("1");
-    if (a.orient == VecOrient::Col) return k == 0 ? a.lenVar : std::string("1");
-    return std::string("1");
+    if (a.isND) return k < a.ndDims.size() ? a.ndDims[k].clone() : keel::String::from("1");
+    if (a.is2D) return k == 0 ? a.rowsVar.clone() : k == 1 ? a.colsVar.clone() : keel::String::from("1");
+    if (a.orient == VecOrient::Row) return k == 1 ? a.lenVar.clone() : keel::String::from("1");
+    if (a.orient == VecOrient::Col) return k == 0 ? a.lenVar.clone() : keel::String::from("1");
+    return keel::String::from("1");
 }
 
 } // namespace numkit::codegen::detail

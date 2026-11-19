@@ -108,7 +108,7 @@ Shape broadcastShape(const Shape &a, const Shape &b)
 }
 
 // a + b / a .* b / … — promote dtype, broadcast shape.
-InferredType arithmeticBinaryTransfer(const std::vector<ArgInfo> &args)
+InferredType arithmeticBinaryTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2) return InferredType::dynamic();
     const InferredType &a = args[0].type, &b = args[1].type;
@@ -126,7 +126,7 @@ InferredType arithmeticBinaryTransfer(const std::vector<ArgInfo> &args)
 // a * b / a ^ b — matrix forms. Scalar operand(s) behave elementwise
 // (scalar * X -> X's shape); matrix * matrix -> rows(a) x cols(b) when
 // both dims are known; otherwise Unknown shape (dtype still promoted).
-InferredType mtimesTransfer(const std::vector<ArgInfo> &args)
+InferredType mtimesTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2) return InferredType::dynamic();
     const InferredType &a = args[0].type, &b = args[1].type;
@@ -199,7 +199,7 @@ bool isIntegerConst(const ConstVal &c)
 // Otherwise the real result could be real OR complex depending on the
 // (statically unknown) sign of the base -> Dynamic (neither real nor
 // complex over-approximates both in the flat dtype lattice).
-InferredType powerTransfer(const std::vector<ArgInfo> &args)
+InferredType powerTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2) return InferredType::dynamic();
     const InferredType &a = args[0].type, &b = args[1].type;
@@ -220,7 +220,7 @@ InferredType powerTransfer(const std::vector<ArgInfo> &args)
 
 // a ^ b (matrix power). Scalar operands reduce to elementwise power; a
 // genuine matrix power needs a square base + integer exponent — deferred.
-InferredType mpowerTransfer(const std::vector<ArgInfo> &args)
+InferredType mpowerTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2) return InferredType::dynamic();
     const InferredType &a = args[0].type, &b = args[1].type;
@@ -235,7 +235,7 @@ InferredType mpowerTransfer(const std::vector<ArgInfo> &args)
 }
 
 // ==, <, &, … — always logical, shape broadcast.
-InferredType comparisonTransfer(const std::vector<ArgInfo> &args)
+InferredType comparisonTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2) return InferredType::dynamic();
     const InferredType &a = args[0].type, &b = args[1].type;
@@ -250,7 +250,7 @@ InferredType comparisonTransfer(const std::vector<ArgInfo> &args)
 }
 
 // -x / +x — preserve dtype+shape, except logical/char promote to double.
-InferredType unaryArithTransfer(const std::vector<ArgInfo> &args)
+InferredType unaryArithTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     if (args[0].type.dtype == ValueType::OBJECT) return InferredType::dynamic();  // may be overloaded
@@ -260,7 +260,7 @@ InferredType unaryArithTransfer(const std::vector<ArgInfo> &args)
 }
 
 // ~x — logical, same shape.
-InferredType notTransfer(const std::vector<ArgInfo> &args)
+InferredType notTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     if (args[0].type.dtype == ValueType::OBJECT) return InferredType::dynamic();  // may be overloaded
@@ -270,7 +270,7 @@ InferredType notTransfer(const std::vector<ArgInfo> &args)
 // sin/cos/exp/floor/… — real input stays real, complex stays complex,
 // same shape. Integer/logical/char input errors in MATLAB (trig needs
 // float) -> Dynamic.
-InferredType realMathUnaryTransfer(const std::vector<ArgInfo> &args)
+InferredType realMathUnaryTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     if (args[0].type.dtype == ValueType::OBJECT) return InferredType::dynamic();  // may be overloaded
@@ -284,7 +284,7 @@ InferredType realMathUnaryTransfer(const std::vector<ArgInfo> &args)
 // (the codegen lowers these in scalar context); an array / complex / non-real
 // arg -> Dynamic (sound over-approximation). single promotes to double when
 // mixed, matching MATLAB.
-InferredType realBinaryMathTransfer(const std::vector<ArgInfo> &args)
+InferredType realBinaryMathTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 2) return InferredType::dynamic();
     for (const auto &a : args) {
@@ -303,7 +303,7 @@ InferredType realBinaryMathTransfer(const std::vector<ArgInfo> &args)
 // so a COMPLEX argument is refused (-> Dynamic) rather than emitting a
 // non-compiling std::erf(complex). Real (double/single) -> same shape; else
 // Dynamic. (The emitter lowers these to std::<name>; see unaryMathStd.)
-InferredType realOnlyMathUnaryTransfer(const std::vector<ArgInfo> &args)
+InferredType realOnlyMathUnaryTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     const ValueType dt = args[0].type.dtype;
@@ -316,7 +316,7 @@ InferredType realOnlyMathUnaryTransfer(const std::vector<ArgInfo> &args)
 // There is no std:: function (the emitter inlines nk's exact constant) and no clean
 // elementwise path (not in unaryMathStd), so this is typed for a real SCALAR only; an
 // array / complex / non-real arg -> Dynamic -> bridged (unchanged from before).
-InferredType realScalarMathUnaryTransfer(const std::vector<ArgInfo> &args)
+InferredType realScalarMathUnaryTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     const ValueType dt = args[0].type.dtype;
@@ -326,7 +326,7 @@ InferredType realScalarMathUnaryTransfer(const std::vector<ArgInfo> &args)
 }
 
 // abs — |complex| is real; logical/char promote to double; numeric stays.
-InferredType absTransfer(const std::vector<ArgInfo> &args)
+InferredType absTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     if (args[0].type.dtype == ValueType::OBJECT) return InferredType::dynamic();  // may be overloaded
@@ -337,7 +337,7 @@ InferredType absTransfer(const std::vector<ArgInfo> &args)
 }
 
 // conj — preserves the value class: complex->complex, real->real (identity).
-InferredType conjTransfer(const std::vector<ArgInfo> &args)
+InferredType conjTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     const ValueType dt = args[0].type.dtype;
@@ -349,7 +349,7 @@ InferredType conjTransfer(const std::vector<ArgInfo> &args)
 // real / imag / angle — the real part / imag part / phase: complex -> real
 // (DOUBLE), a real input keeps its real class (real(3.0)=3, imag(3.0)=0). Same
 // shape. (std::real / std::imag / std::arg accept double + complex.)
-InferredType realPartTransfer(const std::vector<ArgInfo> &args)
+InferredType realPartTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     ValueType dt = args[0].type.dtype;
@@ -364,7 +364,7 @@ InferredType realPartTransfer(const std::vector<ArgInfo> &args)
 // shape (Contract 1). A real (or zero-imag) ifft result is fine — the complex
 // unbox handles a narrowed-to-real result (imag 0). The (x, N) form and the
 // matrix-along-dim forms are deferred (-> Dynamic, the sound fallback).
-InferredType fftTransfer(const std::vector<ArgInfo> &args)
+InferredType fftTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() != 1 || !args[0].type.isConcrete()) return InferredType::dynamic();
     const ValueType dt = args[0].type.dtype;

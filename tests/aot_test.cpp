@@ -42,7 +42,7 @@ TEST(Aot, TrivialCompileAndRun)
 
     const auto r = numkit::codegen::aot::compileToExecutable(src, exe);
     ASSERT_EQ(r.status, numkit::codegen::aot::CompileStatus::Ok)
-        << "log:\n" << r.log << "\ncmd: " << r.command;
+        << "log:\n" << r.log.c_str() << "\ncmd: " << r.command.c_str();
     ASSERT_TRUE(keel::fs_exists(exe));
     EXPECT_EQ(std::system(("\"" + exe + "\"").c_str()), 0);
 }

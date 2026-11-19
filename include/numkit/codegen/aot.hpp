@@ -15,8 +15,9 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
+#include <keel/array.h>
+#include <keel/ref.h>
+#include <keel/string.h>
 
 namespace numkit::codegen::aot {
 
@@ -25,9 +26,29 @@ namespace numkit::codegen::aot {
 // supplies the bridge include dir, NUMKIT_RT_USE_DLL, and the numkit_codegen_rt
 // import library so its numkit_* calls resolve.
 struct CompileOptions {
-    std::vector<std::string> includeDirs;  // added as /I or -I
-    std::vector<std::string> defines;      // added as /D or -D (NAME or NAME=VALUE)
-    std::vector<std::string> linkLibs;     // full library paths added to the link
+    keel::Array<keel::String> includeDirs;  // added as /I or -I
+    keel::Array<keel::String> defines;      // added as /D or -D (NAME or NAME=VALUE)
+    keel::Array<keel::String> linkLibs;     // full library paths added to the link
+
+    CompileOptions() noexcept = default;
+    CompileOptions(const CompileOptions &o)
+        : includeDirs(o.includeDirs.clone()), defines(o.defines.clone()),
+          linkLibs(o.linkLibs.clone())
+    {}
+    CompileOptions &operator=(const CompileOptions &o)
+    {
+        if (this != &o) {
+            includeDirs = o.includeDirs.clone();
+            defines     = o.defines.clone();
+            linkLibs    = o.linkLibs.clone();
+        }
+        return *this;
+    }
+    CompileOptions(CompileOptions &&) noexcept = default;
+    CompileOptions &operator=(CompileOptions &&) noexcept = default;
+    ~CompileOptions() noexcept = default;
+
+    CompileOptions clone() const { return *this; }
 };
 
 enum class CompileStatus {
@@ -38,8 +59,30 @@ enum class CompileStatus {
 
 struct CompileResult {
     CompileStatus status = CompileStatus::Unavailable;
-    std::string   log;      // compiler stdout+stderr (best effort)
-    std::string   command;  // the command line used (for diagnostics)
+    keel::String  log;      // compiler stdout+stderr (best effort)
+    keel::String  command;  // the command line used (for diagnostics)
+
+    CompileResult() noexcept = default;
+    CompileResult(CompileStatus st, keel::String l = {}, keel::String cmd = {}) noexcept
+        : status(st), log(keel::move(l)), command(keel::move(cmd))
+    {}
+    CompileResult(const CompileResult &o)
+        : status(o.status), log(o.log.clone()), command(o.command.clone())
+    {}
+    CompileResult &operator=(const CompileResult &o)
+    {
+        if (this != &o) {
+            status  = o.status;
+            log     = o.log.clone();
+            command = o.command.clone();
+        }
+        return *this;
+    }
+    CompileResult(CompileResult &&) noexcept = default;
+    CompileResult &operator=(CompileResult &&) noexcept = default;
+    ~CompileResult() noexcept = default;
+
+    CompileResult clone() const { return *this; }
 
     bool ok() const { return status == CompileStatus::Ok; }
 };
@@ -56,16 +99,16 @@ CompileOptions defaultBridgeCompileOptions();
 // `exePath`. Writes intermediate files (`<exePath>.cpp`, a build script,
 // a log) next to `exePath`. Synchronous. Returns Unavailable without
 // touching the filesystem when no compiler is configured.
-CompileResult compileToExecutable(const std::string &cppSource,
-                                  const std::string &exePath,
+CompileResult compileToExecutable(keel::StringRef cppSource,
+                                  keel::StringRef exePath,
                                   const CompileOptions &opts = {});
 
 // As above but emits a shared library (DLL / .so) at `libPath` — for
 // loading the transpiler's output and benchmarking it against the
 // hand-written reference (brick 7). The source should export a symbol
 // (e.g. extern "C" __declspec(dllexport) on Windows).
-CompileResult compileToSharedLibrary(const std::string &cppSource,
-                                      const std::string &libPath,
+CompileResult compileToSharedLibrary(keel::StringRef cppSource,
+                                      keel::StringRef libPath,
                                       const CompileOptions &opts = {});
 
 // Run the executable at `exePath` (typically produced by compileToExecutable)
@@ -73,9 +116,26 @@ CompileResult compileToSharedLibrary(const std::string &cppSource,
 // (0 on success) and the captured output. Native-only — under Emscripten a
 // process spawn is meaningless, so this returns -1 with an explanatory `log`.
 struct RunResult {
-    int         exitCode = -1;
-    std::string log;      // captured stdout+stderr
+    int          exitCode = -1;
+    keel::String log;      // captured stdout+stderr
+
+    RunResult() noexcept = default;
+    RunResult(int ec, keel::String l = {}) noexcept : exitCode(ec), log(keel::move(l)) {}
+    RunResult(const RunResult &o) : exitCode(o.exitCode), log(o.log.clone()) {}
+    RunResult &operator=(const RunResult &o)
+    {
+        if (this != &o) {
+            exitCode = o.exitCode;
+            log      = o.log.clone();
+        }
+        return *this;
+    }
+    RunResult(RunResult &&) noexcept = default;
+    RunResult &operator=(RunResult &&) noexcept = default;
+    ~RunResult() noexcept = default;
+
+    RunResult clone() const { return *this; }
 };
-RunResult runExecutable(const std::string &exePath);
+RunResult runExecutable(keel::StringRef exePath);
 
 } // namespace numkit::codegen::aot

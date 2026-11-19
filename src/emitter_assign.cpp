@@ -10,7 +10,7 @@ void Emitter::emitAssign(const ASTNode &s)
     const ASTNode &lhs = *s.children[0];
     const ASTNode &rhs = *s.children[1];
 
-    std::string structWriteFld;
+    keel::String structWriteFld;
     if ((lhs.type == NodeType::FIELD_ACCESS || lhs.type == NodeType::DYNAMIC_FIELD_ACCESS)
         && !lhs.children.empty() && lhs.children[0]
         && !(lhs.children[0]->type == NodeType::CALL && lhs.children[0]->children.size() == 2
@@ -22,11 +22,11 @@ void Emitter::emitAssign(const ASTNode &s)
     }
 
     if (lhs.type == NodeType::IDENTIFIER || !structWriteFld.empty()) {
-        const std::string &name = structWriteFld.empty() ? lhs.strValue : structWriteFld;
+        const keel::String &name = structWriteFld.empty() ? lhs.strValue : structWriteFld;
         struct StructWriteSync {
             Emitter           *self;
             const ASTNode     *lhsNode;
-            const std::string *fldName;
+            const keel::String *fldName;
             ~StructWriteSync()
             {
                 if (std::uncaught_exceptions() == 0 && self && lhsNode && fldName
@@ -37,7 +37,7 @@ void Emitter::emitAssign(const ASTNode &s)
             }
         } syncGuard{structWriteFld.empty() ? nullptr : this, &lhs, &structWriteFld};
 
-        if (bridge_ && dynamicLocals_.count(name)) {
+        if (bridge_ && dynamicLocals_.contains(name)) {
             line(cppIdent(name) + " = " + emitDynamicExpr(rhs) + ";");
             types_.set(name, AbstractValue::dynamic());
             return;
@@ -47,18 +47,18 @@ void Emitter::emitAssign(const ASTNode &s)
         // call (`c = f(args)` or `c = obj.m(args)`).
         if (rhs.type == NodeType::CALL && !rhs.children.empty() && ctx_) {
             const ASTNode            *def = nullptr;
-            std::string               calleeKey;
-            std::string               mangleBase;
+            keel::String               calleeKey;
+            keel::String               mangleBase;
             bool                      isMethodCall = false;
             InferredType              selfType     = InferredType::dynamic();
-            std::vector<InferredType> probeArgTypes;
+            keel::Array<InferredType> probeArgTypes;
             if (rhs.children[0]->type == NodeType::IDENTIFIER && ctx_->funcs
                 && !types_.has(rhs.children[0]->strValue)
                 && ctx_->funcs->has(rhs.children[0]->strValue)) {
-                const std::string &callee = rhs.children[0]->strValue;
-                def                       = ctx_->funcs->find(callee);
-                calleeKey                 = callee;
-                mangleBase                = callee;
+                const keel::String &callee = rhs.children[0]->strValue;
+                def                        = ctx_->funcs->find(callee);
+                calleeKey                  = callee.clone();
+                mangleBase                 = callee.clone();
             } else if (rhs.children[0]->type == NodeType::FIELD_ACCESS
                        && !rhs.children[0]->children.empty() && classes_) {
                 const ASTNode      &callee = *rhs.children[0];
@@ -81,19 +81,19 @@ void Emitter::emitAssign(const ASTNode &s)
                     probeArgTypes.push_back(inferExpr(*rhs.children[i], types_, reg_, classes_).type);
                 if (probeArgTypes.size() != def->paramNames.size())
                     unsupported("arity mismatch calling '" + calleeKey + "'");
-                const std::vector<InferredType> outs =
+                const keel::Array<InferredType> outs =
                     reg_.applyMulti(calleeKey, toArgInfos(probeArgTypes));
-                const std::string dstPrefix =
-                    structWriteFld.empty() ? ("_numkit_fld_" + name) : name;
+                const keel::String dstPrefix =
+                    structWriteFld.empty() ? ("_numkit_fld_" + name) : name.clone();
                 if (def->returnNames.size() == 1) {
                     const AbstractValue retAv = inferExpr(rhs, types_, reg_, classes_);
                     if (retAv.type.isStruct() && retAv.type.structLayout) {
-                        std::set<std::string>    outRefArrays;
-                        std::vector<std::string> aliasDecls;
+                        keel::HashSet<keel::String>    outRefArrays;
+                        keel::Array<keel::String> aliasDecls;
                         collectStructOutRefArrays(dstPrefix, *retAv.type.structLayout, outRefArrays);
                         prepareCallInputAliases(rhs, 1, outRefArrays, aliasDecls);
-                        std::vector<InferredType> argTypes;
-                        std::string               argList;
+                        keel::Array<InferredType> argTypes;
+                        keel::String               argList;
                         if (isMethodCall) {
                             argTypes.push_back(selfType);
                             argList = emitExpr(*rhs.children[0]->children[0]);
@@ -102,14 +102,14 @@ void Emitter::emitAssign(const ASTNode &s)
                             appendCallArg(*rhs.children[i], argTypes, argList);
                         callAliasInputs_.clear();
                         appendStructOutArgs(dstPrefix, *retAv.type.structLayout, argList);
-                        const std::string mangled = mangle(mangleBase, argTypes);
-                        if (ctx_->seen.insert(mangled).second)
-                            ctx_->pending.push_back({def, argTypes, mangled});
+                        const keel::String mangled = mangle(mangleBase, argTypes);
+                        if (ctx_->seen.insert(mangled.clone()))
+                            ctx_->pending.push_back(CallSite(def, keel::move(argTypes), mangled.clone()));
                         if (aliasDecls.empty()) {
                             line(mangled + "(" + argList + ");");
                         } else {
                             open("");
-                            for (const std::string &d : aliasDecls) line(d);
+                            for (const keel::String &d : aliasDecls) line(d);
                             line(mangled + "(" + argList + ");");
                             close();
                         }
@@ -119,13 +119,13 @@ void Emitter::emitAssign(const ASTNode &s)
                 } else if (outs.size() > 1) {
                     const InferredType       out0        = outs[0];
                     const bool               out0ByValue = isByValueReturnArrayType(out0);
-                    std::set<std::string>    outRefArrays;
-                    std::vector<std::string> aliasDecls;
+                    keel::HashSet<keel::String>    outRefArrays;
+                    keel::Array<keel::String> aliasDecls;
                     if (!out0ByValue && out0.isStruct() && out0.structLayout)
                         collectStructOutRefArrays(dstPrefix, *out0.structLayout, outRefArrays);
                     prepareCallInputAliases(rhs, 1, outRefArrays, aliasDecls);
-                    std::vector<InferredType> argTypes;
-                    std::string               argList;
+                    keel::Array<InferredType> argTypes;
+                    keel::String               argList;
                     if (isMethodCall) {
                         argTypes.push_back(selfType);
                         argList = emitExpr(*rhs.children[0]->children[0]);
@@ -144,17 +144,17 @@ void Emitter::emitAssign(const ASTNode &s)
                         unsupported("c = f(x): first output of multi-output '" + calleeKey
                                     + "' has an unsupported type");
                     }
-                    std::vector<std::string> ignoreDecls;
+                    keel::Array<keel::String> ignoreDecls;
                     for (std::size_t i = 1; i < outs.size(); ++i) {
-                        const std::string tmp = "_numkit_ignore_" + std::to_string(i);
+                        const keel::String tmp = "_numkit_ignore_" + toStr(i);
                         appendIgnoreOutArg(tmp, outs[i], ignoreDecls, argList);
                     }
-                    const std::string mangled = mangle(mangleBase, argTypes);
-                    if (ctx_->seen.insert(mangled).second)
-                        ctx_->pending.push_back({def, argTypes, mangled});
+                    const keel::String mangled = mangle(mangleBase, argTypes);
+                    if (ctx_->seen.insert(mangled.clone()))
+                        ctx_->pending.push_back(CallSite(def, keel::move(argTypes), mangled.clone()));
                     open("");  // fresh scope for the throwaway locals
-                    for (const std::string &d : aliasDecls) line(d);
-                    for (const std::string &d : ignoreDecls) line(d);
+                    for (const keel::String &d : aliasDecls) line(d);
+                    for (const keel::String &d : ignoreDecls) line(d);
                     if (out0ByValue)
                         line(cppIdent(name) + " = " + mangled + "(" + argList + ");");
                     else
@@ -167,14 +167,14 @@ void Emitter::emitAssign(const ASTNode &s)
         }
 
         // x = [] : empty a 1-D LOCAL vector.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::MATRIX_LITERAL) {
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::MATRIX_LITERAL) {
             bool emptyMat = true;
             for (const auto &row : rhs.children)
                 if (row && !row->children.empty()) { emptyMat = false; break; }
             if (emptyMat) {
                 line(cppIdent(name) + ".clear();");
-                types_.set(name, {InferredType::concrete(arrays_.at(name).dtype, Shape::rowVector()),
+                types_.set(name, {InferredType::concrete(arrayAt(name).dtype, Shape::rowVector()),
                                   ConstVal::unknown()});
                 return;
             }
@@ -185,30 +185,30 @@ void Emitter::emitAssign(const ASTNode &s)
         // length; an owned-vector LOCAL is `a.assign(numel, fill)` (numel =
         // product of the size args).
         if (isArrayVar(name)
-            && (arrays_.at(name).isOutput || arrays_.at(name).isLocal)  // local/output, any rank
+            && (arrayAt(name).isOutput || arrayAt(name).isLocal)  // local/output, any rank
             && rhs.type == NodeType::CALL && !rhs.children.empty()
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "zeros"
                 || rhs.children[0]->strValue == "ones")) {
-            const ArrayInfo  &ai   = arrays_.at(name);
-            const std::string fill = rhs.children[0]->strValue == "zeros"
-                                         ? zeroLiteral(ai.dtype)
-                                         : "1";
+            const ArrayInfo   &ai   = arrayAt(name);
+            const keel::String fill = rhs.children[0]->strValue == "zeros"
+                                          ? zeroLiteral(ai.dtype)
+                                          : keel::String::from("1");
             if (ai.ndRuntimeLocal) {
                 // Capture each runtime dim into its companion var, then size the
                 // owned vector to their product (column-major flat storage).
-                std::string prod;
+                keel::String prod;
                 for (std::size_t d = 0; d < ai.ndDims.size(); ++d) {
                     line(ai.ndDims[d] + " = numkit_rt::dim(" + emitExpr(*rhs.children[d + 1]) + ");");
                     prod += (d ? " * " : "") + ai.ndDims[d];
                 }
                 line(cppIdent(name) + ".assign(" + prod + ", " + fill + ");");
             } else if (ai.isLocal) {
-                std::string numel;  // product of the size args (zeros(1,n) -> 1*n)
+                keel::String numel;  // product of the size args (zeros(1,n) -> 1*n)
                 for (std::size_t i = 1; i < rhs.children.size(); ++i)
                     numel += (i > 1 ? " * " : "")
                              + ("numkit_rt::dim(" + emitExpr(*rhs.children[i]) + ")");
-                if (numel.empty()) numel = "0";
+                if (numel.empty()) numel.assign("0");
                 line(cppIdent(name) + ".assign(" + numel + ", " + fill + ");");
             } else {
                 open("for (std::size_t _numkit_i = 0; _numkit_i < " + ai.lenVar + "; ++_numkit_i)");
@@ -234,16 +234,16 @@ void Emitter::emitAssign(const ASTNode &s)
         // so we seed every slot to b and overwrite [0, n-1) with a + i*step. n==1 ->
         // {b}; n<=0 -> empty. v1: an owned LOCAL, 2- or 3-arg; an OUTPUT-param target
         // (caller-sized) falls through to the bridge.
-        if (isArrayVar(name) && arrays_.at(name).isLocal
+        if (isArrayVar(name) && arrayAt(name).isLocal
             && rhs.type == NodeType::CALL && !rhs.children.empty()
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "linspace"
             && (rhs.children.size() == 3 || rhs.children.size() == 4)) {
-            const std::string a = emitExpr(*rhs.children[1]);
-            const std::string b = emitExpr(*rhs.children[2]);
-            const std::string n = rhs.children.size() == 4
+            const keel::String a = emitExpr(*rhs.children[1]);
+            const keel::String b = emitExpr(*rhs.children[2]);
+            const keel::String n = rhs.children.size() == 4
                                       ? ("numkit_rt::dim(" + emitExpr(*rhs.children[3]) + ")")
-                                      : std::string("100");  // 2-arg default (MATLAB)
+                                      : keel::String("100");  // 2-arg default (MATLAB)
             line("{");
             ++indent_;
             line("const double _numkit_a = " + a + ";");
@@ -258,8 +258,8 @@ void Emitter::emitAssign(const ASTNode &s)
             close();
             --indent_;
             line("}");
-            const ArrayInfo &ai = arrays_.at(name);
-            if (!ai.isND && !ai.is2D) arrays_.at(name).orient = VecOrient::Row;
+            const ArrayInfo &ai = arrayAt(name);
+            if (!ai.isND && !ai.is2D) arrayAt(name).orient = VecOrient::Row;
             types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
         }
@@ -268,16 +268,16 @@ void Emitter::emitAssign(const ASTNode &s)
         // is seeded to exactly 10^b. n==1 -> {10^b}; n<=0 -> empty; the 2-arg form
         // defaults n=50 (MATLAB logspace, NOT 100). v1: an owned LOCAL, 2- or 3-arg.
         // (The logspace(a,pi,n) "upper limit = pi" quirk is a deferred gap.)
-        if (isArrayVar(name) && arrays_.at(name).isLocal
+        if (isArrayVar(name) && arrayAt(name).isLocal
             && rhs.type == NodeType::CALL && !rhs.children.empty()
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "logspace"
             && (rhs.children.size() == 3 || rhs.children.size() == 4)) {
-            const std::string a = emitExpr(*rhs.children[1]);
-            const std::string b = emitExpr(*rhs.children[2]);
-            const std::string n = rhs.children.size() == 4
+            const keel::String a = emitExpr(*rhs.children[1]);
+            const keel::String b = emitExpr(*rhs.children[2]);
+            const keel::String n = rhs.children.size() == 4
                                       ? ("numkit_rt::dim(" + emitExpr(*rhs.children[3]) + ")")
-                                      : std::string("50");  // 2-arg default (MATLAB logspace)
+                                      : keel::String("50");  // 2-arg default (MATLAB logspace)
             line("{");
             ++indent_;
             line("const double _numkit_a = " + a + ";");
@@ -292,8 +292,8 @@ void Emitter::emitAssign(const ASTNode &s)
             close();
             --indent_;
             line("}");
-            const ArrayInfo &ai = arrays_.at(name);
-            if (!ai.isND && !ai.is2D) arrays_.at(name).orient = VecOrient::Row;
+            const ArrayInfo &ai = arrayAt(name);
+            if (!ai.isND && !ai.is2D) arrayAt(name).orient = VecOrient::Row;
             types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
         }
@@ -305,13 +305,13 @@ void Emitter::emitAssign(const ASTNode &s)
         // length (e.g. 0:0.1:1 -> 11). The `for i=a:b` HEADER is special-cased
         // elsewhere (no array); this is the value/materialise form. v1: owned 1-D
         // LOCAL. (Exact MATLAB tolerance for pathological float ranges is deferred.)
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::COLON_EXPR
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::COLON_EXPR
             && (rhs.children.size() == 2 || rhs.children.size() == 3)) {
             const bool        three = rhs.children.size() == 3;
-            const std::string start = emitExpr(*rhs.children[0]);
-            const std::string step  = three ? emitExpr(*rhs.children[1]) : std::string("1.0");
-            const std::string stop  = emitExpr(*rhs.children[three ? 2 : 1]);
+            const keel::String start = emitExpr(*rhs.children[0]);
+            const keel::String step  = three ? emitExpr(*rhs.children[1]) : keel::String("1.0");
+            const keel::String stop  = emitExpr(*rhs.children[three ? 2 : 1]);
             line("{");
             ++indent_;
             line("const double _numkit_start = " + start + ";");
@@ -328,7 +328,7 @@ void Emitter::emitAssign(const ASTNode &s)
             close();
             --indent_;
             line("}");
-            arrays_.at(name).orient = VecOrient::Row;
+            arrayAt(name).orient = VecOrient::Row;
             types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
         }
@@ -337,25 +337,25 @@ void Emitter::emitAssign(const ASTNode &s)
         // storage means the flat buffer IS the column order, so x(:) is a straight
         // copy of numel(x) elements (1-D length / 2-D rows*cols / N-D product of dims).
         // v1: x a 1-D/2-D/N-D DOUBLE array var; result a 1-D LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[0]->strValue)
             && rhs.children[1]->type == NodeType::COLON_EXPR && rhs.children[1]->children.empty()
-            && arrays_.at(rhs.children[0]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &x   = arrays_.at(rhs.children[0]->strValue);
+            && arrayAt(rhs.children[0]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &x   = arrayAt(rhs.children[0]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                std::string numel;
+                keel::String numel;
                 if (x.isND) {
-                    numel = x.ndDims[0];
+                    numel = x.ndDims[0].clone();
                     for (std::size_t i = 1; i < x.ndDims.size(); ++i) numel += " * " + x.ndDims[i];
                 } else if (x.is2D) {
                     numel = x.rowsVar + " * " + x.colsVar;
                 } else {
-                    numel = x.lenVar;
+                    numel = x.lenVar.clone();
                 }
                 line(cppIdent(name) + ".assign(" + x.dataExpr + ", " + x.dataExpr + " + (" + numel + "));");
-                arrays_.at(name).orient = VecOrient::Col;
+                arrayAt(name).orient = VecOrient::Col;
                 types_.set(name, res);
                 return;
             }
@@ -366,22 +366,22 @@ void Emitter::emitAssign(const ASTNode &s)
         // = cols (pushed). Bounds-checked j in [1, cols]. v1: A a 2-D DOUBLE matrix
         // var, j a scalar; result a 1-D LOCAL of `rows`. (A(i,:) row slice = strided,
         // deferred; A(:,:) -> both colons, deferred.)
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 3
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 3
             && rhs.children[0]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[0]->strValue)
-            && (arrays_.at(rhs.children[0]->strValue).is2D
-                || (arrays_.at(rhs.children[0]->strValue).isND
-                    && arrays_.at(rhs.children[0]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[0]->strValue).dtype == ValueType::DOUBLE
+            && (arrayAt(rhs.children[0]->strValue).is2D
+                || (arrayAt(rhs.children[0]->strValue).isND
+                    && arrayAt(rhs.children[0]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[0]->strValue).dtype == ValueType::DOUBLE
             && rhs.children[1]->type == NodeType::COLON_EXPR && rhs.children[1]->children.empty()
             && rhs.children[2]->type != NodeType::COLON_EXPR) {
-            const ArrayInfo    &A     = arrays_.at(rhs.children[0]->strValue);
-            const std::string   Arows = dimExpr(A, 0), Acols = dimExpr(A, 1);  // rank-agnostic
+            const ArrayInfo    &A     = arrayAt(rhs.children[0]->strValue);
+            const keel::String   Arows = dimExpr(A, 0), Acols = dimExpr(A, 1);  // rank-agnostic
             const AbstractValue res   = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()
                 && inferExpr(*rhs.children[2], types_, reg_, classes_).type.shape.isScalar()) {
-                endStack_.push_back(Acols);  // `end` in the column index = cols
-                const std::string j = emitExpr(*rhs.children[2]);
+                endStack_.push_back(Acols.clone());  // `end` in the column index = cols
+                const keel::String j = emitExpr(*rhs.children[2]);
                 endStack_.pop_back();
                 line("{");
                 ++indent_;
@@ -392,7 +392,7 @@ void Emitter::emitAssign(const ASTNode &s)
                      + Arows + ");");
                 --indent_;
                 line("}");
-                arrays_.at(name).orient = VecOrient::Col;
+                arrayAt(name).orient = VecOrient::Col;
                 types_.set(name, res);
                 return;
             }
@@ -402,22 +402,22 @@ void Emitter::emitAssign(const ASTNode &s)
         // j in [0, cols). `end` in the ROW index = rows (pushed). Bounds-checked i in
         // [1, rows]. v1: A a 2-D DOUBLE matrix var, i a scalar; result a 1-D LOCAL of
         // `cols`. (The mirror of A(:,j); A(:,:) -- both colons -- is deferred.)
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 3
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 3
             && rhs.children[0]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[0]->strValue)
-            && (arrays_.at(rhs.children[0]->strValue).is2D
-                || (arrays_.at(rhs.children[0]->strValue).isND
-                    && arrays_.at(rhs.children[0]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[0]->strValue).dtype == ValueType::DOUBLE
+            && (arrayAt(rhs.children[0]->strValue).is2D
+                || (arrayAt(rhs.children[0]->strValue).isND
+                    && arrayAt(rhs.children[0]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[0]->strValue).dtype == ValueType::DOUBLE
             && rhs.children[1]->type != NodeType::COLON_EXPR
             && rhs.children[2]->type == NodeType::COLON_EXPR && rhs.children[2]->children.empty()) {
-            const ArrayInfo    &A     = arrays_.at(rhs.children[0]->strValue);
-            const std::string   Arows = dimExpr(A, 0), Acols = dimExpr(A, 1);  // rank-agnostic
+            const ArrayInfo    &A     = arrayAt(rhs.children[0]->strValue);
+            const keel::String   Arows = dimExpr(A, 0), Acols = dimExpr(A, 1);  // rank-agnostic
             const AbstractValue res   = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()
                 && inferExpr(*rhs.children[1], types_, reg_, classes_).type.shape.isScalar()) {
-                endStack_.push_back(Arows);  // `end` in the row index = rows
-                const std::string i = emitExpr(*rhs.children[1]);
+                endStack_.push_back(Arows.clone());  // `end` in the row index = rows
+                const keel::String i = emitExpr(*rhs.children[1]);
                 endStack_.pop_back();
                 line("{");
                 ++indent_;
@@ -430,7 +430,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 close();
                 --indent_;
                 line("}");
-                arrays_.at(name).orient = VecOrient::Row;
+                arrayAt(name).orient = VecOrient::Row;
                 types_.set(name, res);
                 return;
             }
@@ -438,13 +438,13 @@ void Emitter::emitAssign(const ASTNode &s)
         // Native diag(A) -> the diagonal of a 2-D matrix as a fresh 1-D LOCAL. Column-
         // major: the (i,i) element is A[i + i*rows]; the length is min(rows, cols).
         // v1: A a 2-D DOUBLE matrix var; result a 1-D LOCAL (push_back).
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "diag"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).is2D
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).is2D
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 line("{");
@@ -467,25 +467,25 @@ void Emitter::emitAssign(const ASTNode &s)
         // v a 1-D DOUBLE vector var; k (if present) a non-negative literal integer. A
         // negative k (`diag(v,-1)`, a sub-diagonal) parses as a unary-minus -> not folded
         // -> diagTransfer keeps it Dynamic -> bridged; a runtime k is likewise bridged.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
             && (rhs.children.size() == 2
                 || (rhs.children.size() == 3 && rhs.children[2]->type == NodeType::NUMBER_LITERAL
                     && rhs.children[2]->numValue == std::floor(rhs.children[2]->numValue)
                     && rhs.children[2]->numValue >= 0.0))
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "diag"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &v   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &v   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
-            const std::string   k =  // non-negative literal offset (0 = main diagonal)
+            const keel::String   k =  // non-negative literal offset (0 = main diagonal)
                 rhs.children.size() == 3
-                    ? std::to_string(static_cast<long>(rhs.children[2]->numValue))
-                    : std::string("0");
-            const std::string N = "(" + v.lenVar + " + " + k + ")";  // N = n + k
+                    ? toStr(static_cast<long>(rhs.children[2]->numValue))
+                    : keel::String("0");
+            const keel::String N = "(" + v.lenVar + " + " + k + ")";  // N = n + k
             line("{");
             ++indent_;
             line("const std::size_t _numkit_N = " + N + ";");
@@ -504,22 +504,22 @@ void Emitter::emitAssign(const ASTNode &s)
         // Native cross(a, b) -> the 3-D cross product, a fresh 3-element 1-D LOCAL:
         // c = [a2*b3-a3*b2, a3*b1-a1*b3, a1*b2-a2*b1] (1-based; 0-based in the emit).
         // v1: a, b 1-D DOUBLE array vars (length 3).
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 3
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 3
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "cross"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[2]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[2]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND
-            && !arrays_.at(rhs.children[2]->strValue).is2D
-            && !arrays_.at(rhs.children[2]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
-            && arrays_.at(rhs.children[2]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &a   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &b   = arrays_.at(rhs.children[2]->strValue);
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND
+            && !arrayAt(rhs.children[2]->strValue).is2D
+            && !arrayAt(rhs.children[2]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && arrayAt(rhs.children[2]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &a   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &b   = arrayAt(rhs.children[2]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const std::string ad = a.dataExpr, bd = b.dataExpr;
+                const keel::String &ad = a.dataExpr, &bd = b.dataExpr;
                 line("{");
                 ++indent_;
                 line(cppIdent(name) + ".clear();");
@@ -540,24 +540,24 @@ void Emitter::emitAssign(const ASTNode &s)
         // x's elements into the 2-D KnownDims LOCAL (numel must match: m*n==numel(x),
         // runtime-checked). v(i,j) 2-D indexing then works on the result. v1: x a
         // 1-D/2-D DOUBLE array var, m,n compile-time literals -> a 2-D LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).is2D
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).is2D
             && rhs.type == NodeType::CALL && rhs.children.size() == 4
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "reshape"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &v   = arrays_.at(name);  // the 2-D result
-            const ArrayInfo    &x   = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &v   = arrayAt(name);  // the 2-D result
+            const ArrayInfo    &x   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && res.type.shape.kind == ShapeKind::KnownDims) {
-                std::string xnumel;
+                keel::String xnumel;
                 if (x.isND) {
-                    xnumel = x.ndDims[0];
+                    xnumel = x.ndDims[0].clone();
                     for (std::size_t i = 1; i < x.ndDims.size(); ++i) xnumel += " * " + x.ndDims[i];
                 } else if (x.is2D) {
                     xnumel = x.rowsVar + " * " + x.colsVar;
                 } else {
-                    xnumel = x.lenVar;
+                    xnumel = x.lenVar.clone();
                 }
                 line("{");
                 ++indent_;
@@ -576,25 +576,25 @@ void Emitter::emitAssign(const ASTNode &s)
         // from the args via numkit_rt::dim, numel-guard (m*n == numel(x)). The runtime mirror of
         // the KnownDims reshape above. v1: x a DOUBLE array var, distinct from the dest (an
         // in-place A=reshape(A,..) would self-alias the .assign -> refused via the guard).
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
             && rhs.children.size() == 4 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "reshape"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[1]->strValue != name
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &M   = arrays_.at(name);
-            const ArrayInfo    &x   = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &M   = arrayAt(name);
+            const ArrayInfo    &x   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete()) {
-                std::string xnumel;
+                keel::String xnumel;
                 if (x.isND) {
-                    xnumel = x.ndDims[0];
+                    xnumel = x.ndDims[0].clone();
                     for (std::size_t i = 1; i < x.ndDims.size(); ++i) xnumel += " * " + x.ndDims[i];
                 } else if (x.is2D) {
                     xnumel = x.rowsVar + " * " + x.colsVar;
                 } else {
-                    xnumel = x.lenVar;
+                    xnumel = x.lenVar.clone();
                 }
                 line("{");
                 ++indent_;
@@ -617,40 +617,40 @@ void Emitter::emitAssign(const ASTNode &s)
         // dim companions from numkit_rt::dim(arg), numel-guard (product == numel(x)). Rank-agnostic
         // (covers rank-3, rank-4, ...). v1: x a DOUBLE array var distinct from the dest (an
         // in-place A=reshape(A,..) would self-alias the .assign -> refused).
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() >= 3 && rhs.type == NodeType::CALL
-            && rhs.children.size() == arrays_.at(name).ndDims.size() + 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() >= 3 && rhs.type == NodeType::CALL
+            && rhs.children.size() == arrayAt(name).ndDims.size() + 2
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "reshape"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[1]->strValue != name
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &M   = arrays_.at(name);
-            const ArrayInfo    &x   = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &M   = arrayAt(name);
+            const ArrayInfo    &x   = arrayAt(rhs.children[1]->strValue);
             const std::size_t   N   = M.ndDims.size();  // result rank = number of dim args
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete()) {
-                std::string xnumel;
+                keel::String xnumel;
                 if (x.isND) {
-                    xnumel = x.ndDims[0];
+                    xnumel = x.ndDims[0].clone();
                     for (std::size_t i = 1; i < x.ndDims.size(); ++i) xnumel += " * " + x.ndDims[i];
                 } else if (x.is2D) {
                     xnumel = x.rowsVar + " * " + x.colsVar;
                 } else {
-                    xnumel = x.lenVar;
+                    xnumel = x.lenVar.clone();
                 }
                 line("{");
                 ++indent_;
                 for (std::size_t k = 0; k < N; ++k)
-                    line("const std::size_t _numkit_d" + std::to_string(k) + " = numkit_rt::dim("
+                    line("const std::size_t _numkit_d" + toStr(k) + " = numkit_rt::dim("
                          + emitExpr(*rhs.children[2 + k]) + ");");
-                std::string prod = "_numkit_d0";
-                for (std::size_t k = 1; k < N; ++k) prod += " * _numkit_d" + std::to_string(k);
+                keel::String prod = keel::String::from("_numkit_d0");
+                for (std::size_t k = 1; k < N; ++k) prod += " * _numkit_d" + toStr(k);
                 line("const std::size_t _numkit_xn = (" + xnumel + ");");
                 line("if ((" + prod + ") != _numkit_xn)");
                 line("    throw std::out_of_range(\"numkit: reshape element count mismatch\");");
                 for (std::size_t k = 0; k < N; ++k)
-                    line(M.ndDims[k] + " = _numkit_d" + std::to_string(k) + ";");
+                    line(M.ndDims[k] + " = _numkit_d" + toStr(k) + ";");
                 line(cppIdent(name) + ".assign(" + x.dataExpr + ", " + x.dataExpr + " + _numkit_xn);");
                 --indent_;
                 line("}");
@@ -662,16 +662,16 @@ void Emitter::emitAssign(const ASTNode &s)
         // all = s, a 2-D KnownDims LOCAL (the tiling of a 1x1). Like zeros/ones but the
         // fill is the scalar value. v1: s a DOUBLE scalar, m,n literals. (repmat of a
         // vector/matrix = true tiling, deferred.)
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).is2D
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).is2D
             && rhs.type == NodeType::CALL
             && (rhs.children.size() == 3 || rhs.children.size() == 4)
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "repmat"
             && inferExpr(*rhs.children[1], types_, reg_, classes_).type.shape.isScalar()) {
-            const ArrayInfo    &v   = arrays_.at(name);
+            const ArrayInfo    &v   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && res.type.shape.kind == ShapeKind::KnownDims) {
-                const std::string s = emitExpr(*rhs.children[1]);
+                const keel::String s = emitExpr(*rhs.children[1]);
                 line(cppIdent(name) + ".assign(static_cast<std::size_t>(" + v.rowsVar + " * " + v.colsVar
                      + "), " + s + ");");
                 types_.set(name, res);
@@ -681,20 +681,20 @@ void Emitter::emitAssign(const ASTNode &s)
         // repmat(x, 1, q) with x a ROW vector -> tile q copies into a 1 x (q*n) row,
         // a fresh 1-D LOCAL: out[k*n + i] = x[i] for k in [0,q), i in [0,n). The down-
         // rep (children[2]) must be the literal 1. v1: x a 1-D DOUBLE row var.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 4
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 4
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "repmat"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
             && rhs.children[2]->type == NodeType::NUMBER_LITERAL
             && rhs.children[2]->numValue == 1.0) {
-            const ArrayInfo    &x   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo    &x   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const std::string q = emitExpr(*rhs.children[3]);
+                const keel::String q = emitExpr(*rhs.children[3]);
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_q = numkit_rt::dim(" + q + ");");
@@ -715,20 +715,20 @@ void Emitter::emitAssign(const ASTNode &s)
         // the across-rep (children[3]) must be the literal 1, reps = children[2]. A
         // row operand here yields a Dynamic result (2-D) -> the concrete-result guard
         // gates it out. v1: x a 1-D DOUBLE col var.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 4
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 4
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "repmat"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
             && rhs.children[3]->type == NodeType::NUMBER_LITERAL
             && rhs.children[3]->numValue == 1.0) {
-            const ArrayInfo    &x   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo    &x   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const std::string p = emitExpr(*rhs.children[2]);
+                const keel::String p = emitExpr(*rhs.children[2]);
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_p = numkit_rt::dim(" + p + ");");
@@ -750,21 +750,21 @@ void Emitter::emitAssign(const ASTNode &s)
         // source, and the columns repeat the source every n. The (1,q) row tile and the
         // (p,1) col tile above stay 1-D; this is the genuinely-2-D case. v1: x a 1-D
         // DOUBLE row var, p,q literals, p>1.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
             && rhs.children.size() == 4 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "repmat"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
             && inferExpr(*rhs.children[1], types_, reg_, classes_).type.shape.kind
                    == ShapeKind::RowVector) {
-            const ArrayInfo    &x   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            const ArrayInfo    &x   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
-            const std::string   p   = emitExpr(*rhs.children[2]);
-            const std::string   q   = emitExpr(*rhs.children[3]);
+            const keel::String   p   = emitExpr(*rhs.children[2]);
+            const keel::String   q   = emitExpr(*rhs.children[3]);
             line("{");
             ++indent_;
             line("const std::size_t _numkit_p = numkit_rt::dim(" + p + ");");
@@ -788,21 +788,21 @@ void Emitter::emitAssign(const ASTNode &s)
         // Column-major: M[r + c*(p*n)] = x[r % n] -- every output column is p stacked copies
         // of the n x 1 source. The mirror of the row tile above; gated on a ColVector
         // operand. v1: x a 1-D DOUBLE col var, q>1.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
             && rhs.children.size() == 4 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "repmat"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
             && inferExpr(*rhs.children[1], types_, reg_, classes_).type.shape.kind
                    == ShapeKind::ColVector) {
-            const ArrayInfo    &x   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            const ArrayInfo    &x   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
-            const std::string   p   = emitExpr(*rhs.children[2]);
-            const std::string   q   = emitExpr(*rhs.children[3]);
+            const keel::String   p   = emitExpr(*rhs.children[2]);
+            const keel::String   q   = emitExpr(*rhs.children[3]);
             line("{");
             ++indent_;
             line("const std::size_t _numkit_n = " + x.lenVar + ";");
@@ -826,21 +826,21 @@ void Emitter::emitAssign(const ASTNode &s)
         // (C % Acols)*Arows] -- A repeats every Arows rows and every Acols cols. A's dims
         // via dimExpr (KnownDims or runtime-dim 2-D). v1: A a DOUBLE matrix var, distinct
         // from the dest (an in-place M=repmat(M,..) would read the zeroed/resized buffer).
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
             && rhs.children.size() == 4 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "repmat"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[1]->strValue != name
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
-            const std::string   p   = emitExpr(*rhs.children[2]);
-            const std::string   q   = emitExpr(*rhs.children[3]);
+            const keel::String   p   = emitExpr(*rhs.children[2]);
+            const keel::String   q   = emitExpr(*rhs.children[3]);
             line("{");
             ++indent_;
             line("const std::size_t _numkit_ar = " + dimExpr(A, 0) + ";");
@@ -863,10 +863,10 @@ void Emitter::emitAssign(const ASTNode &s)
         }
         // eye(n) / eye(m, n) -> the identity matrix (1 on the main diagonal, 0 else), a
         // 2-D KnownDims LOCAL. Like zeros but the diagonal is set to 1. v1: literal dims.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).is2D
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).is2D
             && rhs.type == NodeType::CALL && !rhs.children.empty()
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "eye") {
-            const ArrayInfo    &v   = arrays_.at(name);
+            const ArrayInfo    &v   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && res.type.shape.kind == ShapeKind::KnownDims) {
                 line("{");
@@ -888,12 +888,12 @@ void Emitter::emitAssign(const ASTNode &s)
         // (the runtime mirror of the KnownDims eye above + zeros(m,n) runtime). Dims from
         // the args via numkit_rt::dim (eye(n): cols = rows); zero the buffer, set the main
         // diagonal M[i + i*rows] = 1 for i < min(rows, cols). v1: 1 or 2 scalar dim args.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
             && (rhs.children.size() == 2 || rhs.children.size() == 3)
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "eye") {
-            const ArrayInfo    &M   = arrays_.at(name);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete()) {
                 line("{");
@@ -923,23 +923,23 @@ void Emitter::emitAssign(const ASTNode &s)
         // dimExpr (KnownDims 2-D or runtime-dim 2-D). Column-major out[i+j*rows] = keep ?
         // A[...] : 0. v1: A a DOUBLE matrix var, a DISTINCT local (in-place refused -- the
         // zero-then-copy would alias).
-        if (isArrayVar(name) && arrays_.at(name).isLocal
-            && (arrays_.at(name).is2D
-                || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+        if (isArrayVar(name) && arrayAt(name).isLocal
+            && (arrayAt(name).is2D
+                || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
             && rhs.type == NodeType::CALL
             && (rhs.children.size() == 2 || rhs.children.size() == 3)
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "tril" || rhs.children[0]->strValue == "triu")
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[1]->strValue != name
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
-            const std::string   cmp = rhs.children[0]->strValue == "tril" ? ">=" : "<=";
+            const keel::StringRef cmp = rhs.children[0]->strValue == "tril" ? ">=" : "<=";
             if (res.type.isConcrete()) {
                 line("{");
                 ++indent_;
@@ -948,7 +948,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 line("const std::ptrdiff_t _numkit_k = "
                      + (rhs.children.size() == 3
                             ? ("static_cast<std::ptrdiff_t>(" + emitExpr(*rhs.children[2]) + ")")
-                            : std::string("0"))
+                            : keel::String("0"))
                      + ";");
                 if (M.isND && M.ndDims.size() == 2) {  // runtime-dim dst: set companions
                     line(M.ndDims[0] + " = _numkit_r;");
@@ -974,21 +974,21 @@ void Emitter::emitAssign(const ASTNode &s)
         // count; y[k] = x[(start-1) + k*step] (0-based, forward or reverse step).
         // Bounds-checked against x's length (MATLAB errors on an out-of-range slice).
         // v1: x a 1-D DOUBLE array VAR, y an owned 1-D LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[0]->strValue)
             && rhs.children[1]->type == NodeType::COLON_EXPR
-            && !arrays_.at(rhs.children[0]->strValue).is2D
-            && !arrays_.at(rhs.children[0]->strValue).isND
-            && arrays_.at(rhs.children[0]->strValue).dtype == ValueType::DOUBLE
+            && !arrayAt(rhs.children[0]->strValue).is2D
+            && !arrayAt(rhs.children[0]->strValue).isND
+            && arrayAt(rhs.children[0]->strValue).dtype == ValueType::DOUBLE
             && (rhs.children[1]->children.size() == 2 || rhs.children[1]->children.size() == 3)) {
-            const ArrayInfo  &xa    = arrays_.at(rhs.children[0]->strValue);
+            const ArrayInfo  &xa    = arrayAt(rhs.children[0]->strValue);
             const ASTNode    &colon = *rhs.children[1];
             const bool        three = colon.children.size() == 3;
-            endStack_.push_back(xa.lenVar);  // `end` inside the slice = x's length
-            const std::string start = emitExpr(*colon.children[0]);
-            const std::string step  = three ? emitExpr(*colon.children[1]) : std::string("1.0");
-            const std::string stop  = emitExpr(*colon.children[three ? 2 : 1]);
+            endStack_.push_back(xa.lenVar.clone());  // `end` inside the slice = x's length
+            const keel::String start = emitExpr(*colon.children[0]);
+            const keel::String step  = three ? emitExpr(*colon.children[1]) : keel::String("1.0");
+            const keel::String stop  = emitExpr(*colon.children[three ? 2 : 1]);
             endStack_.pop_back();
             line("{");
             ++indent_;
@@ -1009,18 +1009,18 @@ void Emitter::emitAssign(const ASTNode &s)
         // for N-D). Native + self-contained — the first array-RESULT-from-a-
         // builtin producer beyond zeros/ones. BEFORE the bridged path, so it
         // lowers natively instead of boxing into numkit::size.
-        if (isArrayVar(name) && !arrays_.at(name).is2D && !arrays_.at(name).isND
+        if (isArrayVar(name) && !arrayAt(name).is2D && !arrayAt(name).isND
             && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "size"
             && rhs.children[1]->type == NodeType::IDENTIFIER) {
-            const std::string &opnd = rhs.children[1]->strValue;
-            const ArrayInfo   &sai  = arrays_.at(name);
+            const keel::String &opnd = rhs.children[1]->strValue;
+            const ArrayInfo   &sai  = arrayAt(name);
             if (isArrayVar(opnd)) {
-                const ArrayInfo  &aai  = arrays_.at(opnd);
+                const ArrayInfo  &aai  = arrayAt(opnd);
                 const std::size_t rank = aai.isND ? aai.ndDims.size() : 2;
-                if (sai.isLocal) line(cppIdent(name) + ".assign(" + std::to_string(rank) + ", 0.0);");
+                if (sai.isLocal) line(cppIdent(name) + ".assign(" + toStr(rank) + ", 0.0);");
                 for (std::size_t k = 0; k < rank; ++k)
-                    line(sai.dataExpr + "[" + std::to_string(k) + "] = static_cast<double>("
+                    line(sai.dataExpr + "[" + toStr(k) + "] = static_cast<double>("
                          + dimExpr(aai, k) + ");");
                 types_.set(name, {InferredType::concrete(sai.dtype, Shape::rowVector()),
                                   ConstVal::unknown()});
@@ -1042,12 +1042,12 @@ void Emitter::emitAssign(const ASTNode &s)
         // operand. The result shape comes from the transfer. N-D transpose is
         // undefined in MATLAB -> refused (an explicit boundary). Native +
         // self-contained.
-        if (isArrayVar(name) && (arrays_.at(name).isOutput || arrays_.at(name).isLocal)
+        if (isArrayVar(name) && (arrayAt(name).isOutput || arrayAt(name).isLocal)
             && rhs.type == NodeType::UNARY_OP && (rhs.strValue == "'" || rhs.strValue == ".'")
             && rhs.children.size() == 1 && rhs.children[0]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[0]->strValue)) {
-            const ArrayInfo &dst = arrays_.at(name);
-            const ArrayInfo &src = arrays_.at(rhs.children[0]->strValue);
+            const ArrayInfo &dst = arrayAt(name);
+            const ArrayInfo &src = arrayAt(rhs.children[0]->strValue);
             // A runtime-dim 2-D matrix is an NDims rank-2 (ndRuntimeLocal); its dims live
             // in ndDims, not rowsVar/colsVar. Allow the rank-2 N-D case through; only a
             // true N-D (rank>=3) transpose is undefined in MATLAB -> refused.
@@ -1070,9 +1070,9 @@ void Emitter::emitAssign(const ASTNode &s)
                      + zeroLiteral(dst.dtype) + ");");
                 open("for (std::size_t _numkit_j = 0; _numkit_j < " + dst.ndDims[1] + "; ++_numkit_j)");
                 open("for (std::size_t _numkit_i = 0; _numkit_i < " + dst.ndDims[0] + "; ++_numkit_i)");
-                const std::string rd = src.dataExpr + "[_numkit_j + _numkit_i * " + src.ndDims[0] + "]";
+                const keel::String rd = src.dataExpr + "[_numkit_j + _numkit_i * " + src.ndDims[0] + "]";
                 line(cppIdent(name) + "[_numkit_i + _numkit_j * " + dst.ndDims[0] + "] = "
-                     + (conj ? ("std::conj(" + rd + ")") : rd) + ";");
+                     + (conj ? ("std::conj(" + rd + ")") : rd.clone()) + ";");
                 close();
                 close();
             } else if (src.is2D || dst.is2D) {
@@ -1085,9 +1085,9 @@ void Emitter::emitAssign(const ASTNode &s)
                          + zeroLiteral(dst.dtype) + ");");
                 open("for (std::size_t _numkit_j = 0; _numkit_j < " + dst.colsVar + "; ++_numkit_j)");
                 open("for (std::size_t _numkit_i = 0; _numkit_i < " + dst.rowsVar + "; ++_numkit_i)");
-                const std::string rd = src.dataExpr + "[_numkit_j + _numkit_i * " + src.rowsVar + "]";
+                const keel::String rd = src.dataExpr + "[_numkit_j + _numkit_i * " + src.rowsVar + "]";
                 line(dst.dataExpr + "[_numkit_i + _numkit_j * " + dst.rowsVar + "] = "
-                     + (conj ? ("std::conj(" + rd + ")") : rd) + ";");
+                     + (conj ? ("std::conj(" + rd + ")") : rd.clone()) + ";");
                 close();
                 close();
             } else {
@@ -1095,13 +1095,13 @@ void Emitter::emitAssign(const ASTNode &s)
                 // copy (ctranspose conjugates a complex operand).
                 if (dst.isLocal) line(cppIdent(name) + ".resize(" + src.lenVar + ");");
                 open("for (std::size_t _numkit_i = 0; _numkit_i < " + src.lenVar + "; ++_numkit_i)");
-                const std::string rd = src.dataExpr + "[_numkit_i]";
-                line(dst.dataExpr + "[_numkit_i] = " + (conj ? ("std::conj(" + rd + ")") : rd) + ";");
+                const keel::String rd = src.dataExpr + "[_numkit_i]";
+                line(dst.dataExpr + "[_numkit_i] = " + (conj ? ("std::conj(" + rd + ")") : rd.clone()) + ";");
                 close();
                 if (src.orient == VecOrient::Row)
-                    arrays_.at(name).orient = VecOrient::Col;
+                    arrayAt(name).orient = VecOrient::Col;
                 else if (src.orient == VecOrient::Col)
-                    arrays_.at(name).orient = VecOrient::Row;
+                    arrayAt(name).orient = VecOrient::Row;
             }
             types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
@@ -1109,30 +1109,31 @@ void Emitter::emitAssign(const ASTNode &s)
         // Fused elementwise + transpose: `C = (A + B)'`, `C = (2 * A - 1).'`, etc.
         // Evaluates the pure-elementwise inner expression at source (j, i) and writes to
         // destination (i, j) (conjugating for `'` on complex) in a single pass with no temp.
-        if (isArrayVar(name) && (arrays_.at(name).isOutput || arrays_.at(name).isLocal)
+        if (isArrayVar(name) && (arrayAt(name).isOutput || arrayAt(name).isLocal)
             && rhs.type == NodeType::UNARY_OP && (rhs.strValue == "'" || rhs.strValue == ".'")
             && rhs.children.size() == 1 && rhs.children[0]->type != NodeType::IDENTIFIER) {
-            std::set<std::string> srcArrays;
+            keel::HashSet<keel::String> srcArrays;
             if (collectElementwise(*rhs.children[0], srcArrays) && !srcArrays.empty()
-                && srcArrays.count(name) == 0) {
-                const ArrayInfo    &dst  = arrays_.at(name);
-                const bool          conj = rhs.strValue == "'" && dst.dtype == ValueType::COMPLEX;
-                const AbstractValue res  = inferExpr(rhs, types_, reg_, classes_);
+                && !srcArrays.contains(name)) {
+                const keel::Array<keel::String> sortedSrc = sortedKeys(srcArrays);
+                const ArrayInfo                &dst       = arrayAt(name);
+                const bool                      conj      = rhs.strValue == "'" && dst.dtype == ValueType::COMPLEX;
+                const AbstractValue             res       = inferExpr(rhs, types_, reg_, classes_);
                 bool all2D = true, all1D = true;
-                for (const std::string &an : srcArrays) {
-                    const ArrayInfo &sa = arrays_.at(an);
+                for (const keel::String &an : sortedSrc) {
+                    const ArrayInfo &sa = arrayAt(an);
                     const bool       m2 = sa.is2D || (sa.isND && sa.ndDims.size() == 2);
                     if (!m2) all2D = false;
                     if (sa.is2D || sa.isND) all1D = false;
                 }
                 const bool dstMat = dst.is2D || (dst.isND && dst.ndDims.size() == 2);
                 if (all2D && dstMat && res.type.isConcrete()) {
-                    const ArrayInfo  &ref     = arrays_.at(*srcArrays.begin());
-                    const std::string srcRows = dimExpr(ref, 0), srcCols = dimExpr(ref, 1);
-                    std::string       guard;
-                    for (const std::string &an : srcArrays) {
-                        const ArrayInfo  &sa = arrays_.at(an);
-                        const std::string sr = dimExpr(sa, 0), sc = dimExpr(sa, 1);
+                    const ArrayInfo   &ref     = arrayAt(sortedSrc[0]);
+                    const keel::String srcRows = dimExpr(ref, 0), srcCols = dimExpr(ref, 1);
+                    keel::String       guard;
+                    for (const keel::String &an : sortedSrc) {
+                        const ArrayInfo   &sa = arrayAt(an);
+                        const keel::String sr = dimExpr(sa, 0), sc = dimExpr(sa, 1);
                         if (sr != srcRows || sc != srcCols)
                             guard += (guard.empty() ? "" : " || ")
                                      + ("(" + sr + " != " + srcRows + " || " + sc + " != " + srcCols + ")");
@@ -1152,49 +1153,49 @@ void Emitter::emitAssign(const ASTNode &s)
                              + dimExpr(dst, 1) + " != " + srcRows
                              + ") throw std::out_of_range(\"numkit: transpose dimensions must agree\");");
                     }
-                    const std::string dstRows = dimExpr(dst, 0), dstCols = dimExpr(dst, 1);
+                    const keel::String dstRows = dimExpr(dst, 0), dstCols = dimExpr(dst, 1);
                     elementCtx_  = "_numkit_j + _numkit_i * " + srcRows;
-                    elementRows_ = srcRows;
-                    elementCols_ = srcCols;
-                    const std::string inner = emitExpr(*rhs.children[0]);
+                    elementRows_ = srcRows.clone();
+                    elementCols_ = srcCols.clone();
+                    const keel::String inner = emitExpr(*rhs.children[0]);
                     elementCtx_.clear();
                     elementRows_.clear();
                     elementCols_.clear();
                     open("for (std::size_t _numkit_j = 0; _numkit_j < " + dstCols + "; ++_numkit_j)");
                     open("for (std::size_t _numkit_i = 0; _numkit_i < " + dstRows + "; ++_numkit_i)");
                     line(dst.dataExpr + "[_numkit_i + _numkit_j * " + dstRows + "] = "
-                         + (conj ? ("std::conj(" + inner + ")") : inner) + ";");
+                         + (conj ? ("std::conj(" + inner + ")") : inner.clone()) + ";");
                     close();
                     close();
                     types_.set(name, res);
                     return;
                 } else if (all1D && !dst.is2D && !dst.isND && res.type.isConcrete()) {
-                    const ArrayInfo  &ref   = arrays_.at(*srcArrays.begin());
-                    const std::string bound = dst.isLocal ? ref.lenVar : dst.lenVar;
-                    std::string       guard;
-                    for (const std::string &an : srcArrays) {
-                        const std::string &alen = arrays_.at(an).lenVar;
+                    const ArrayInfo    &ref   = arrayAt(sortedSrc[0]);
+                    const keel::String &bound = dst.isLocal ? ref.lenVar : dst.lenVar;
+                    keel::String        guard;
+                    for (const keel::String &an : sortedSrc) {
+                        const keel::String &alen = arrayAt(an).lenVar;
                         if (alen != bound)
                             guard += (guard.empty() ? "" : " || ") + (alen + " != " + bound);
                     }
                     if (!guard.empty())
                         line("if (" + guard + ") throw std::out_of_range(\"numkit: array dimensions must match\");");
                     if (dst.isLocal) line(cppIdent(name) + ".resize(" + bound + ");");
-                    elementCtx_  = "_numkit_i";
-                    elementRows_ = ref.orient == VecOrient::Col ? bound : std::string("1");
-                    elementCols_ = ref.orient == VecOrient::Row ? bound : std::string("1");
-                    const std::string inner = emitExpr(*rhs.children[0]);
+                    elementCtx_.assign("_numkit_i");
+                    elementRows_ = ref.orient == VecOrient::Col ? bound.clone() : keel::String::from("1");
+                    elementCols_ = ref.orient == VecOrient::Row ? bound.clone() : keel::String::from("1");
+                    const keel::String inner = emitExpr(*rhs.children[0]);
                     elementCtx_.clear();
                     elementRows_.clear();
                     elementCols_.clear();
                     open("for (std::size_t _numkit_i = 0; _numkit_i < " + bound + "; ++_numkit_i)");
                     line(dst.dataExpr + "[_numkit_i] = "
-                         + (conj ? ("std::conj(" + inner + ")") : inner) + ";");
+                         + (conj ? ("std::conj(" + inner + ")") : inner.clone()) + ";");
                     close();
                     if (ref.orient == VecOrient::Row)
-                        arrays_.at(name).orient = VecOrient::Col;
+                        arrayAt(name).orient = VecOrient::Col;
                     else if (ref.orient == VecOrient::Col)
-                        arrays_.at(name).orient = VecOrient::Row;
+                        arrayAt(name).orient = VecOrient::Row;
                     types_.set(name, res);
                     return;
                 }
@@ -1208,17 +1209,17 @@ void Emitter::emitAssign(const ASTNode &s)
         // the complex path — no complex ops kernel yet). (Scalar*X / X*scalar
         // are elementwise scaling, handled above; matrix*vector needs a 1-D
         // operand and is not yet lowered.)
-        if (isArrayVar(name) && (arrays_.at(name).isOutput || arrays_.at(name).isLocal)
-            && (arrays_.at(name).is2D
-                || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+        if (isArrayVar(name) && (arrayAt(name).isOutput || arrayAt(name).isLocal)
+            && (arrayAt(name).is2D
+                || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
             && rhs.type == NodeType::BINARY_OP && rhs.strValue == "*"
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[0]->strValue)
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)) {
-            const ArrayInfo &dst = arrays_.at(name);
-            const ArrayInfo &A   = arrays_.at(rhs.children[0]->strValue);
-            const ArrayInfo &B   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo &dst = arrayAt(name);
+            const ArrayInfo &A   = arrayAt(rhs.children[0]->strValue);
+            const ArrayInfo &B   = arrayAt(rhs.children[1]->strValue);
             // A rank-2 operand is a matrix — KnownDims 2-D OR a runtime-dim 2-D (NDims
             // rank-2). Only matrix*matrix is lowered here; with a vector operand (a
             // matrix*vector, or a col*row outer product whose result is also 2-D) this
@@ -1231,8 +1232,8 @@ void Emitter::emitAssign(const ASTNode &s)
                 // dimExpr is rank-agnostic: a KnownDims matrix yields its rows/colsVar
                 // literals, a runtime-dim 2-D yields its ndDims companions. So the same
                 // lowering serves both (the runtime dst gets its companions set first).
-                const std::string Arows = dimExpr(A, 0), Ak = dimExpr(A, 1);  // A is m x k
-                const std::string Brows = dimExpr(B, 0), Bn = dimExpr(B, 1);  // B is k x n
+                const keel::String Arows = dimExpr(A, 0), Ak = dimExpr(A, 1);  // A is m x k
+                const keel::String Brows = dimExpr(B, 0), Bn = dimExpr(B, 1);  // B is k x n
                 const bool        dstRuntime = dst.isND && dst.ndDims.size() == 2;
                 line("if (" + Ak + " != " + Brows
                      + ") throw std::out_of_range(\"numkit: inner matrix dimensions must agree\");");
@@ -1240,7 +1241,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     line(dst.ndDims[0] + " = " + Arows + ";");  // C rows = A rows (m)
                     line(dst.ndDims[1] + " = " + Bn + ";");     // C cols = B cols (n)
                 }
-                const std::string Crows = dimExpr(dst, 0), Ccols = dimExpr(dst, 1);
+                const keel::String Crows = dimExpr(dst, 0), Ccols = dimExpr(dst, 1);
                 if (opsKernels_
                     && (dst.dtype == ValueType::DOUBLE || dst.dtype == ValueType::COMPLEX)) {
                     // ops owns the kernel: M=C rows, N=C cols, K=A cols (==B rows,
@@ -1284,16 +1285,16 @@ void Emitter::emitAssign(const ASTNode &s)
         // -> y 1 x n: y[j] = sum_l r[l]*A[l+j*Arows]. Native double loop +
         // shared-dim guard. (vector*vector inner/outer products not yet
         // lowered.) Self-contained.
-        if (isArrayVar(name) && (arrays_.at(name).isOutput || arrays_.at(name).isLocal)
-            && !arrays_.at(name).is2D && !arrays_.at(name).isND
+        if (isArrayVar(name) && (arrayAt(name).isOutput || arrayAt(name).isLocal)
+            && !arrayAt(name).is2D && !arrayAt(name).isND
             && rhs.type == NodeType::BINARY_OP && rhs.strValue == "*"
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[0]->strValue)
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)) {
-            const ArrayInfo &dst = arrays_.at(name);
-            const ArrayInfo &L   = arrays_.at(rhs.children[0]->strValue);
-            const ArrayInfo &R   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo &dst = arrayAt(name);
+            const ArrayInfo &L   = arrayAt(rhs.children[0]->strValue);
+            const ArrayInfo &R   = arrayAt(rhs.children[1]->strValue);
             if (name == rhs.children[0]->strValue || name == rhs.children[1]->strValue)
                 unsupported("in-place matrix*vector (y = y * x)");
             // A matrix operand is KnownDims 2-D OR a runtime-dim 2-D (NDims rank-2); a
@@ -1307,10 +1308,10 @@ void Emitter::emitAssign(const ASTNode &s)
             const bool        rMat = R.is2D || (R.isND && R.ndDims.size() == 2);
             const bool        lVec = !L.is2D && !L.isND;
             const bool        rVec = !R.is2D && !R.isND;
-            const std::string ty   = cppScalarType(dst.dtype);
-            const std::string zer  = zeroLiteral(dst.dtype);
+            const keel::String ty   = cppScalarType(dst.dtype);
+            const keel::String zer  = zeroLiteral(dst.dtype);
             if (lMat && rVec) {  // A * x -> column vector
-                const std::string Arows = dimExpr(L, 0), Acols = dimExpr(L, 1);
+                const keel::String Arows = dimExpr(L, 0), Acols = dimExpr(L, 1);
                 line("if (" + Acols + " != " + R.lenVar + ") throw std::out_of_range(\""
                      "numkit: inner matrix dimensions must agree\");");
                 if (dst.isLocal) line(cppIdent(name) + ".resize(" + Arows + ");");
@@ -1323,7 +1324,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 line(dst.dataExpr + "[_numkit_i] = _numkit_acc;");
                 close();
             } else if (lVec && rMat) {  // r * A -> row vector
-                const std::string Brows = dimExpr(R, 0), Bcols = dimExpr(R, 1);
+                const keel::String Brows = dimExpr(R, 0), Bcols = dimExpr(R, 1);
                 line("if (" + L.lenVar + " != " + Brows + ") throw std::out_of_range(\""
                      "numkit: inner matrix dimensions must agree\");");
                 if (dst.isLocal) line(cppIdent(name) + ".resize(" + Bcols + ");");
@@ -1346,22 +1347,22 @@ void Emitter::emitAssign(const ASTNode &s)
         // destinations. A LOCAL sets its dim vars from the operand lengths + sizes its
         // vector; an OUTPUT guards its caller-passed dims. Complex accumulates in
         // std::complex. Native + self-contained.
-        if (isArrayVar(name) && (arrays_.at(name).isOutput || arrays_.at(name).isLocal)
-            && (arrays_.at(name).is2D || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+        if (isArrayVar(name) && (arrayAt(name).isOutput || arrayAt(name).isLocal)
+            && (arrayAt(name).is2D || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
             && rhs.type == NodeType::BINARY_OP && rhs.strValue == "*"
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[0]->strValue)
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)) {
-            const ArrayInfo &dst = arrays_.at(name);
-            const ArrayInfo &c   = arrays_.at(rhs.children[0]->strValue);
-            const ArrayInfo &r   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo &dst = arrayAt(name);
+            const ArrayInfo &c   = arrayAt(rhs.children[0]->strValue);
+            const ArrayInfo &r   = arrayAt(rhs.children[1]->strValue);
             if (c.is2D || c.isND || r.is2D || r.isND)
                 unsupported("outer product over a non-vector operand");
             if (name == rhs.children[0]->strValue || name == rhs.children[1]->strValue)
                 unsupported("in-place outer product");
-            const std::string d0 = dimExpr(dst, 0);  // rows = length(c)
-            const std::string d1 = dimExpr(dst, 1);  // cols = length(r)
+            const keel::String d0 = dimExpr(dst, 0);  // rows = length(c)
+            const keel::String d1 = dimExpr(dst, 1);  // cols = length(r)
             if (dst.ndRuntimeLocal) {
                 line(dst.ndDims[0] + " = " + c.lenVar + ";");
                 line(dst.ndDims[1] + " = " + r.lenVar + ";");
@@ -1393,8 +1394,8 @@ void Emitter::emitAssign(const ASTNode &s)
             && isArrayVar(rhs.children[1]->strValue)) {
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && res.type.shape.isScalar()) {
-                const ArrayInfo &L = arrays_.at(rhs.children[0]->strValue);
-                const ArrayInfo &R = arrays_.at(rhs.children[1]->strValue);
+                const ArrayInfo &L = arrayAt(rhs.children[0]->strValue);
+                const ArrayInfo &R = arrayAt(rhs.children[1]->strValue);
                 if (L.is2D || R.is2D || L.isND || R.isND)
                     unsupported("inner product over a non-vector operand");
                 line("{");
@@ -1423,14 +1424,14 @@ void Emitter::emitAssign(const ASTNode &s)
             && (rhs.children[0]->strValue == "any" || rhs.children[0]->strValue == "all")
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)) {
-            const ArrayInfo    &a   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo    &a   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!a.is2D && !a.isND && a.dtype != ValueType::COMPLEX && res.type.isConcrete()
                 && res.type.shape.isScalar()) {
                 const bool isAny = rhs.children[0]->strValue == "any";
                 line("{");  // scope _numkit_acc so repeated any/all in one fn don't collide
                 ++indent_;
-                line(std::string("bool _numkit_acc = ") + (isAny ? "false;" : "true;"));
+                line(keel::String("bool _numkit_acc = ") + (isAny ? "false;" : "true;"));
                 open("for (std::size_t _numkit_i = 0; _numkit_i < " + a.lenVar + "; ++_numkit_i)");
                 line(isAny ? ("if (" + a.dataExpr + "[_numkit_i] != 0) { _numkit_acc = true; break; }")
                            : ("if (" + a.dataExpr + "[_numkit_i] == 0) { _numkit_acc = false; break; }"));
@@ -1453,14 +1454,14 @@ void Emitter::emitAssign(const ASTNode &s)
             && (rhs.children[0]->strValue == "min" || rhs.children[0]->strValue == "max")
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)) {
-            const ArrayInfo    &a   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo    &a   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!a.is2D && !a.isND && a.dtype != ValueType::COMPLEX && res.type.isConcrete()
                 && res.type.shape.isScalar()) {
-                const std::string cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
-                const bool        isFloat =
+                const keel::StringRef cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
+                const bool            isFloat =
                     a.dtype == ValueType::DOUBLE || a.dtype == ValueType::SINGLE;
-                const std::string nanClause = isFloat ? " || _numkit_acc != _numkit_acc" : "";
+                const keel::StringRef nanClause = isFloat ? " || _numkit_acc != _numkit_acc" : "";
                 line("{");  // scope _numkit_acc so repeated reductions in one fn don't collide
                 ++indent_;
                 line("if (" + a.lenVar
@@ -1491,17 +1492,17 @@ void Emitter::emitAssign(const ASTNode &s)
                 || rhs.children[0]->strValue == "mean")
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &a   = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &a   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!a.is2D && !a.isND && res.type.isConcrete() && res.type.shape.isScalar()) {
-                const std::string callee = rhs.children[0]->strValue;
+                const keel::String &callee = rhs.children[0]->strValue;
                 const bool        isProd = callee == "prod";
                 line("{");  // scope _numkit_acc so repeated reductions in one fn don't collide
                 ++indent_;
-                line(std::string("double _numkit_acc = ") + (isProd ? "1.0;" : "0.0;"));
+                line(keel::String("double _numkit_acc = ") + (isProd ? "1.0;" : "0.0;"));
                 open("for (std::size_t _numkit_i = 0; _numkit_i < " + a.lenVar + "; ++_numkit_i)");
-                line(std::string("_numkit_acc ") + (isProd ? "*=" : "+=") + " " + a.dataExpr
+                line(keel::String("_numkit_acc ") + (isProd ? "*=" : "+=") + " " + a.dataExpr
                      + "[_numkit_i];");
                 close();
                 if (callee == "mean")
@@ -1526,9 +1527,9 @@ void Emitter::emitAssign(const ASTNode &s)
                 || rhs.children[0]->strValue == "std")
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &a   = arrays_.at(rhs.children[1]->strValue);
-            const std::string  &fn  = rhs.children[0]->strValue;
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &a   = arrayAt(rhs.children[1]->strValue);
+            const keel::String  &fn  = rhs.children[0]->strValue;
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!a.is2D && !a.isND && res.type.isConcrete() && res.type.shape.isScalar()) {
                 line("{");
@@ -1572,8 +1573,8 @@ void Emitter::emitAssign(const ASTNode &s)
             && rhs.children[0]->strValue == "trapz"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &a   = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &a   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!a.is2D && !a.isND && res.type.isConcrete() && res.type.shape.isScalar()) {
                 line("{");
@@ -1597,9 +1598,9 @@ void Emitter::emitAssign(const ASTNode &s)
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "trace"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).is2D
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).is2D
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && res.type.shape.isScalar()) {
                 line("{");
@@ -1627,8 +1628,8 @@ void Emitter::emitAssign(const ASTNode &s)
             && rhs.children[0]->strValue == "median"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &a   = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &a   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!a.is2D && !a.isND && res.type.isConcrete() && res.type.shape.isScalar()) {
                 line("{");
@@ -1653,15 +1654,15 @@ void Emitter::emitAssign(const ASTNode &s)
         // (odd m) or the mean of the two middles (even m); any NaN in a column -> NaN (the sorted
         // column's last element is NaN). Mirrors the 1-D median, per column. !bridge_ guard. v1: a
         // DOUBLE matrix var; result a 1-D array LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !bridge_ && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !bridge_ && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "median"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 line("{");
@@ -1694,10 +1695,10 @@ void Emitter::emitAssign(const ASTNode &s)
         if (!isArrayVar(name) && !bridge_ && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "mode"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &a   = arrays_.at(rhs.children[1]->strValue);
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &a   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && res.type.shape.isScalar()) {
                 line("{");
@@ -1725,15 +1726,15 @@ void Emitter::emitAssign(const ASTNode &s)
         // Per column: copy the contiguous block, sort (NaN-last), then the most-frequent value (tie
         // -> smallest, NaN ignored). Mirrors the 1-D mode, per column. !bridge_ guard. v1: a DOUBLE
         // matrix var; result a 1-D array LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !bridge_ && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !bridge_ && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "mode"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 line("{");
@@ -1774,8 +1775,8 @@ void Emitter::emitAssign(const ASTNode &s)
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[2]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[2]->strValue)) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &B   = arrays_.at(rhs.children[2]->strValue);
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &B   = arrayAt(rhs.children[2]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!A.is2D && !A.isND && !B.is2D && !B.isND && A.dtype == ValueType::DOUBLE
                 && B.dtype == ValueType::DOUBLE && res.type.isConcrete()
@@ -1804,8 +1805,8 @@ void Emitter::emitAssign(const ASTNode &s)
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[2]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[2]->strValue)) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &B   = arrays_.at(rhs.children[2]->strValue);
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &B   = arrayAt(rhs.children[2]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!A.is2D && !A.isND && !B.is2D && !B.isND && res.type.isConcrete()
                 && res.type.shape.isScalar()) {
@@ -1841,14 +1842,14 @@ void Emitter::emitAssign(const ASTNode &s)
                     anyArrayArg = true;
             if (anyArrayArg && res.type.isUnboxableScalar()
                 && res.type.dtype != ValueType::COMPLEX) {
-                const std::string callee = rhs.children[0]->strValue;
+                const keel::String &callee = rhs.children[0]->strValue;
                 const std::size_t nargs  = rhs.children.size() - 1;
-                std::string       boxed;
+                keel::String       boxed;
                 for (std::size_t i = 1; i < rhs.children.size(); ++i) {
                     const ASTNode &arg = *rhs.children[i];
                     if (i > 1) boxed += ", ";
                     if (arg.type == NodeType::IDENTIFIER && isArrayVar(arg.strValue)) {
-                        const ArrayInfo &aai = arrays_.at(arg.strValue);
+                        const ArrayInfo &aai = arrayAt(arg.strValue);
                         if (aai.is2D || aai.isND)
                             unsupported("bridged reduction: 2-D/N-D array argument (v1)");
                         if (aai.dtype == ValueType::COMPLEX)
@@ -1863,7 +1864,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 open("");  // fresh scope for the temporary arg array
                 line("numkit_val _numkit_args[] = { " + boxed + " };");
                 line(cppIdent(name) + " = numkit_rt::bridge_scalar_arr(\"" + callee + "\", _numkit_args, "
-                     + std::to_string(nargs) + ");");
+                     + toStr(nargs) + ");");
                 close();
                 types_.set(name, res);
                 return;
@@ -1875,23 +1876,23 @@ void Emitter::emitAssign(const ASTNode &s)
         // over the bridged array-result path below. Works for a 1-D vector OR a 2-D / N-D
         // matrix arg (the flat index +1 is the MATLAB linear index) -> bound on NUMEL. v1: a
         // single array VARIABLE (double or logical); the result a 1-D array LOCAL (push_back).
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "find"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)) {
-            const ArrayInfo    &m   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo    &m   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                std::string numel;  // flat element count (1-D len / 2-D rows*cols / N-D prod)
+                keel::String numel;  // flat element count (1-D len / 2-D rows*cols / N-D prod)
                 if (m.isND) {
-                    numel = m.ndDims[0];
+                    numel = m.ndDims[0].clone();
                     for (std::size_t i = 1; i < m.ndDims.size(); ++i) numel += " * " + m.ndDims[i];
                 } else if (m.is2D) {
                     numel = m.rowsVar + " * " + m.colsVar;
                 } else {
-                    numel = m.lenVar;
+                    numel = m.lenVar.clone();
                 }
                 line("{");
                 ++indent_;
@@ -1915,33 +1916,33 @@ void Emitter::emitAssign(const ASTNode &s)
         // pure-elementwise expression (collectElementwise srcArrays of size 1) so the bound is
         // that array's NUMEL and per-element emission is valid (a multi-array find(x>y) ->
         // bridged). Result a 1-D DOUBLE LOCAL (push_back). v1: 1-D or 2-D/N-D operand.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "find"
             && rhs.children[1]->type != NodeType::IDENTIFIER) {
-            std::set<std::string> srcArrays;
+            keel::HashSet<keel::String> srcArrays;
             const bool            pureEw = collectElementwise(*rhs.children[1], srcArrays);
             const AbstractValue   maskAV = inferExpr(*rhs.children[1], types_, reg_, classes_);
             const AbstractValue   res    = inferExpr(rhs, types_, reg_, classes_);
             if (pureEw && srcArrays.size() == 1 && maskAV.type.isConcrete()
                 && !maskAV.type.shape.isScalar()
                 && res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const ArrayInfo &ba = arrays_.at(*srcArrays.begin());
-                std::string      numel;  // flat element count (1-D len / 2-D rows*cols / N-D prod)
+                const ArrayInfo &ba = arrayAt(*srcArrays.begin());
+                keel::String numel;  // flat element count (1-D len / 2-D rows*cols / N-D prod)
                 if (ba.isND) {
-                    numel = ba.ndDims[0];
+                    numel = ba.ndDims[0].clone();
                     for (std::size_t i = 1; i < ba.ndDims.size(); ++i) numel += " * " + ba.ndDims[i];
                 } else if (ba.is2D) {
                     numel = ba.rowsVar + " * " + ba.colsVar;
                 } else {
-                    numel = ba.lenVar;
+                    numel = ba.lenVar.clone();
                 }
                 line("{");
                 ++indent_;
                 line(cppIdent(name) + ".clear();");
-                elementCtx_ = "_numkit_i";  // whole array in the expr -> arr[_numkit_i] (flat)
-                const std::string maskExpr = emitExpr(*rhs.children[1]);
+                elementCtx_.assign("_numkit_i");  // whole array in the expr -> arr[_numkit_i] (flat)
+                const keel::String maskExpr = emitExpr(*rhs.children[1]);
                 elementCtx_.clear();
                 open("for (std::size_t _numkit_i = 0; _numkit_i < (" + numel + "); ++_numkit_i)");
                 line("if (" + maskExpr + ") " + cppIdent(name)
@@ -1965,24 +1966,24 @@ void Emitter::emitAssign(const ASTNode &s)
                 && (rhs.children[0]->strValue == "any" || rhs.children[0]->strValue == "all")
                 && rhs.children[2]->type == NodeType::NUMBER_LITERAL
                 && (rhs.children[2]->numValue == 1.0 || rhs.children[2]->numValue == 2.0);
-            if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-                && !arrays_.at(name).isND && rhs.type == NodeType::CALL
+            if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+                && !arrayAt(name).isND && rhs.type == NodeType::CALL
                 && (rhs.children.size() == 2 || anyTwoArg)
                 && rhs.children[0]->type == NodeType::IDENTIFIER
                 && (rhs.children[0]->strValue == "any" || rhs.children[0]->strValue == "all")
                 && rhs.children[1]->type == NodeType::IDENTIFIER
                 && isArrayVar(rhs.children[1]->strValue)
-                && (arrays_.at(rhs.children[1]->strValue).is2D
-                    || (arrays_.at(rhs.children[1]->strValue).isND
-                        && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-                && (arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
-                    || arrays_.at(rhs.children[1]->strValue).dtype == ValueType::LOGICAL)) {
-                const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
+                && (arrayAt(rhs.children[1]->strValue).is2D
+                    || (arrayAt(rhs.children[1]->strValue).isND
+                        && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+                && (arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+                    || arrayAt(rhs.children[1]->strValue).dtype == ValueType::LOGICAL)) {
+                const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
                 const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
                 if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                    const bool        isAny = rhs.children[0]->strValue == "any";
-                    const bool        dim2  = anyTwoArg && rhs.children[2]->numValue == 2.0;
-                    const std::string comb  = isAny ? "|| _numkit_v != 0.0;" : "&& _numkit_v != 0.0;";
+                    const bool            isAny = rhs.children[0]->strValue == "any";
+                    const bool            dim2  = anyTwoArg && rhs.children[2]->numValue == 2.0;
+                    const keel::StringRef comb  = isAny ? "|| _numkit_v != 0.0;" : "&& _numkit_v != 0.0;";
                     line("{");
                     ++indent_;
                     line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -1990,7 +1991,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     if (dim2) {  // row-wise: result length m, reduce across columns
                         line(cppIdent(name) + ".assign(_numkit_m, 0);");
                         open("for (std::size_t _numkit_i = 0; _numkit_i < _numkit_m; ++_numkit_i)");
-                        line(std::string("bool _numkit_acc = ") + (isAny ? "false;" : "true;"));
+                        line(keel::String("bool _numkit_acc = ") + (isAny ? "false;" : "true;"));
                         open("for (std::size_t _numkit_j = 0; _numkit_j < _numkit_n; ++_numkit_j)");
                         line("const double _numkit_v = static_cast<double>(" + A.dataExpr
                              + "[_numkit_i + _numkit_j * _numkit_m]);");
@@ -2001,7 +2002,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     } else {  // dim 1 column-wise: result length n
                         line(cppIdent(name) + ".assign(_numkit_n, 0);");
                         open("for (std::size_t _numkit_j = 0; _numkit_j < _numkit_n; ++_numkit_j)");
-                        line(std::string("bool _numkit_acc = ") + (isAny ? "false;" : "true;"));
+                        line(keel::String("bool _numkit_acc = ") + (isAny ? "false;" : "true;"));
                         open("for (std::size_t _numkit_i = 0; _numkit_i < _numkit_m; ++_numkit_i)");
                         line("const double _numkit_v = static_cast<double>(" + A.dataExpr
                              + "[_numkit_i + _numkit_j * _numkit_m]);");
@@ -2024,8 +2025,8 @@ void Emitter::emitAssign(const ASTNode &s)
         // counts as nonzero (NaN != 0), per MATLAB. Empty fiber -> any false / all true (the seeds).
         // EXACT, every tier. Reuses the cumsum stride scheme: each fiber (stride sd, length ld)
         // reduces to out[b/ld + r]. v1: a DOUBLE/LOGICAL rank-3 var.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && (arrays_.at(name).ndDims.size() == 2 || arrays_.at(name).ndDims.size() == 3)
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && (arrayAt(name).ndDims.size() == 2 || arrayAt(name).ndDims.size() == 3)
             && rhs.type == NodeType::CALL && rhs.children.size() == 3
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "any" || rhs.children[0]->strValue == "all")
@@ -2033,21 +2034,21 @@ void Emitter::emitAssign(const ASTNode &s)
             && (rhs.children[2]->numValue == 1.0 || rhs.children[2]->numValue == 2.0
                 || rhs.children[2]->numValue == 3.0)
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 3
-            && (arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
-                || arrays_.at(rhs.children[1]->strValue).dtype == ValueType::LOGICAL)) {
+            && arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
+            && (arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+                || arrayAt(rhs.children[1]->strValue).dtype == ValueType::LOGICAL)) {
             const int dimv = static_cast<int>(rhs.children[2]->numValue);
             // the dst rank must match the dim: dim 3 -> rank 2, dim 1|2 -> rank 3.
-            if ((dimv == 3) == (arrays_.at(name).ndDims.size() == 2)) {
-                const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-                const ArrayInfo    &M   = arrays_.at(name);
+            if ((dimv == 3) == (arrayAt(name).ndDims.size() == 2)) {
+                const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+                const ArrayInfo    &M   = arrayAt(name);
                 const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
                 if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                    const bool        isAny = rhs.children[0]->strValue == "any";
-                    const std::string comb  = isAny ? "|| _numkit_v != 0.0;" : "&& _numkit_v != 0.0;";
-                    const std::string sd = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
-                    const std::string ld = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
+                    const bool            isAny = rhs.children[0]->strValue == "any";
+                    const keel::StringRef comb  = isAny ? "|| _numkit_v != 0.0;" : "&& _numkit_v != 0.0;";
+                    const keel::StringRef sd    = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
+                    const keel::StringRef ld    = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
                     line("{");
                     ++indent_;
                     line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2072,7 +2073,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     line(cppIdent(name) + ".assign(_numkit_tot / _numkit_ld, 0);");
                     open("for (std::size_t _numkit_b = 0; _numkit_b < _numkit_tot; _numkit_b += _numkit_blk)");
                     open("for (std::size_t _numkit_r = 0; _numkit_r < _numkit_sd; ++_numkit_r)");
-                    line(std::string("bool _numkit_acc = ") + (isAny ? "false;" : "true;"));
+                    line(keel::String("bool _numkit_acc = ") + (isAny ? "false;" : "true;"));
                     open("for (std::size_t _numkit_t = 0; _numkit_t < _numkit_ld; ++_numkit_t)");
                     line("const double _numkit_v = static_cast<double>(" + A.dataExpr
                          + "[_numkit_b + _numkit_r + _numkit_t * _numkit_sd]);");
@@ -2092,24 +2093,24 @@ void Emitter::emitAssign(const ASTNode &s)
         // vector. dim 1 reduces each COLUMN (-> 1 x n, same as max(A)); dim 2 reduces each ROW
         // (-> m x 1). NaN-skipping (seed on the reduced line's first element). EXACT, every tier.
         // The middle arg must be an empty matrix []. v1: a DOUBLE matrix var.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 4
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 4
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "max" || rhs.children[0]->strValue == "min")
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
             && rhs.children[2]->type == NodeType::MATRIX_LITERAL
             && rhs.children[2]->children.empty()  // the [] placeholder
             && rhs.children[3]->type == NodeType::NUMBER_LITERAL
             && (rhs.children[3]->numValue == 1.0 || rhs.children[3]->numValue == 2.0)) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const bool        dim2 = rhs.children[3]->numValue == 2.0;
-                const std::string cmp  = rhs.children[0]->strValue == "max" ? ">" : "<";
+                const bool            dim2 = rhs.children[3]->numValue == 2.0;
+                const keel::StringRef cmp  = rhs.children[0]->strValue == "max" ? ">" : "<";
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2150,29 +2151,29 @@ void Emitter::emitAssign(const ASTNode &s)
         // strict cmp, or acc NaN & cand not). EXACT, every tier. Reuses the cumsum stride scheme:
         // each fiber (stride sd, length ld) reduces to out[b/ld + r]. children: [max, A, [], dim].
         // v1: a DOUBLE rank-3 var.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && (arrays_.at(name).ndDims.size() == 2 || arrays_.at(name).ndDims.size() == 3)
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && (arrayAt(name).ndDims.size() == 2 || arrayAt(name).ndDims.size() == 3)
             && rhs.type == NodeType::CALL && rhs.children.size() == 4
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "max" || rhs.children[0]->strValue == "min")
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 3
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
             && rhs.children[2]->type == NodeType::MATRIX_LITERAL && rhs.children[2]->children.empty()
             && rhs.children[3]->type == NodeType::NUMBER_LITERAL
             && (rhs.children[3]->numValue == 1.0 || rhs.children[3]->numValue == 2.0
                 || rhs.children[3]->numValue == 3.0)) {
             const int dimv = static_cast<int>(rhs.children[3]->numValue);
             // the dst rank must match the dim: dim 3 -> rank 2, dim 1|2 -> rank 3.
-            if ((dimv == 3) == (arrays_.at(name).ndDims.size() == 2)) {
-                const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-                const ArrayInfo    &M   = arrays_.at(name);
+            if ((dimv == 3) == (arrayAt(name).ndDims.size() == 2)) {
+                const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+                const ArrayInfo    &M   = arrayAt(name);
                 const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
                 if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                    const std::string cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
-                    const std::string sd = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
-                    const std::string ld = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
+                    const keel::StringRef cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
+                    const keel::StringRef sd  = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
+                    const keel::StringRef ld  = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
                     line("{");
                     ++indent_;
                     line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2219,19 +2220,19 @@ void Emitter::emitAssign(const ASTNode &s)
         // an all-NaN column stays NaN). EXACT + order-independent -> runs in every tier, no bridge
         // guard. Column-major. v1: a single DOUBLE matrix var (KnownDims or runtime rank-2); the
         // result a 1-D array LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "max" || rhs.children[0]->strValue == "min")
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const std::string cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
+                const keel::StringRef cmp = rhs.children[0]->strValue == "max" ? ">" : "<";
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2248,7 +2249,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 close();
                 --indent_;
                 line("}");
-                arrays_.at(name).orient = VecOrient::Row;
+                arrayAt(name).orient = VecOrient::Row;
                 types_.set(name, res);
                 return;
             }
@@ -2256,30 +2257,30 @@ void Emitter::emitAssign(const ASTNode &s)
         // Native sum(A[, dim]) / prod(A[, dim]) / mean(A[, dim]) on a 2-D MATRIX:
         // - dim = 1 (or 1-arg default): column-wise reduction -> 1 x n row vector.
         // - dim = 2: row-wise reduction -> m x 1 column vector.
-        if (isArrayVar(name) && (arrays_.at(name).isLocal || arrays_.at(name).isOutput)
-            && !arrays_.at(name).is2D && !arrays_.at(name).isND
+        if (isArrayVar(name) && (arrayAt(name).isLocal || arrayAt(name).isOutput)
+            && !arrayAt(name).is2D && !arrayAt(name).isND
             && rhs.type == NodeType::CALL && (rhs.children.size() == 2 || rhs.children.size() == 3)
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "sum" || rhs.children[0]->strValue == "prod"
                 || rhs.children[0]->strValue == "mean")
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
             && (rhs.children.size() == 2
                 || (rhs.children[2]->type == NodeType::NUMBER_LITERAL
                     && (rhs.children[2]->numValue == 1.0 || rhs.children[2]->numValue == 2.0)))) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &dst = arrays_.at(name);
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &dst = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const std::string &fn   = rhs.children[0]->strValue;
+                const keel::String &fn   = rhs.children[0]->strValue;
                 const int          dim  = rhs.children.size() == 3
                                               ? static_cast<int>(rhs.children[2]->numValue)
                                               : 1;
-                const std::string  init = fn == "prod" ? "1.0" : "0.0";
-                const std::string  op   = fn == "prod" ? "*=" : "+=";
+                const keel::StringRef init = fn == "prod" ? "1.0" : "0.0";
+                const keel::StringRef op   = fn == "prod" ? "*=" : "+=";
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2300,7 +2301,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     else
                         line(dst.dataExpr + "[_numkit_j] = _numkit_acc;");
                     close();
-                    arrays_.at(name).orient = VecOrient::Row;
+                    arrayAt(name).orient = VecOrient::Row;
                 } else {
                     if (dst.isLocal)
                         line(cppIdent(name) + ".assign(_numkit_m, 0.0);");
@@ -2317,7 +2318,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     else
                         line(dst.dataExpr + "[_numkit_i] = _numkit_acc;");
                     close();
-                    arrays_.at(name).orient = VecOrient::Col;
+                    arrayAt(name).orient = VecOrient::Col;
                 }
                 --indent_;
                 line("}");
@@ -2342,20 +2343,20 @@ void Emitter::emitAssign(const ASTNode &s)
             const bool diff1Arg = rhs.type == NodeType::CALL && rhs.children.size() == 2
                                   && rhs.children[0]->type == NodeType::IDENTIFIER
                                   && rhs.children[0]->strValue == "diff";
-            if (isArrayVar(name) && arrays_.at(name).isLocal
-                && (arrays_.at(name).is2D
-                    || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+            if (isArrayVar(name) && arrayAt(name).isLocal
+                && (arrayAt(name).is2D
+                    || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
                 && (diff1Arg || diff3Arg) && rhs.children[1]->type == NodeType::IDENTIFIER
                 && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-                && (arrays_.at(rhs.children[1]->strValue).is2D
-                    || (arrays_.at(rhs.children[1]->strValue).isND
-                        && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-                && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-                const ArrayInfo &A = arrays_.at(rhs.children[1]->strValue);
+                && (arrayAt(rhs.children[1]->strValue).is2D
+                    || (arrayAt(rhs.children[1]->strValue).isND
+                        && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+                && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+                const ArrayInfo &A = arrayAt(rhs.children[1]->strValue);
                 // 1-arg default-dim diff needs rows statically > 1 (A.is2D = KnownDims matrix); a
                 // runtime-dim 2-D 1-arg diff stays bridged (ambiguous first non-singleton dim).
                 if (diff3Arg || A.is2D) {
-                    const ArrayInfo    &M   = arrays_.at(name);
+                    const ArrayInfo    &M   = arrayAt(name);
                     const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
                     if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                         const bool dim2 = diff3Arg && rhs.children[3]->numValue == 2.0;
@@ -2363,9 +2364,9 @@ void Emitter::emitAssign(const ASTNode &s)
                         ++indent_;
                         line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
                         line("const std::size_t _numkit_n = " + dimExpr(A, 1) + ";");
-                        line(std::string("const std::size_t _numkit_rm = ")
+                        line(keel::String("const std::size_t _numkit_rm = ")
                              + (dim2 ? "_numkit_m;" : "_numkit_m - 1;"));  // result rows
-                        line(std::string("const std::size_t _numkit_rn = ")
+                        line(keel::String("const std::size_t _numkit_rn = ")
                              + (dim2 ? "_numkit_n - 1;" : "_numkit_n;"));  // result cols
                         if (M.isND && M.ndDims.size() == 2) {
                             line(M.ndDims[0] + " = _numkit_rm;");
@@ -2399,8 +2400,8 @@ void Emitter::emitAssign(const ASTNode &s)
         // in/out shapes differ, so explicit (i,j,k) nests with the two layouts (out strides 1, rm,
         // rm*rn; A strides 1, m, m*n). order 1, dim 1|2 only. v1: a DOUBLE rank-3 var distinct from
         // the dest.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
             && rhs.children.size() == 4 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "diff"
             && rhs.children[2]->type == NodeType::NUMBER_LITERAL && rhs.children[2]->numValue == 1.0
@@ -2408,11 +2409,11 @@ void Emitter::emitAssign(const ASTNode &s)
             && (rhs.children[3]->numValue == 1.0 || rhs.children[3]->numValue == 2.0)
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-            && arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 3
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            && arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 const bool dim2 = rhs.children[3]->numValue == 2.0;
@@ -2421,8 +2422,8 @@ void Emitter::emitAssign(const ASTNode &s)
                 line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
                 line("const std::size_t _numkit_n = " + dimExpr(A, 1) + ";");
                 line("const std::size_t _numkit_p = " + dimExpr(A, 2) + ";");
-                line(std::string("const std::size_t _numkit_rm = ") + (dim2 ? "_numkit_m;" : "_numkit_m - 1;"));
-                line(std::string("const std::size_t _numkit_rn = ") + (dim2 ? "_numkit_n - 1;" : "_numkit_n;"));
+                line(keel::String("const std::size_t _numkit_rm = ") + (dim2 ? "_numkit_m;" : "_numkit_m - 1;"));
+                line(keel::String("const std::size_t _numkit_rn = ") + (dim2 ? "_numkit_n - 1;" : "_numkit_n;"));
                 line("const std::size_t _numkit_rmn = _numkit_rm * _numkit_rn;");
                 line(M.ndDims[0] + " = _numkit_rm;");
                 line(M.ndDims[1] + " = _numkit_rn;");
@@ -2453,13 +2454,13 @@ void Emitter::emitAssign(const ASTNode &s)
         // n-1), a runtime-sized 1-D LOCAL preserving x's dtype. EXACT (subtraction)
         // -> preferred over the bridged array-result path; works for double and
         // complex. v1: a single 1-D array arg that is a VARIABLE; result a LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "diff"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)) {
-            const ArrayInfo    &xa  = arrays_.at(rhs.children[1]->strValue);
+            const ArrayInfo    &xa  = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!xa.is2D && !xa.isND && res.type.isConcrete() && !res.type.shape.isScalar()) {
                 line("{");
@@ -2488,26 +2489,26 @@ void Emitter::emitAssign(const ASTNode &s)
                 && (rhs.children[0]->strValue == "cumsum" || rhs.children[0]->strValue == "cumprod")
                 && rhs.children[2]->type == NodeType::NUMBER_LITERAL
                 && (rhs.children[2]->numValue == 1.0 || rhs.children[2]->numValue == 2.0);
-            if (isArrayVar(name) && arrays_.at(name).isLocal && !bridge_
-                && (arrays_.at(name).is2D
-                    || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+            if (isArrayVar(name) && arrayAt(name).isLocal && !bridge_
+                && (arrayAt(name).is2D
+                    || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
                 && rhs.type == NodeType::CALL && (rhs.children.size() == 2 || cumTwoArg)
                 && rhs.children[0]->type == NodeType::IDENTIFIER
                 && (rhs.children[0]->strValue == "cumsum" || rhs.children[0]->strValue == "cumprod")
                 && rhs.children[1]->type == NodeType::IDENTIFIER
                 && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-                && (arrays_.at(rhs.children[1]->strValue).is2D
-                    || (arrays_.at(rhs.children[1]->strValue).isND
-                        && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-                && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-                const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-                const ArrayInfo    &M   = arrays_.at(name);
+                && (arrayAt(rhs.children[1]->strValue).is2D
+                    || (arrayAt(rhs.children[1]->strValue).isND
+                        && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+                && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+                const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+                const ArrayInfo    &M   = arrayAt(name);
                 const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
                 if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                    const bool        isProd = rhs.children[0]->strValue == "cumprod";
-                    const bool        dim2   = cumTwoArg && rhs.children[2]->numValue == 2.0;
-                    const std::string seed   = isProd ? "1.0" : "0.0";
-                    const std::string op     = isProd ? "*=" : "+=";
+                    const bool            isProd = rhs.children[0]->strValue == "cumprod";
+                    const bool            dim2   = cumTwoArg && rhs.children[2]->numValue == 2.0;
+                    const keel::StringRef seed   = isProd ? "1.0" : "0.0";
+                    const keel::StringRef op     = isProd ? "*=" : "+=";
                     line("{");
                     ++indent_;
                     line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2548,8 +2549,8 @@ void Emitter::emitAssign(const ASTNode &s)
         // The 2-arg form with a LITERAL dim 1|2|3 only (the 1-arg default dim is the first non-
         // singleton -- ambiguous on a runtime-dim rank-3 -> stays bridged). v1: a DOUBLE rank-3 var
         // distinct from dst.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && !bridge_ && arrays_.at(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && !bridge_ && arrayAt(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
             && rhs.children.size() == 3 && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "cumsum" || rhs.children[0]->strValue == "cumprod")
             && rhs.children[2]->type == NodeType::NUMBER_LITERAL
@@ -2557,20 +2558,20 @@ void Emitter::emitAssign(const ASTNode &s)
                 || rhs.children[2]->numValue == 3.0)
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-            && arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 3
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            && arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const bool        isProd = rhs.children[0]->strValue == "cumprod";
-                const std::string seed   = isProd ? "1.0" : "0.0";
-                const std::string op     = isProd ? "*=" : "+=";
-                const int         dimv   = static_cast<int>(rhs.children[2]->numValue);
+                const bool            isProd = rhs.children[0]->strValue == "cumprod";
+                const keel::StringRef seed   = isProd ? "1.0" : "0.0";
+                const keel::StringRef op     = isProd ? "*=" : "+=";
+                const int             dimv   = static_cast<int>(rhs.children[2]->numValue);
                 // scan-dim element stride sd and length ld in terms of m,n,p
-                const std::string sd = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
-                const std::string ld = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
+                const keel::StringRef sd = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
+                const keel::StringRef ld = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2605,23 +2606,23 @@ void Emitter::emitAssign(const ASTNode &s)
         // array-result path stays the exact tier when the bridge is on). cumsum:
         // acc += (seed 0); cumprod: acc *= (seed 1). v1: a single 1-D DOUBLE array
         // arg that is a VARIABLE; the result a 1-D array LOCAL (push_back).
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !bridge_ && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && !bridge_ && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "cumsum" || rhs.children[0]->strValue == "cumprod")
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &xa  = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &xa  = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!xa.is2D && !xa.isND && res.type.isConcrete() && !res.type.shape.isScalar()) {
                 const bool isProd = rhs.children[0]->strValue == "cumprod";
                 line("{");
                 ++indent_;
-                line(std::string("double _numkit_acc = ") + (isProd ? "1.0;" : "0.0;"));
+                line(keel::String("double _numkit_acc = ") + (isProd ? "1.0;" : "0.0;"));
                 line(cppIdent(name) + ".clear();");
                 open("for (std::size_t _numkit_i = 0; _numkit_i < " + xa.lenVar + "; ++_numkit_i)");
-                line(std::string("_numkit_acc ") + (isProd ? "*=" : "+=") + " " + xa.dataExpr
+                line(keel::String("_numkit_acc ") + (isProd ? "*=" : "+=") + " " + xa.dataExpr
                      + "[_numkit_i];");
                 line(cppIdent(name) + ".push_back(_numkit_acc);");
                 close();
@@ -2644,24 +2645,24 @@ void Emitter::emitAssign(const ASTNode &s)
                 && (rhs.children[0]->strValue == "cummax" || rhs.children[0]->strValue == "cummin")
                 && rhs.children[2]->type == NodeType::NUMBER_LITERAL
                 && (rhs.children[2]->numValue == 1.0 || rhs.children[2]->numValue == 2.0);
-            if (isArrayVar(name) && arrays_.at(name).isLocal
-                && (arrays_.at(name).is2D
-                    || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+            if (isArrayVar(name) && arrayAt(name).isLocal
+                && (arrayAt(name).is2D
+                    || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
                 && rhs.type == NodeType::CALL && (rhs.children.size() == 2 || cmTwoArg)
                 && rhs.children[0]->type == NodeType::IDENTIFIER
                 && (rhs.children[0]->strValue == "cummax" || rhs.children[0]->strValue == "cummin")
                 && rhs.children[1]->type == NodeType::IDENTIFIER
                 && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-                && (arrays_.at(rhs.children[1]->strValue).is2D
-                    || (arrays_.at(rhs.children[1]->strValue).isND
-                        && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-                && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-                const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-                const ArrayInfo    &M   = arrays_.at(name);
+                && (arrayAt(rhs.children[1]->strValue).is2D
+                    || (arrayAt(rhs.children[1]->strValue).isND
+                        && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+                && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+                const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+                const ArrayInfo    &M   = arrayAt(name);
                 const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
                 if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                    const std::string cmp  = rhs.children[0]->strValue == "cummax" ? ">" : "<";
-                    const bool        dim2 = cmTwoArg && rhs.children[2]->numValue == 2.0;
+                    const keel::StringRef cmp  = rhs.children[0]->strValue == "cummax" ? ">" : "<";
+                    const bool            dim2 = cmTwoArg && rhs.children[2]->numValue == 2.0;
                     line("{");
                     ++indent_;
                     line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2672,7 +2673,7 @@ void Emitter::emitAssign(const ASTNode &s)
                     }
                     line(cppIdent(name) + ".assign(_numkit_m * _numkit_n, 0.0);");
                     // `first` is the line's leading element: i==0 for dim 1, j==0 for dim 2.
-                    const std::string first = dim2 ? "_numkit_j == 0" : "_numkit_i == 0";
+                    const keel::StringRef first = dim2 ? "_numkit_j == 0" : "_numkit_i == 0";
                     if (dim2) {  // dim 2: across each row -> outer over rows, inner over columns
                         open("for (std::size_t _numkit_i = 0; _numkit_i < _numkit_m; ++_numkit_i)");
                         line("double _numkit_acc = 0.0;");
@@ -2704,8 +2705,8 @@ void Emitter::emitAssign(const ASTNode &s)
         // first non-NaN seeds it). 2-arg LITERAL dim 1|2|3 only (the 1-arg default dim is the first
         // non-singleton -- ambiguous on a runtime-dim rank-3 -> stays bridged). v1: a DOUBLE rank-3
         // var distinct from dst.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
             && rhs.children.size() == 3 && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "cummax" || rhs.children[0]->strValue == "cummin")
             && rhs.children[2]->type == NodeType::NUMBER_LITERAL
@@ -2713,17 +2714,17 @@ void Emitter::emitAssign(const ASTNode &s)
                 || rhs.children[2]->numValue == 3.0)
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-            && arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 3
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            && arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const std::string cmp  = rhs.children[0]->strValue == "cummax" ? ">" : "<";
-                const int         dimv = static_cast<int>(rhs.children[2]->numValue);
-                const std::string sd = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
-                const std::string ld = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
+                const keel::StringRef cmp  = rhs.children[0]->strValue == "cummax" ? ">" : "<";
+                const int             dimv = static_cast<int>(rhs.children[2]->numValue);
+                const keel::StringRef sd   = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
+                const keel::StringRef ld   = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -2762,17 +2763,17 @@ void Emitter::emitAssign(const ASTNode &s)
         // it), so NaN is ignored mid-stream but a LEADING NaN is preserved (MATLAB
         // cummax([1 NaN 3]) = [1 1 3]; cummax([NaN 3]) = [NaN 3]). v1: a single 1-D
         // DOUBLE array var; the result a 1-D array LOCAL (push_back).
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "cummax" || rhs.children[0]->strValue == "cummin")
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &xa  = arrays_.at(rhs.children[1]->strValue);
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &xa  = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (!xa.is2D && !xa.isND && res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const std::string cmp = rhs.children[0]->strValue == "cummax" ? ">" : "<";
+                const keel::StringRef cmp = rhs.children[0]->strValue == "cummax" ? ">" : "<";
                 line("{");
                 ++indent_;
                 line(cppIdent(name) + ".clear();");
@@ -2794,19 +2795,19 @@ void Emitter::emitAssign(const ASTNode &s)
         // [4 1 2 3]); out[i] = x[((i-k) mod n + n) mod n], which is well-defined for
         // any k (negative / larger than n). dtype-general (a plain element copy).
         // v1: a 1-D array var + a scalar integer shift.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 3
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 3
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "circshift"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND) {
-            const ArrayInfo    &xa  = arrays_.at(rhs.children[1]->strValue);
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND) {
+            const ArrayInfo    &xa  = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()
                 && inferExpr(*rhs.children[2], types_, reg_, classes_).type.shape.isScalar()) {
-                const std::string k = emitExpr(*rhs.children[2]);
+                const keel::String k = emitExpr(*rhs.children[2]);
                 line("{");
                 ++indent_;
                 line("const std::ptrdiff_t _numkit_n = static_cast<std::ptrdiff_t>(" + xa.lenVar + ");");
@@ -2831,24 +2832,24 @@ void Emitter::emitAssign(const ASTNode &s)
         // 1..rank (read here; a runtime perm hits the scalar/refuse path). Runtime dims via
         // dimExpr; B a fresh rank-r ndRuntimeLocal; built into a temp so an in-place
         // A = permute(A, perm) is aliasing-safe. v1: DOUBLE A (NDims or KnownDims-2-D), rank 2-4.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
             && rhs.type == NodeType::CALL && rhs.children.size() == 3
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "permute"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[2]->type == NodeType::MATRIX_LITERAL) {
-            const ArrayInfo  &A = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo  &B = arrays_.at(name);
+            const ArrayInfo  &A = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo  &B = arrayAt(name);
             const std::size_t r = A.isND ? A.ndDims.size() : (A.is2D ? 2u : 0u);
             const ASTNode    &pn = *rhs.children[2];
             // The literal perm: a single row of r integer literals, a permutation of 1..r.
-            std::vector<std::size_t> perm;
+            keel::Array<std::size_t> perm;
             if (r >= 2 && r <= 4 && B.ndDims.size() == r && A.dtype == ValueType::DOUBLE
                 && pn.children.size() == 1 && pn.children[0]
                 && pn.children[0]->children.size() == r) {
                 bool              permOk = true;
-                std::vector<bool> seen(r, false);
+                keel::Array<bool> seen(r, false);
                 for (const auto &el : pn.children[0]->children) {
                     if (!el || el->type != NodeType::NUMBER_LITERAL
                         || el->numValue != std::floor(el->numValue) || el->numValue < 1.0
@@ -2871,25 +2872,25 @@ void Emitter::emitAssign(const ASTNode &s)
                     ++indent_;
                     line("const std::size_t _numkit_As0 = 1;");  // A column-major strides (runtime)
                     for (std::size_t d = 1; d < r; ++d)
-                        line("const std::size_t _numkit_As" + std::to_string(d) + " = _numkit_As"
-                             + std::to_string(d - 1) + " * (" + dimExpr(A, d - 1) + ");");
+                        line("const std::size_t _numkit_As" + toStr(d) + " = _numkit_As"
+                             + toStr(d - 1) + " * (" + dimExpr(A, d - 1) + ");");
                     for (std::size_t k = 0; k < r; ++k)  // B dims = A dims permuted
-                        line("const std::size_t _numkit_Bd" + std::to_string(k) + " = ("
+                        line("const std::size_t _numkit_Bd" + toStr(k) + " = ("
                              + dimExpr(A, perm[k] - 1) + ");");
                     line("const std::size_t _numkit_Bs0 = 1;");  // B strides
                     for (std::size_t k = 1; k < r; ++k)
-                        line("const std::size_t _numkit_Bs" + std::to_string(k) + " = _numkit_Bs"
-                             + std::to_string(k - 1) + " * _numkit_Bd" + std::to_string(k - 1) + ";");
-                    std::string numel = "_numkit_Bd0";
-                    for (std::size_t k = 1; k < r; ++k) numel += " * _numkit_Bd" + std::to_string(k);
+                        line("const std::size_t _numkit_Bs" + toStr(k) + " = _numkit_Bs"
+                             + toStr(k - 1) + " * _numkit_Bd" + toStr(k - 1) + ";");
+                    keel::String numel = keel::String::from("_numkit_Bd0");
+                    for (std::size_t k = 1; k < r; ++k) numel += " * _numkit_Bd" + toStr(k);
                     for (std::size_t k = 0; k < r; ++k)  // set B's dim companions (permuted)
-                        line(B.ndDims[k] + " = _numkit_Bd" + std::to_string(k) + ";");
+                        line(B.ndDims[k] + " = _numkit_Bd" + toStr(k) + ";");
                     line("std::vector<double> _numkit_out(" + numel + ");");
                     open("for (std::size_t _numkit_o = 0; _numkit_o < (" + numel + "); ++_numkit_o)");
                     line("std::size_t _numkit_af = 0;");
                     for (std::size_t k = 0; k < r; ++k)
-                        line("_numkit_af += ((_numkit_o / _numkit_Bs" + std::to_string(k) + ") % _numkit_Bd"
-                             + std::to_string(k) + ") * _numkit_As" + std::to_string(perm[k] - 1) + ";");
+                        line("_numkit_af += ((_numkit_o / _numkit_Bs" + toStr(k) + ") % _numkit_Bd"
+                             + toStr(k) + ") * _numkit_As" + toStr(perm[k] - 1) + ";");
                     line("_numkit_out[_numkit_o] = " + A.dataExpr + "[_numkit_af];");
                     close();
                     line(cppIdent(name) + ".assign(_numkit_out.begin(), _numkit_out.end());");
@@ -2908,8 +2909,8 @@ void Emitter::emitAssign(const ASTNode &s)
         // A = circshift(A, k[, dim]) is aliasing-safe. v1: a scalar shift; a LITERAL dim in
         // {1,2} (the transfer keeps a runtime / other dim Dynamic -> bridged); KnownDims-2-D
         // deferred. children: [circshift, A, k] (dim 1) or [circshift, A, k, dim].
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
             && (rhs.children.size() == 3
                 || (rhs.children.size() == 4 && rhs.children[3]->type == NodeType::NUMBER_LITERAL
                     && (rhs.children[3]->numValue == 1.0 || rhs.children[3]->numValue == 2.0)))
@@ -2917,19 +2918,19 @@ void Emitter::emitAssign(const ASTNode &s)
             && rhs.children[0]->strValue == "circshift"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &B   = arrays_.at(name);
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &B   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()
                 && inferExpr(*rhs.children[2], types_, reg_, classes_).type.shape.isScalar()) {
                 const long dimv =
                     rhs.children.size() == 4 ? static_cast<long>(rhs.children[3]->numValue) : 1;
-                const std::string ct = cppScalarType(B.dtype);
-                const std::string m = dimExpr(A, 0), n = dimExpr(A, 1);
-                const std::string k = emitExpr(*rhs.children[2]);
+                const keel::String ct = cppScalarType(B.dtype);
+                const keel::String m = dimExpr(A, 0), n = dimExpr(A, 1);
+                const keel::String k = emitExpr(*rhs.children[2]);
                 line("{");
                 ++indent_;
                 line("const std::ptrdiff_t _numkit_m = static_cast<std::ptrdiff_t>(" + m + ");");
@@ -2966,8 +2967,8 @@ void Emitter::emitAssign(const ASTNode &s)
         // A = circshift(A,k,dim) is aliasing-safe. The explicit 3-arg form only (the 2-arg default
         // dim is the first non-singleton -- ambiguous on a runtime-dim rank-3 -> bridged). v1: a
         // DOUBLE rank-3 array var, scalar k.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
             && rhs.children.size() == 4 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "circshift"
             && rhs.children[3]->type == NodeType::NUMBER_LITERAL
@@ -2975,18 +2976,18 @@ void Emitter::emitAssign(const ASTNode &s)
                 || rhs.children[3]->numValue == 3.0)
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 3
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &B   = arrays_.at(name);
+            && arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &B   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()
                 && inferExpr(*rhs.children[2], types_, reg_, classes_).type.shape.isScalar()) {
-                const int         dimv = static_cast<int>(rhs.children[3]->numValue);
-                const std::string sd = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
-                const std::string ld = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
-                const std::string k  = emitExpr(*rhs.children[2]);
+                const int             dimv = static_cast<int>(rhs.children[3]->numValue);
+                const keel::StringRef sd   = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
+                const keel::StringRef ld   = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
+                const keel::String k  = emitExpr(*rhs.children[2]);
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");
@@ -3023,19 +3024,19 @@ void Emitter::emitAssign(const ASTNode &s)
         // Edge points use one-sided differences, the interior centered: g[0]=y[1]-y[0];
         // g[i]=(y[i+1]-y[i-1])/2; g[n-1]=y[n-1]-y[n-2]; n==1 -> {0}; n==0 -> empty.
         // Exact -> every tier. v1: a single 1-D DOUBLE array var; result a 1-D LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "gradient"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &y   = arrays_.at(rhs.children[1]->strValue);
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &y   = arrayAt(rhs.children[1]->strValue);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const std::string d = y.dataExpr;
+                const keel::String &d = y.dataExpr;
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_n = " + y.lenVar + ";");
@@ -3061,17 +3062,17 @@ void Emitter::emitAssign(const ASTNode &s)
         // the operand's orientation; fliplr/flipud on an ERASED-orientation 1-D
         // buffer can't be decided -> fall through (refuse). dtype-general (a plain
         // element copy). v1: a single 1-D array VAR; the result a 1-D array LOCAL.
-        if (isArrayVar(name) && arrays_.at(name).isLocal && !arrays_.at(name).is2D
-            && !arrays_.at(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
+        if (isArrayVar(name) && arrayAt(name).isLocal && !arrayAt(name).is2D
+            && !arrayAt(name).isND && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER
             && (rhs.children[0]->strValue == "flip" || rhs.children[0]->strValue == "fliplr"
                 || rhs.children[0]->strValue == "flipud")
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue)
-            && !arrays_.at(rhs.children[1]->strValue).is2D
-            && !arrays_.at(rhs.children[1]->strValue).isND) {
-            const ArrayInfo    &xa  = arrays_.at(rhs.children[1]->strValue);
-            const std::string  &fn  = rhs.children[0]->strValue;
+            && !arrayAt(rhs.children[1]->strValue).is2D
+            && !arrayAt(rhs.children[1]->strValue).isND) {
+            const ArrayInfo    &xa  = arrayAt(rhs.children[1]->strValue);
+            const keel::String  &fn  = rhs.children[0]->strValue;
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             bool                reverse   = true;
             bool                decidable = true;
@@ -3089,7 +3090,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 line(cppIdent(name) + ".assign(" + xa.lenVar + ", " + zeroLiteral(xa.dtype) + ");");
                 open("for (std::size_t _numkit_i = 0; _numkit_i < " + xa.lenVar + "; ++_numkit_i)");
                 line(cppIdent(name) + "[_numkit_i] = " + xa.dataExpr + "["
-                     + (reverse ? (xa.lenVar + " - 1 - _numkit_i") : std::string("_numkit_i")) + "];");
+                     + (reverse ? (xa.lenVar + " - 1 - _numkit_i") : keel::String("_numkit_i")) + "];");
                 close();
                 --indent_;
                 line("}");
@@ -3111,21 +3112,21 @@ void Emitter::emitAssign(const ASTNode &s)
                 && rhs.children[0]->strValue == "flip"
                 && rhs.children[2]->type == NodeType::NUMBER_LITERAL
                 && (rhs.children[2]->numValue == 1.0 || rhs.children[2]->numValue == 2.0);
-            if (isArrayVar(name) && arrays_.at(name).isLocal
-                && (arrays_.at(name).is2D
-                    || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+            if (isArrayVar(name) && arrayAt(name).isLocal
+                && (arrayAt(name).is2D
+                    || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
                 && rhs.type == NodeType::CALL && (rhs.children.size() == 2 || flipTwoArg)
                 && rhs.children[0]->type == NodeType::IDENTIFIER
                 && (rhs.children[0]->strValue == "flip" || rhs.children[0]->strValue == "fliplr"
                     || rhs.children[0]->strValue == "flipud")
                 && rhs.children[1]->type == NodeType::IDENTIFIER
                 && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-                && (arrays_.at(rhs.children[1]->strValue).is2D
-                    || (arrays_.at(rhs.children[1]->strValue).isND
-                        && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
-            const std::string  &fn  = rhs.children[0]->strValue;
+                && (arrayAt(rhs.children[1]->strValue).is2D
+                    || (arrayAt(rhs.children[1]->strValue).isND
+                        && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
+            const keel::String  &fn  = rhs.children[0]->strValue;
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete()) {
                 const bool flipRows = flipTwoArg ? (rhs.children[2]->numValue == 1.0)
@@ -3163,25 +3164,25 @@ void Emitter::emitAssign(const ASTNode &s)
         // runtime-dim rank-3 ndRuntimeLocal dest. v1: a DOUBLE rank-3 var distinct from the dest.
         // (1-arg flip(A) on a rank-3 stays bridged -- first-non-singleton-dim ambiguity.)
         {
-            const std::string fn = (rhs.type == NodeType::CALL && !rhs.children.empty()
-                                    && rhs.children[0]->type == NodeType::IDENTIFIER)
-                                       ? rhs.children[0]->strValue
-                                       : std::string();
+            const keel::StringRef fn = (rhs.type == NodeType::CALL && !rhs.children.empty()
+                                        && rhs.children[0]->type == NodeType::IDENTIFIER)
+                                           ? rhs.children[0]->strValue.as_ref()
+                                           : keel::StringRef();
             const bool flip3 = rhs.type == NodeType::CALL && rhs.children.size() == 3 && fn == "flip"
                                && rhs.children[2]->type == NodeType::NUMBER_LITERAL
                                && (rhs.children[2]->numValue == 1.0 || rhs.children[2]->numValue == 2.0
                                    || rhs.children[2]->numValue == 3.0);
             const bool lr2 = rhs.type == NodeType::CALL && rhs.children.size() == 2 && fn == "fliplr";
             const bool ud2 = rhs.type == NodeType::CALL && rhs.children.size() == 2 && fn == "flipud";
-            if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-                && arrays_.at(name).ndDims.size() == 3 && (flip3 || lr2 || ud2)
+            if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+                && arrayAt(name).ndDims.size() == 3 && (flip3 || lr2 || ud2)
                 && rhs.children[1]->type == NodeType::IDENTIFIER
                 && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-                && arrays_.at(rhs.children[1]->strValue).isND
-                && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 3
-                && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+                && arrayAt(rhs.children[1]->strValue).isND
+                && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
+                && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 const int d = flip3 ? static_cast<int>(rhs.children[2]->numValue)
@@ -3195,9 +3196,9 @@ void Emitter::emitAssign(const ASTNode &s)
                 line(M.ndDims[1] + " = _numkit_n;");
                 line(M.ndDims[2] + " = _numkit_p;");
                 line(cppIdent(name) + ".assign(_numkit_m * _numkit_n * _numkit_p, 0.0);");
-                const std::string ip = d == 1 ? "(_numkit_m - 1 - _numkit_i)" : "_numkit_i";
-                const std::string jp = d == 2 ? "(_numkit_n - 1 - _numkit_j)" : "_numkit_j";
-                const std::string kp = d == 3 ? "(_numkit_p - 1 - _numkit_k)" : "_numkit_k";
+                const keel::StringRef ip = d == 1 ? "(_numkit_m - 1 - _numkit_i)" : "_numkit_i";
+                const keel::StringRef jp = d == 2 ? "(_numkit_n - 1 - _numkit_j)" : "_numkit_j";
+                const keel::StringRef kp = d == 3 ? "(_numkit_p - 1 - _numkit_k)" : "_numkit_k";
                 open("for (std::size_t _numkit_k = 0; _numkit_k < _numkit_p; ++_numkit_k)");
                 open("for (std::size_t _numkit_j = 0; _numkit_j < _numkit_n; ++_numkit_j)");
                 open("for (std::size_t _numkit_i = 0; _numkit_i < _numkit_m; ++_numkit_i)");
@@ -3218,21 +3219,21 @@ void Emitter::emitAssign(const ASTNode &s)
         // 2 = 180 (m x n, B[i+j*m]=A[(m-1-i)+(n-1-j)*m]); 3 = 270 CCW / 90 CW (n x m, B[i+j*n]=
         // A[(m-1-j)+i*m]). Column-major, both tiers via dimExpr; a runtime dst gets its companions
         // set. v1: a DOUBLE matrix var distinct from the dest. (Placed before the 1-arg form.)
-        if (isArrayVar(name) && arrays_.at(name).isLocal
-            && (arrays_.at(name).is2D
-                || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+        if (isArrayVar(name) && arrayAt(name).isLocal
+            && (arrayAt(name).is2D
+                || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
             && rhs.type == NodeType::CALL && rhs.children.size() == 3
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "rot90"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
             && rhs.children[1]->strValue != name
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
             && rhs.children[2]->type == NodeType::NUMBER_LITERAL
             && rhs.children[2]->numValue >= 0.0) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 const int  k    = static_cast<int>(rhs.children[2]->numValue) % 4;
@@ -3242,15 +3243,15 @@ void Emitter::emitAssign(const ASTNode &s)
                 line("const std::size_t _numkit_m = " + dimExpr(A, 0) + ";");  // A rows
                 line("const std::size_t _numkit_n = " + dimExpr(A, 1) + ";");  // A cols
                 // result rows R / cols C: swapped (n x m) for 90/270, else m x n
-                const std::string R = swap ? "_numkit_n" : "_numkit_m";
-                const std::string C = swap ? "_numkit_m" : "_numkit_n";
+                const keel::StringRef R = swap ? "_numkit_n" : "_numkit_m";
+                const keel::StringRef C = swap ? "_numkit_m" : "_numkit_n";
                 if (M.isND && M.ndDims.size() == 2) {
                     line(M.ndDims[0] + " = " + R + ";");
                     line(M.ndDims[1] + " = " + C + ";");
                 }
                 line(cppIdent(name) + ".assign(" + R + " * " + C + ", 0.0);");
                 // srcIdx into A (column-major, A is m x n) for result element (i, j):
-                std::string srcIdx;
+                keel::StringRef srcIdx;
                 if (k == 0)
                     srcIdx = "_numkit_i + _numkit_j * _numkit_m";
                 else if (k == 1)
@@ -3275,19 +3276,19 @@ void Emitter::emitAssign(const ASTNode &s)
         // tiers via dimExpr; a runtime dst gets its companions set (rows=n, cols=m). v1: the
         // 1-arg form, a DOUBLE matrix var distinct from the dest. (rot90(A,k) / vector rot90
         // stay bridged.)
-        if (isArrayVar(name) && arrays_.at(name).isLocal
-            && (arrays_.at(name).is2D
-                || (arrays_.at(name).isND && arrays_.at(name).ndDims.size() == 2))
+        if (isArrayVar(name) && arrayAt(name).isLocal
+            && (arrayAt(name).is2D
+                || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
             && rhs.type == NodeType::CALL && rhs.children.size() == 2
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "rot90"
             && rhs.children[1]->type == NodeType::IDENTIFIER
             && isArrayVar(rhs.children[1]->strValue) && rhs.children[1]->strValue != name
-            && (arrays_.at(rhs.children[1]->strValue).is2D
-                || (arrays_.at(rhs.children[1]->strValue).isND
-                    && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 2))
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            && (arrayAt(rhs.children[1]->strValue).is2D
+                || (arrayAt(rhs.children[1]->strValue).isND
+                    && arrayAt(rhs.children[1]->strValue).ndDims.size() == 2))
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete()) {
                 line("{");
@@ -3316,16 +3317,16 @@ void Emitter::emitAssign(const ASTNode &s)
         // (equal page size m*n): B[base + i + j*n] = A[base + j + (n-1-i)*m], base = k*m*n. A
         // runtime-dim rank-3 ndRuntimeLocal dest. v1: the 1-arg form, a DOUBLE rank-3 var distinct
         // from the dest. (rot90(A,k) stays bridged.)
-        if (isArrayVar(name) && arrays_.at(name).isLocal && arrays_.at(name).ndRuntimeLocal
-            && arrays_.at(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
+        if (isArrayVar(name) && arrayAt(name).isLocal && arrayAt(name).ndRuntimeLocal
+            && arrayAt(name).ndDims.size() == 3 && rhs.type == NodeType::CALL
             && rhs.children.size() == 2 && rhs.children[0]->type == NodeType::IDENTIFIER
             && rhs.children[0]->strValue == "rot90"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
-            && rhs.children[1]->strValue != name && arrays_.at(rhs.children[1]->strValue).isND
-            && arrays_.at(rhs.children[1]->strValue).ndDims.size() == 3
-            && arrays_.at(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
-            const ArrayInfo    &A   = arrays_.at(rhs.children[1]->strValue);
-            const ArrayInfo    &M   = arrays_.at(name);
+            && rhs.children[1]->strValue != name && arrayAt(rhs.children[1]->strValue).isND
+            && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
+            && arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE) {
+            const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
+            const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 line("{");
@@ -3365,13 +3366,13 @@ void Emitter::emitAssign(const ASTNode &s)
         // only its field-arrays exist -> matched before inferring the base / structFieldLocal.
         if (lhs.children[0]->type == NodeType::CALL && lhs.children[0]->children.size() == 2
             && lhs.children[0]->children[0]->type == NodeType::IDENTIFIER) {
-            const std::string sv  = lhs.children[0]->children[0]->strValue;
-            const std::string fld = "_numkit_fld_" + sv + "_" + lhs.strValue;
-            if (isArrayVar(fld) && !types_.has(sv) && arrays_.at(fld).isLocal
-                && !arrays_.at(fld).is2D && !arrays_.at(fld).isND) {
-                const ArrayInfo &fa = arrays_.at(fld);
-                endStack_.push_back(fa.lenVar);
-                const std::string idx = emitExpr(*lhs.children[0]->children[1]);
+            const keel::String &sv  = lhs.children[0]->children[0]->strValue;
+            const keel::String  fld = "_numkit_fld_" + sv + "_" + lhs.strValue;
+            if (isArrayVar(fld) && !types_.has(sv) && arrayAt(fld).isLocal
+                && !arrayAt(fld).is2D && !arrayAt(fld).isND) {
+                const ArrayInfo &fa = arrayAt(fld);
+                endStack_.push_back(fa.lenVar.clone());
+                const keel::String idx = emitExpr(*lhs.children[0]->children[1]);
                 endStack_.pop_back();
                 line("numkit_rt::index_set_grow(" + fld + ", " + idx + ", " + emitExpr(rhs) + ");");
                 return;
@@ -3395,9 +3396,9 @@ void Emitter::emitAssign(const ASTNode &s)
         emitIndexWrite(lhs, rhs);
         if (lhs.children[0]->type == NodeType::FIELD_ACCESS
             || lhs.children[0]->type == NodeType::DYNAMIC_FIELD_ACCESS) {
-            const std::string fld = resolveArrayVar(*lhs.children[0]);
+            const keel::String fld = resolveArrayVar(*lhs.children[0]);
             if (!fld.empty()) {
-                const ArrayInfo &ai = arrays_.at(fld);
+                const ArrayInfo &ai = arrayAt(fld);
                 const InferredType ft =
                     types_.has(fld) ? types_.get(fld).type
                                     : InferredType::concrete(ai.dtype, Shape::rowVector());
@@ -3415,8 +3416,8 @@ void Emitter::emitAssign(const ASTNode &s)
     if (lhs.type == NodeType::CELL_INDEX && !lhs.children.empty()
         && lhs.children[0]->type == NodeType::IDENTIFIER
         && (types_.has(lhs.children[0]->strValue)
-            || dynamicLocals_.count(lhs.children[0]->strValue))
-        && (dynamicLocals_.count(lhs.children[0]->strValue)
+            || dynamicLocals_.contains(lhs.children[0]->strValue))
+        && (dynamicLocals_.contains(lhs.children[0]->strValue)
             || inferExpr(*lhs.children[0], types_, reg_, classes_).type.isDynamic())) {
         const std::size_t nsub = lhs.children.size() - 1;
         if (nsub != 1 && nsub != 2)
@@ -3424,7 +3425,7 @@ void Emitter::emitAssign(const ASTNode &s)
         for (std::size_t k = 1; k <= nsub; ++k)
             if (!isUnboxableScalarType(inferExpr(*lhs.children[k], types_, reg_, classes_).type))
                 unsupported("Dynamic tier: cell content store index must be unboxed scalar(s) (v1)");
-        const std::string cvar = cppIdent(lhs.children[0]->strValue);
+        const keel::String cvar = cppIdent(lhs.children[0]->strValue);
         if (nsub == 1)
             line("numkit_rt::cell_set(" + cvar + ", " + emitExpr(*lhs.children[1]) + ", "
                  + emitDynamicExpr(rhs) + ");");

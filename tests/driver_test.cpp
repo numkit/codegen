@@ -85,7 +85,7 @@ TEST(Driver, BridgeOptionEmitsBridgedCall)
 {
     BridgeOptions b;
     b.enabled       = true;
-    b.runtimeHeader = "numkit_codegen_rt.h";
+    b.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction em = driver::transpileSource(
         "function y = f(x)\n  y = gamma(x);\nend\n", "", driver::parseTypeSpec("double"), b);
     EXPECT_NE(em.source.find("numkit_rt::bridge_scalar(\"gamma\""), std::string::npos);
@@ -93,7 +93,7 @@ TEST(Driver, BridgeOptionEmitsBridgedCall)
 
 TEST(Driver, TranspileToPluginEmitsRegisterHook)
 {
-    const std::string tu = driver::transpileToPlugin(
+    const keel::String tu = driver::transpileToPlugin(
         "function s = mysum(v)\n  n = numel(v);\n  s = 0;\n"
         "  for k = 1:n\n    s = s + v(k);\n  end\nend\n",
         "", driver::parseTypeSpec("double[]"), "my_sum", "numkit_plugin.h");
@@ -145,7 +145,7 @@ TEST(Driver, TranspileBridgedScriptWithMatrixAndRuntimeCalls)
 {
     BridgeOptions b;
     b.enabled       = true;
-    b.runtimeHeader = "numkit_codegen_rt.h";
+    b.runtimeHeader = keel::String::from("numkit_codegen_rt.h");
     const EmittedFunction em = driver::transpileSource(
         "A = [1 2; 3 4];\n"
         "B = A * A;\n"

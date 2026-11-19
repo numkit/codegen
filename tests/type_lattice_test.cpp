@@ -194,9 +194,10 @@ TEST(ConstLattice, DrivesShapeFromValue)
 // lookup + a readable str, and is never an unboxable scalar.
 TEST(TypeLattice, StructLayoutBasics)
 {
-    auto lay = std::make_shared<StructLayout>();
-    lay->fields = {{"a", InferredType::scalar(ValueType::DOUBLE)},
-                   {"b", InferredType::concrete(ValueType::DOUBLE, Shape::dims(1, 3))}};
+    auto lay = keel::make_arc<StructLayout>();
+    lay->fields.push_back(StructField("a", InferredType::scalar(ValueType::DOUBLE)));
+    lay->fields.push_back(
+        StructField("b", InferredType::concrete(ValueType::DOUBLE, Shape::dims(1, 3))));
     const InferredType s = InferredType::structOf(lay);
 
     EXPECT_TRUE(s.isStruct());
@@ -215,8 +216,10 @@ TEST(TypeLattice, StructLayoutBasics)
 TEST(TypeLattice, StructEqualityAndJoin)
 {
     auto mk = [](std::vector<std::pair<std::string, InferredType>> f) {
-        auto l    = std::make_shared<StructLayout>();
-        l->fields = std::move(f);
+        auto l = keel::make_arc<StructLayout>();
+        for (auto &kv : f) {
+            l->fields.push_back(StructField(kv.first, std::move(kv.second)));
+        }
         return InferredType::structOf(l);
     };
     const InferredType s1 = mk({{"a", InferredType::scalar(ValueType::DOUBLE)}});
@@ -242,10 +245,10 @@ TEST(TypeLattice, StructEqualityAndJoin)
 // A struct field may itself be a struct (nested s.a.b); equality recurses through it.
 TEST(TypeLattice, NestedStruct)
 {
-    auto inner    = std::make_shared<StructLayout>();
-    inner->fields = {{"b", InferredType::scalar(ValueType::DOUBLE)}};
-    auto outer    = std::make_shared<StructLayout>();
-    outer->fields = {{"a", InferredType::structOf(inner)}};
+    auto inner = keel::make_arc<StructLayout>();
+    inner->fields.push_back(StructField("b", InferredType::scalar(ValueType::DOUBLE)));
+    auto outer = keel::make_arc<StructLayout>();
+    outer->fields.push_back(StructField("a", InferredType::structOf(inner)));
     const InferredType s = InferredType::structOf(outer);
 
     ASSERT_NE(s.structLayout->field("a"), nullptr);

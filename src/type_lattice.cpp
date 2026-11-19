@@ -4,8 +4,9 @@
 
 #include <numkit/codegen/type_lattice.hpp>
 
+#include <keel/format.h>
+
 #include <cmath>
-#include <sstream>
 
 namespace numkit::codegen {
 
@@ -13,7 +14,7 @@ bool Shape::operator==(const Shape &o) const
 {
     if (kind != o.kind) return false;
     if (kind == ShapeKind::KnownDims) return rows == o.rows && cols == o.cols;
-    if (kind == ShapeKind::NDims) return nd == o.nd;
+    if (kind == ShapeKind::NDims) return nd.as_ref() == o.nd.as_ref();
     return true;  // Unknown == Unknown, Scalar == Scalar
 }
 
@@ -27,9 +28,9 @@ Shape joinShape(const Shape &a, const Shape &b)
     // NDims vs a different kind, we cannot prove away -> Unknown.
     if (a.kind == ShapeKind::NDims && b.kind == ShapeKind::NDims
         && a.nd.size() == b.nd.size()) {
-        std::vector<std::size_t> d(a.nd.size());
-        for (std::size_t i = 0; i < d.size(); ++i) d[i] = (a.nd[i] == b.nd[i]) ? a.nd[i] : 0;
-        return Shape::ndShape(std::move(d));
+        keel::Array<keel::usize> d(a.nd.size());
+        for (keel::usize i = 0; i < d.size(); ++i) d[i] = (a.nd[i] == b.nd[i]) ? a.nd[i] : 0;
+        return Shape::ndShape(d);
     }
     // Two provably 1-D vector shapes preserve 1-D rank: same orientation joins to
     // RowVector / ColVector; differing or erased orientation joins to Vector1D.
@@ -81,7 +82,7 @@ bool InferredType::isUnboxableScalar() const
     }
 }
 
-const InferredType *StructLayout::field(const std::string &name) const
+const InferredType *StructLayout::field(keel::StringRef name) const
 {
     for (const auto &f : fields)
         if (f.first == name) return &f.second;
@@ -91,7 +92,7 @@ const InferredType *StructLayout::field(const std::string &name) const
 bool StructLayout::operator==(const StructLayout &o) const
 {
     if (fields.size() != o.fields.size()) return false;
-    for (std::size_t i = 0; i < fields.size(); ++i)
+    for (keel::usize i = 0; i < fields.size(); ++i)
         if (fields[i].first != o.fields[i].first || fields[i].second != o.fields[i].second)
             return false;  // InferredType::!= recurses into nested struct layouts
     return true;
@@ -99,10 +100,10 @@ bool StructLayout::operator==(const StructLayout &o) const
 
 // Equality of two (possibly null) shared struct layouts: same pointer (incl. both null)
 // is equal; one null is unequal; otherwise a deep field-by-field compare.
-static bool structLayoutEq(const std::shared_ptr<const StructLayout> &a,
-                           const std::shared_ptr<const StructLayout> &b)
+static bool structLayoutEq(const keel::Arc<const StructLayout> &a,
+                           const keel::Arc<const StructLayout> &b)
 {
-    if (a == b) return true;
+    if (a.get() == b.get()) return true;
     if (!a || !b) return false;
     return *a == *b;
 }
@@ -143,8 +144,8 @@ InferredType join(const InferredType &a, const InferredType &b)
     // is still present (the field-locals are function-scoped). Identical layouts short-circuit.
     if (a.dtype == ValueType::STRUCT) {
         if (structLayoutEq(a.structLayout, b.structLayout)) return a;
-        auto merged = std::make_shared<StructLayout>();
-        if (a.structLayout) merged->fields = a.structLayout->fields;
+        auto merged = keel::make_arc<StructLayout>();
+        if (a.structLayout) merged->fields = a.structLayout->fields.clone();
         if (b.structLayout)
             for (const auto &bf : b.structLayout->fields) {
                 bool found = false;
@@ -154,67 +155,69 @@ InferredType join(const InferredType &a, const InferredType &b)
                         found     = true;
                         break;
                     }
-                if (!found) merged->fields.push_back(bf);
+                if (!found) merged->fields.push_back(bf.clone());
             }
-        return InferredType::structOf(std::move(merged));
+        return InferredType::structOf(keel::move(merged));
     }
     return InferredType::concrete(a.dtype, joinShape(a.shape, b.shape));
 }
 
-std::string InferredType::str() const
+keel::String InferredType::str() const
 {
     switch (kind) {
-        case TypeKind::Bottom:  return "bottom";
-        case TypeKind::Dynamic: return "dynamic";
+        case TypeKind::Bottom:  return keel::String::from("bottom");
+        case TypeKind::Dynamic: return keel::String::from("dynamic");
         case TypeKind::Concrete: {
-            std::ostringstream os;
+            keel::String os;
             if (dtype == ValueType::OBJECT) {
-                os << "object#" << classId;
-                return os.str();
+                keel::format_into(os, "object#{}", classId);
+                return os;
             }
             if (dtype == ValueType::STRUCT) {
-                os << "struct{";
+                os.append("struct{");
                 if (structLayout)
-                    for (std::size_t i = 0; i < structLayout->fields.size(); ++i) {
-                        if (i) os << ',';
-                        os << structLayout->fields[i].first;
+                    for (keel::usize i = 0; i < structLayout->fields.size(); ++i) {
+                        if (i) os.push_back(',');
+                        os.append(structLayout->fields[i].first.as_ref());
                     }
-                os << '}';
-                return os.str();
+                os.push_back('}');
+                return os;
             }
-            os << mtypeName(dtype);
+            os.append(mtypeName(dtype));
             switch (shape.kind) {
-                case ShapeKind::Scalar:    os << " scalar"; break;
-                case ShapeKind::RowVector: os << " 1x?"; break;
-                case ShapeKind::ColVector: os << " ?x1"; break;
-                case ShapeKind::Vector1D:  os << " vec1d"; break;
-                case ShapeKind::KnownDims: os << ' ' << shape.rows << 'x' << shape.cols; break;
+                case ShapeKind::Scalar:    os.append(" scalar"); break;
+                case ShapeKind::RowVector: os.append(" 1x?"); break;
+                case ShapeKind::ColVector: os.append(" ?x1"); break;
+                case ShapeKind::Vector1D:  os.append(" vec1d"); break;
+                case ShapeKind::KnownDims:
+                    keel::format_into(os, " {}x{}", shape.rows, shape.cols);
+                    break;
                 case ShapeKind::NDims:
-                    os << ' ';
-                    for (std::size_t i = 0; i < shape.nd.size(); ++i) {
-                        if (i) os << 'x';
-                        if (shape.nd[i] == 0) os << '?';
-                        else os << shape.nd[i];
+                    os.push_back(' ');
+                    for (keel::usize i = 0; i < shape.nd.size(); ++i) {
+                        if (i) os.push_back('x');
+                        if (shape.nd[i] == 0) os.push_back('?');
+                        else keel::format_into(os, "{}", shape.nd[i]);
                     }
                     break;
-                case ShapeKind::Unknown:   os << " [?]"; break;
+                case ShapeKind::Unknown:   os.append(" [?]"); break;
             }
-            return os.str();
+            return os;
         }
     }
-    return "?";
+    return keel::String::from("?");
 }
 
 // ── ConstVal ──────────────────────────────────────────────────────────
 
-bool ConstVal::asDim(std::size_t &out) const
+bool ConstVal::asDim(keel::usize &out) const
 {
     if (kind != ConstKind::KnownReal) return false;
     // A valid dimension is a non-negative integer (finite) value.
     if (!std::isfinite(value) || value < 0.0) return false;
     const double r = std::floor(value);
     if (r != value) return false;  // non-integral
-    out = static_cast<std::size_t>(r);
+    out = static_cast<keel::usize>(r);
     return true;
 }
 
@@ -234,12 +237,10 @@ ConstVal join(const ConstVal &a, const ConstVal &b)
     return ConstVal::unknown();                          // disagree → top
 }
 
-std::string ConstVal::str() const
+keel::String ConstVal::str() const
 {
-    if (kind != ConstKind::KnownReal) return "?";
-    std::ostringstream os;
-    os << value;
-    return os.str();
+    if (kind != ConstKind::KnownReal) return keel::String::from("?");
+    return keel::format("%g", value);
 }
 
 } // namespace numkit::codegen

@@ -18,7 +18,7 @@ using namespace numkit::codegen;
 namespace {
 
 // Parse "__e = (<expr>);" and emit the right-hand side expression.
-std::string emit(const std::string &expr)
+keel::String emit(const std::string &expr)
 {
     numkit::Lexer  lex("__e = (" + expr + ");");
     auto           toks = lex.tokenize();
@@ -28,9 +28,9 @@ std::string emit(const std::string &expr)
     return emitScalarExpr(*assign.children[1]);               // rhs
 }
 
-bool contains(const std::string &hay, const std::string &needle)
+bool contains(keel::StringRef hay, keel::StringRef needle)
 {
-    return hay.find(needle) != std::string::npos;
+    return hay.find(needle) != keel::StringRef::npos;
 }
 
 // Parse `src` and return the first FUNCTION_DEF (kept alive via `root`).
@@ -157,14 +157,14 @@ TEST(EmitterFn, DeclTypesBiquad)
     const DeclTypeMap dt = computeDeclTypes(*fn->children[0], entry, reg);
 
     // y is the double output array; the loop carries scalar doubles.
-    ASSERT_TRUE(dt.count("y"));
-    EXPECT_TRUE(dt.at("y").isConcrete());
-    EXPECT_EQ(dt.at("y").dtype, ValueType::DOUBLE);
-    EXPECT_FALSE(dt.at("y").shape.isScalar());
+    ASSERT_TRUE(dt.contains("y"));
+    EXPECT_TRUE(dt.get("y")->isConcrete());
+    EXPECT_EQ(dt.get("y")->dtype, ValueType::DOUBLE);
+    EXPECT_FALSE(dt.get("y")->shape.isScalar());
     for (const char *v : {"n", "k", "x1", "x2", "y1", "y2", "xn", "yn"}) {
-        ASSERT_TRUE(dt.count(v)) << v;
-        EXPECT_TRUE(dt.at(v).isUnboxableScalar()) << v;
-        EXPECT_EQ(dt.at(v).dtype, ValueType::DOUBLE) << v;
+        ASSERT_TRUE(dt.contains(v)) << v;
+        EXPECT_TRUE(dt.get(v)->isUnboxableScalar()) << v;
+        EXPECT_EQ(dt.get(v)->dtype, ValueType::DOUBLE) << v;
     }
 }
 
@@ -244,7 +244,7 @@ TEST(EmitterFn, ComplexElementwise)
     numkit::ASTNodePtr     root;
     const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = x .* 2;\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {{"x", cxrow}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"x", cxrow}}, reg).source;
     EXPECT_TRUE(contains(s, "const std::complex<double>* x"));            // complex buffer param
     EXPECT_TRUE(contains(s, "std::complex<double>* __restrict y"));       // complex out-param
     EXPECT_TRUE(contains(s, "y[_numkit_i] = (x[_numkit_i] * 2.0);"));             // std::complex fill loop
@@ -261,7 +261,7 @@ TEST(EmitterFn, ComplexMatrixAndND)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn  = findFunc("function y = f(A)\n  y = A(1,2);\nend\n", root);
         const InferredType     mat = InferredType::concrete(ValueType::COMPLEX, Shape::dims(2, 3));
-        const std::string      s   = emitFunction(*fn, {{"A", mat}}, reg).source;
+        const keel::String      s   = emitFunction(*fn, {{"A", mat}}, reg).source;
         EXPECT_TRUE(contains(s, "const std::complex<double>* A"));
         EXPECT_TRUE(contains(s, "numkit_rt::index2(A,"));
     }
@@ -270,7 +270,7 @@ TEST(EmitterFn, ComplexMatrixAndND)
         const numkit::ASTNode *fn = findFunc("function y = f(A)\n  y = A(1,1,1);\nend\n", root);
         const InferredType     nd =
             InferredType::concrete(ValueType::COMPLEX, numkit::codegen::Shape::ndShape({2, 2, 2}));
-        const std::string s = emitFunction(*fn, {{"A", nd}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"A", nd}}, reg).source;
         EXPECT_TRUE(contains(s, "const std::complex<double>* A"));
         EXPECT_TRUE(contains(s, "numkit_rt::indexN(A,"));
     }
@@ -287,7 +287,7 @@ TEST(EmitterFn, VectorTranspose)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = x.';\nend\n", root);
         ASSERT_NE(fn, nullptr);
-        const std::string s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
         EXPECT_TRUE(contains(s, "y[_numkit_i] = x[_numkit_i];"));
     }
     {  // complex ' : conjugating copy
@@ -295,7 +295,7 @@ TEST(EmitterFn, VectorTranspose)
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = x';\nend\n", root);
         const InferredType     cxrow =
             InferredType::concrete(ValueType::COMPLEX, Shape::rowVector());
-        const std::string s = emitFunction(*fn, {{"x", cxrow}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"x", cxrow}}, reg).source;
         EXPECT_TRUE(contains(s, "y[_numkit_i] = std::conj(x[_numkit_i]);"));
     }
     {  // complex .' : NON-conjugating copy (plain transpose)
@@ -303,13 +303,13 @@ TEST(EmitterFn, VectorTranspose)
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = x.';\nend\n", root);
         const InferredType     cxrow =
             InferredType::concrete(ValueType::COMPLEX, Shape::rowVector());
-        const std::string s = emitFunction(*fn, {{"x", cxrow}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"x", cxrow}}, reg).source;
         EXPECT_TRUE(contains(s, "y[_numkit_i] = x[_numkit_i];"));
     }
     {  // scalar ctranspose of a complex scalar -> std::conj, no loop
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = x';\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"x", InferredType::scalar(ValueType::COMPLEX)}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"x", InferredType::scalar(ValueType::COMPLEX)}}, reg).source;
         EXPECT_TRUE(contains(s, "std::conj(x)"));
     }
     {  // N-D transpose is refused (undefined in MATLAB; explicit boundary)
@@ -330,7 +330,7 @@ TEST(EmitterFn, MatrixTranspose)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn  = findFunc("function y = f(A)\n  y = A.';\nend\n", root);
         const InferredType     mat = InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3));
-        const std::string      s   = emitFunction(*fn, {{"A", mat}}, reg).source;
+        const keel::String      s   = emitFunction(*fn, {{"A", mat}}, reg).source;
         // y is 3x2 (its rows companion = 3); reads A column-major with A's rows = 2.
         EXPECT_TRUE(contains(s, "[_numkit_i + _numkit_j * _numkit_y_rows] = A[_numkit_j + _numkit_i * _numkit_A_rows];"));
     }
@@ -338,7 +338,7 @@ TEST(EmitterFn, MatrixTranspose)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn  = findFunc("function y = f(A)\n  y = A';\nend\n", root);
         const InferredType     mat = InferredType::concrete(ValueType::COMPLEX, Shape::dims(2, 3));
-        const std::string      s   = emitFunction(*fn, {{"A", mat}}, reg).source;
+        const keel::String      s   = emitFunction(*fn, {{"A", mat}}, reg).source;
         EXPECT_TRUE(contains(s, "= std::conj(A[_numkit_j + _numkit_i * _numkit_A_rows]);"));
     }
 }
@@ -353,7 +353,7 @@ TEST(EmitterFn, MatrixProduct)
     ASSERT_NE(fn, nullptr);
     const InferredType A = InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3));
     const InferredType B = InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 2));
-    const std::string  s = emitFunction(*fn, {{"A", A}, {"B", B}}, reg).source;
+    const keel::String  s = emitFunction(*fn, {{"A", A}, {"B", B}}, reg).source;
     EXPECT_TRUE(contains(s, "if (_numkit_A_cols != _numkit_B_rows)"));  // shared-dim guard
     EXPECT_TRUE(contains(
         s, "_numkit_acc += A[_numkit_i + _numkit_l * _numkit_A_rows] * B[_numkit_l + _numkit_j * _numkit_B_rows];"));
@@ -373,7 +373,7 @@ TEST(EmitterFn, MatrixProductViaOpsKernel)
     const InferredType      A = InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3));
     const InferredType      B = InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 2));
     const OpsKernelOptions  ops{true};
-    const std::string       s = emitFunction(*fn, {{"A", A}, {"B", B}}, reg, nullptr, {}, ops).source;
+    const keel::String       s = emitFunction(*fn, {{"A", A}, {"B", B}}, reg, nullptr, {}, ops).source;
     EXPECT_TRUE(contains(s, "#include <numkit/ops/kernels.hpp>"));
     EXPECT_TRUE(contains(
         s, "numkit::ops::matmulDouble(A, B, C, _numkit_C_rows, _numkit_C_cols, _numkit_A_cols);"));
@@ -392,13 +392,13 @@ TEST(EmitterFn, MatrixProductComplexViaOpsKernel)
     const InferredType     B = InferredType::concrete(ValueType::COMPLEX, Shape::dims(3, 2));
     {  // ops kernels on -> matmulComplex (not matmulDouble, not inline)
         const OpsKernelOptions ops{true};
-        const std::string s = emitFunction(*fn, {{"A", A}, {"B", B}}, reg, nullptr, {}, ops).source;
+        const keel::String s = emitFunction(*fn, {{"A", A}, {"B", B}}, reg, nullptr, {}, ops).source;
         EXPECT_TRUE(contains(s, "numkit::ops::matmulComplex("));
         EXPECT_FALSE(contains(s, "matmulDouble"));
         EXPECT_FALSE(contains(s, "_numkit_acc +="));
     }
     {  // default (ops off) -> inline complex loop
-        const std::string s = emitFunction(*fn, {{"A", A}, {"B", B}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"A", A}, {"B", B}}, reg).source;
         EXPECT_FALSE(contains(s, "numkit::ops::"));
         EXPECT_TRUE(contains(s, "_numkit_acc +="));
     }
@@ -416,20 +416,20 @@ TEST(EmitterFn, ElementwiseBinaryViaOpsKernel)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function z = f(x, y)\n  z = x + y;\nend\n", root);
         ASSERT_NE(fn, nullptr);
-        const std::string s = emitFunction(*fn, {{"x", row}, {"y", row}}, reg, nullptr, {}, ops).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}, {"y", row}}, reg, nullptr, {}, ops).source;
         EXPECT_TRUE(contains(s, "numkit::ops::plusDouble(x, y, z, "));
         EXPECT_FALSE(contains(s, "z[_numkit_i] = (x[_numkit_i] + y[_numkit_i])"));  // NOT the inline loop
     }
     {  // z = x .* y -> ops::timesDouble
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function z = f(x, y)\n  z = x .* y;\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"x", row}, {"y", row}}, reg, nullptr, {}, ops).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}, {"y", row}}, reg, nullptr, {}, ops).source;
         EXPECT_TRUE(contains(s, "numkit::ops::timesDouble(x, y, z, "));
     }
     {  // z = x .* 2 (scalar operand) -> no two-array kernel -> inline
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function z = f(x)\n  z = x .* 2;\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"x", row}}, reg, nullptr, {}, ops).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}}, reg, nullptr, {}, ops).source;
         EXPECT_FALSE(contains(s, "numkit::ops::"));
         EXPECT_TRUE(contains(s, "z[_numkit_i] = (x[_numkit_i] * 2.0);"));
     }
@@ -448,27 +448,27 @@ TEST(EmitterFn, TranscendentalViaOpsKernel)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = sin(x);\nend\n", root);
         ASSERT_NE(fn, nullptr);
-        const std::string s = emitFunction(*fn, {{"x", row}}, reg, nullptr, {}, ops).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}}, reg, nullptr, {}, ops).source;
         EXPECT_TRUE(contains(s, "numkit::ops::sinDouble(x, y, "));
         EXPECT_FALSE(contains(s, "std::sin"));
     }
     {  // exp(x) + ops -> ops::expDouble
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = exp(x);\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"x", row}}, reg, nullptr, {}, ops).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}}, reg, nullptr, {}, ops).source;
         EXPECT_TRUE(contains(s, "numkit::ops::expDouble(x, y, "));
     }
     {  // default (ops off) -> inline std::sin
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = sin(x);\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"x", row}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}}, reg).source;
         EXPECT_FALSE(contains(s, "numkit::ops::"));
         EXPECT_TRUE(contains(s, "std::sin(x[_numkit_i])"));
     }
     {  // floor(x): no SIMD transcendental kernel -> inline even with ops on
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = floor(x);\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"x", row}}, reg, nullptr, {}, ops).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}}, reg, nullptr, {}, ops).source;
         EXPECT_FALSE(contains(s, "numkit::ops::"));
         EXPECT_TRUE(contains(s, "std::floor(x[_numkit_i])"));
     }
@@ -486,7 +486,7 @@ TEST(EmitterFn, MatrixVectorProduct)
         ASSERT_NE(fn, nullptr);
         const InferredType A = InferredType::concrete(ValueType::DOUBLE, Shape::dims(2, 3));
         const InferredType x = InferredType::concrete(ValueType::DOUBLE, Shape::colVector());
-        const std::string  s = emitFunction(*fn, {{"A", A}, {"x", x}}, reg).source;
+        const keel::String  s = emitFunction(*fn, {{"A", A}, {"x", x}}, reg).source;
         EXPECT_TRUE(contains(s, "if (_numkit_A_cols != _numkit_x_len)"));  // inner-dim guard
         EXPECT_TRUE(contains(s, "_numkit_acc += A[_numkit_i + _numkit_l * _numkit_A_rows] * x[_numkit_l];"));
     }
@@ -495,7 +495,7 @@ TEST(EmitterFn, MatrixVectorProduct)
         const numkit::ASTNode *fn = findFunc("function y = f(r, A)\n  y = r * A;\nend\n", root);
         const InferredType     r = InferredType::concrete(ValueType::DOUBLE, Shape::rowVector());
         const InferredType     A = InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 2));
-        const std::string      s = emitFunction(*fn, {{"r", r}, {"A", A}}, reg).source;
+        const keel::String      s = emitFunction(*fn, {{"r", r}, {"A", A}}, reg).source;
         EXPECT_TRUE(contains(s, "if (_numkit_r_len != _numkit_A_rows)"));  // inner-dim guard
         EXPECT_TRUE(contains(s, "_numkit_acc += r[_numkit_l] * A[_numkit_l + _numkit_j * _numkit_A_rows];"));
     }
@@ -510,7 +510,7 @@ TEST(EmitterFn, InnerProduct)
     ASSERT_NE(fn, nullptr);
     const InferredType r = InferredType::concrete(ValueType::DOUBLE, Shape::rowVector());
     const InferredType c = InferredType::concrete(ValueType::DOUBLE, Shape::colVector());
-    const std::string  s = emitFunction(*fn, {{"r", r}, {"c", c}}, reg).source;
+    const keel::String  s = emitFunction(*fn, {{"r", r}, {"c", c}}, reg).source;
     EXPECT_TRUE(contains(s, "if (_numkit_r_len != _numkit_c_len)"));        // shared-dim guard
     EXPECT_TRUE(contains(s, "_numkit_acc += r[_numkit_l] * c[_numkit_l];"));   // reduction
     EXPECT_TRUE(contains(s, "s = _numkit_acc;"));                       // scalar result
@@ -528,7 +528,7 @@ TEST(EmitterFn, OuterProduct)
     ASSERT_NE(fn, nullptr);
     const InferredType col = InferredType::concrete(ValueType::DOUBLE, Shape::colVector());
     const InferredType row = InferredType::concrete(ValueType::DOUBLE, Shape::rowVector());
-    const std::string  s   = emitFunction(*fn, {{"c", col}, {"r", row}}, reg).source;
+    const keel::String  s   = emitFunction(*fn, {{"c", col}, {"r", row}}, reg).source;
     EXPECT_TRUE(contains(s, "y[_numkit_i + _numkit_j * _numkit_y_d0] = c[_numkit_i] * r[_numkit_j];"));
     EXPECT_TRUE(contains(s, "_numkit_y_d0 != _numkit_c_len"));  // output-dim guard
     EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));       // self-contained
@@ -546,13 +546,13 @@ TEST(EmitterFn, ReductionSumViaBridge)
     const InferredType row = InferredType::concrete(ValueType::DOUBLE, Shape::rowVector());
     {  // bridged -> box the array arg + bridge_scalar_arr
         const BridgeOptions bridge{true, "numkit_codegen_rt.h"};
-        const std::string   s = emitFunction(*fn, {{"x", row}}, reg, nullptr, bridge).source;
+        const keel::String   s = emitFunction(*fn, {{"x", row}}, reg, nullptr, bridge).source;
         EXPECT_TRUE(contains(s, "numkit_box_array(x, _numkit_x_len)"));
         EXPECT_TRUE(contains(s, "s = numkit_rt::bridge_scalar_arr(\"sum\", _numkit_args, 1);"));
     }
     {  // no bridge -> native inline accumulation loop (self-contained). Sequential
        // sum, so it is the no-bridge tier while the bridged path above stays exact.
-        const std::string s = emitFunction(*fn, {{"x", row}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}}, reg).source;
         EXPECT_TRUE(contains(s, "_numkit_acc += "));
     }
 }
@@ -568,13 +568,13 @@ TEST(EmitterFn, MoreBridgedBuiltins)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function s = f(x)\n  s = norm(x);\nend\n", root);
         ASSERT_NE(fn, nullptr);
-        const std::string s = emitFunction(*fn, {{"x", row}}, reg, nullptr, bridge).source;
+        const keel::String s = emitFunction(*fn, {{"x", row}}, reg, nullptr, bridge).source;
         EXPECT_TRUE(contains(s, "bridge_scalar_arr(\"norm\""));
     }
     {  // cumsum(x) -> array result (bridge_into; an OUTPUT array)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = cumsum(x);\nend\n", root);
-        const std::string      s  = emitFunction(*fn, {{"x", row}}, reg, nullptr, bridge).source;
+        const keel::String      s  = emitFunction(*fn, {{"x", row}}, reg, nullptr, bridge).source;
         EXPECT_TRUE(contains(s, "bridge_into(\"cumsum\""));
         EXPECT_TRUE(contains(s, "numkit_box_array(x, _numkit_x_len)"));
     }
@@ -604,7 +604,7 @@ TEST(EmitterFn, DynamicScalarTier)
     ASSERT_NE(fn, nullptr);
     {  // bridged: Dynamic local + call_dyn source + copy + binop + truth() condition
         const BridgeOptions bridge{true, "numkit_codegen_rt.h"};
-        const std::string   s =
+        const keel::String   s =
             emitFunction(*fn, {{"x", kDoubleScalar}}, reg, nullptr, bridge).source;
         EXPECT_TRUE(contains(s, "numkit_rt::val z;"));
         EXPECT_TRUE(contains(s, "numkit_rt::val w;"));
@@ -632,7 +632,7 @@ TEST(EmitterFn, DynamicArrayOperandBoxing)
         ASSERT_NE(fn, nullptr);
         const InferredType nd =
             InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::ndShape({2, 2, 2}));
-        const std::string s = emitFunction(*fn, {{"A", nd}}, reg, nullptr, bridge).source;
+        const keel::String s = emitFunction(*fn, {{"A", nd}}, reg, nullptr, bridge).source;
         EXPECT_TRUE(contains(s, "numkit_rt::val::array_nd(A, {"));
     }
     {  // complex 1-D array arg -> val::complex_array
@@ -641,7 +641,7 @@ TEST(EmitterFn, DynamicArrayOperandBoxing)
         ASSERT_NE(fn, nullptr);
         const InferredType cx = InferredType::concrete(ValueType::COMPLEX,
                                                        numkit::codegen::Shape::rowVector());
-        const std::string s = emitFunction(*fn, {{"x", cx}}, reg, nullptr, bridge).source;
+        const keel::String s = emitFunction(*fn, {{"x", cx}}, reg, nullptr, bridge).source;
         EXPECT_TRUE(contains(s, "numkit_rt::val::complex_array(x, _numkit_x_len)"));
     }
     {  // complex 2-D array arg -> val::complex_matrix
@@ -650,7 +650,7 @@ TEST(EmitterFn, DynamicArrayOperandBoxing)
         ASSERT_NE(fn, nullptr);
         const InferredType cx2 = InferredType::concrete(
             ValueType::COMPLEX, numkit::codegen::Shape::ndShape({2, 3}));
-        const std::string s = emitFunction(*fn, {{"A", cx2}}, reg, nullptr, bridge).source;
+        const keel::String s = emitFunction(*fn, {{"A", cx2}}, reg, nullptr, bridge).source;
         EXPECT_TRUE(contains(s, "numkit_rt::val::complex_matrix(A,"));
     }
     {  // complex N-D array arg -> val::complex_array_nd
@@ -659,7 +659,7 @@ TEST(EmitterFn, DynamicArrayOperandBoxing)
         ASSERT_NE(fn, nullptr);
         const InferredType cxnd = InferredType::concrete(
             ValueType::COMPLEX, numkit::codegen::Shape::ndShape({2, 2, 2}));
-        const std::string s = emitFunction(*fn, {{"A", cxnd}}, reg, nullptr, bridge).source;
+        const keel::String s = emitFunction(*fn, {{"A", cxnd}}, reg, nullptr, bridge).source;
         EXPECT_TRUE(contains(s, "numkit_rt::val::complex_array_nd(A, {"));
     }
 }
@@ -676,7 +676,7 @@ TEST(EmitterFn, DynamicMultiSubscriptIndex)
     ASSERT_NE(fn, nullptr);
     const InferredType m2 = InferredType::concrete(
         ValueType::DOUBLE, numkit::codegen::Shape::ndShape({2, 2}));
-    const std::string s = emitFunction(*fn, {{"A", m2}}, reg, nullptr, bridge).source;
+    const keel::String s = emitFunction(*fn, {{"A", m2}}, reg, nullptr, bridge).source;
     EXPECT_TRUE(contains(s, "numkit_rt::index_dyn(z, {"));
     EXPECT_TRUE(contains(s, "val::scalar(2"));
     EXPECT_TRUE(contains(s, "val::scalar(1"));
@@ -690,7 +690,7 @@ TEST(EmitterFn, SizeOfScalarVarIsOneOne)
     const numkit::ASTNode *fn = findFunc("function s = f(x)\n  s = size(x);\nend\n", root);
     ASSERT_NE(fn, nullptr);
     // x scalar, bridge OFF -> must lower natively to a [1 1] fill (not refuse / bridge).
-    const std::string s =
+    const keel::String s =
         emitFunction(*fn, {{"x", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr).source;
     EXPECT_TRUE(contains(s, "[0] = 1.0"));
     EXPECT_TRUE(contains(s, "[1] = 1.0"));
@@ -723,7 +723,7 @@ TEST(EmitterFn, ArrayLocalOwnedVector)
         "  y = zeros(1, n);\n  for k = 1:n\n    y(k) = z(k) + 1;\n  end\nend\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
     EXPECT_TRUE(contains(s, "std::vector<double> z;"));  // hoisted owned vector
     EXPECT_TRUE(contains(s, "z.assign("));               // zeros -> assign(numel, 0.0)
     EXPECT_TRUE(contains(s, "z.data()"));                // element access via data()/size()
@@ -737,7 +737,7 @@ TEST(EmitterFn, ElementwiseArrayArithmetic)
     numkit::ASTNodePtr     root;
     const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = x .* 2 + 1;\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
     EXPECT_TRUE(contains(s, "x[_numkit_i]"));    // whole array -> current element
     EXPECT_TRUE(contains(s, "[_numkit_i] = "));  // elementwise fill loop store
     EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));  // self-contained, no bridge
@@ -751,7 +751,7 @@ TEST(EmitterFn, ElementwiseArrayMathNative)
     numkit::ASTNodePtr     root;
     const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = sin(x);\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;  // no bridge
+    const keel::String s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;  // no bridge
     EXPECT_TRUE(contains(s, "std::sin(x[_numkit_i])"));   // per-element native call
     EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));   // self-contained, no runtime
 }
@@ -766,20 +766,20 @@ TEST(EmitterFn, Elementwise2DScalarBroadcast)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A)\n  B = 2 * A;\nend\n", root);
         ASSERT_NE(fn, nullptr);
-        const std::string s = emitFunction(*fn, {{"A", mat}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"A", mat}}, reg).source;
         EXPECT_TRUE(contains(s, "B[_numkit_i] = (2.0 * A[_numkit_i]);"));
         EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));  // self-contained
     }
     {  // sin(A)  (elementwise math over a matrix)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A)\n  B = sin(A);\nend\n", root);
-        const std::string      s  = emitFunction(*fn, {{"A", mat}}, reg).source;
+        const keel::String      s  = emitFunction(*fn, {{"A", mat}}, reg).source;
         EXPECT_TRUE(contains(s, "B[_numkit_i] = std::sin(A[_numkit_i]);"));
     }
     {  // A + C (two 2-D operands) -> flat loop + a per-dim (rows AND cols) guard
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A, C)\n  B = A + C;\nend\n", root);
-        const std::string      s  = emitFunction(*fn, {{"A", mat}, {"C", mat}}, reg).source;
+        const keel::String      s  = emitFunction(*fn, {{"A", mat}, {"C", mat}}, reg).source;
         EXPECT_TRUE(contains(s, "B[_numkit_i] = (A[_numkit_i] + C[_numkit_i]);"));
         EXPECT_TRUE(contains(s, "_numkit_A_rows != _numkit_B_rows"));   // operand A checked vs dest
         EXPECT_TRUE(contains(s, "_numkit_C_cols != _numkit_B_cols"));   // operand C checked vs dest
@@ -787,7 +787,7 @@ TEST(EmitterFn, Elementwise2DScalarBroadcast)
     {  // mixed rank (2-D matrix + 1-D row vector) -> 2-D + 1-D implicit expansion
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A, v)\n  B = A + v;\nend\n", root);
-        const std::string      s  = emitFunction(*fn, {{"A", mat}, {"v", kDoubleRow}}, reg).source;
+        const keel::String      s  = emitFunction(*fn, {{"A", mat}, {"v", kDoubleRow}}, reg).source;
         EXPECT_TRUE(contains(s, "B[_numkit_i + _numkit_j * _numkit_A_rows] = (A[_numkit_i + _numkit_j * _numkit_A_rows] + v[_numkit_j]);"));
         EXPECT_TRUE(contains(s, "_numkit_v_len != _numkit_A_cols"));
     }
@@ -806,7 +806,7 @@ TEST(EmitterFn, ElementwiseND)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A)\n  B = 2 * A;\nend\n", root);
         ASSERT_NE(fn, nullptr);
-        const std::string s = emitFunction(*fn, {{"A", nd}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"A", nd}}, reg).source;
         EXPECT_TRUE(contains(s, "B[_numkit_i] = (2.0 * A[_numkit_i]);"));
         EXPECT_TRUE(contains(s, "_numkit_A_d0 != _numkit_B_d0"));                  // per-axis guard vs dest
         EXPECT_TRUE(contains(s, "_numkit_B_d0 * _numkit_B_d1 * _numkit_B_d2"));        // numel bound = dest dims
@@ -815,13 +815,13 @@ TEST(EmitterFn, ElementwiseND)
         const OpsKernelOptions ops{true};
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A)\n  B = sin(A);\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"A", nd}}, reg, nullptr, {}, ops).source;
+        const keel::String s = emitFunction(*fn, {{"A", nd}}, reg, nullptr, {}, ops).source;
         EXPECT_TRUE(contains(s, "numkit::ops::sinDouble(A, B, "));
     }
     {  // B = A + C (two 3-D operands) -> flat loop + a PER-AXIS guard (every dim)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A, C)\n  B = A + C;\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"A", nd}, {"C", nd}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"A", nd}, {"C", nd}}, reg).source;
         EXPECT_TRUE(contains(s, "B[_numkit_i] = (A[_numkit_i] + C[_numkit_i]);"));
         EXPECT_TRUE(contains(s, "_numkit_A_d2 != _numkit_B_d2"));  // operand A checked vs dest, axis 2
         EXPECT_TRUE(contains(s, "_numkit_C_d0 != _numkit_B_d0"));  // operand C checked vs dest, axis 0
@@ -855,20 +855,20 @@ TEST(EmitterFn, ScalarScalingViaMtimesMrdivide)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(v)\n  y = 2 * v;\nend\n", root);
         ASSERT_NE(fn, nullptr);
-        const std::string s = emitFunction(*fn, {{"v", kDoubleRow}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"v", kDoubleRow}}, reg).source;
         EXPECT_TRUE(contains(s, "(2.0 * v[_numkit_i])"));
         EXPECT_FALSE(contains(s, "numkit_codegen_rt.h"));  // self-contained
     }
     {  // v * 2  (scalar on the right)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(v)\n  y = v * 2;\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"v", kDoubleRow}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"v", kDoubleRow}}, reg).source;
         EXPECT_TRUE(contains(s, "(v[_numkit_i] * 2.0)"));
     }
     {  // v / 2  (denominator scalar)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function y = f(v)\n  y = v / 2;\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"v", kDoubleRow}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"v", kDoubleRow}}, reg).source;
         EXPECT_TRUE(contains(s, "(v[_numkit_i] / 2.0)"));
     }
 }
@@ -884,7 +884,7 @@ TEST(EmitterFn, Matrix2DLocalWrite)
         "  s = A(1,1) + A(2,2);\nend\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {}, reg).source;
+    const keel::String s = emitFunction(*fn, {}, reg).source;
     EXPECT_TRUE(contains(s, "std::vector<double> A;"));             // flat 2-D local storage
     EXPECT_TRUE(contains(s, "numkit_rt::index2_set(A.data(), 3, 3"));   // column-major write
     EXPECT_TRUE(contains(s, "numkit_rt::index2(A.data(), 3, 3"));       // column-major read
@@ -901,7 +901,7 @@ TEST(EmitterFn, NDArrayLocalWrite)
         "  s = A(1,1,1) + A(2,2,2);\nend\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {}, reg).source;
+    const keel::String s = emitFunction(*fn, {}, reg).source;
     EXPECT_TRUE(contains(s, "std::vector<double> A;"));               // flat N-D storage
     EXPECT_TRUE(contains(s, "numkit_rt::indexN_set(A.data(), {2, 2, 2}"));  // column-major write
     EXPECT_TRUE(contains(s, "numkit_rt::indexN(A.data(), {2, 2, 2}"));      // column-major read
@@ -915,7 +915,7 @@ TEST(EmitterFn, NDParamReadOnly)
     const numkit::ASTNode *fn =
         findFunc("function s = f(A)\n  s = A(1,1,1) + size(A,2);\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(
+    const keel::String s = emitFunction(
         *fn, {{"A", InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::ndShape({2, 2, 2}))}},
         reg).source;
     EXPECT_TRUE(contains(s, "const double* A, std::size_t _numkit_A_d0, std::size_t _numkit_A_d1, std::size_t _numkit_A_d2"));
@@ -949,7 +949,7 @@ TEST(EmitterFn, NDShapeQueries)
         "  s = size(A,1) + size(A,3) + numel(A) + ndims(A);\nend\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {}, reg).source;
+    const keel::String s = emitFunction(*fn, {}, reg).source;
     EXPECT_TRUE(contains(s, "static_cast<double>(2)"));          // size(A,1)
     EXPECT_TRUE(contains(s, "static_cast<double>(4)"));          // size(A,3)
     EXPECT_TRUE(contains(s, "static_cast<double>(2 * 3 * 4)"));  // numel = product of dims
@@ -969,7 +969,7 @@ TEST(EmitterFn, NDOutputAsOutParam)
         "function y = f(a)\n  y = zeros(2, 2, 2);\n  y(1,1,1) = a;\n  y(2,2,2) = a * 2;\nend\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s =
+    const keel::String s =
         emitFunction(*fn, {{"a", InferredType::scalar(ValueType::DOUBLE)}}, reg).source;
     EXPECT_TRUE(contains(s, "void f(double a, double* __restrict y, "
                             "std::size_t _numkit_y_d0, std::size_t _numkit_y_d1, std::size_t _numkit_y_d2"));  // mutable + void
@@ -988,7 +988,7 @@ TEST(EmitterFn, Matrix2DOutputAsOutParam)
     const numkit::ASTNode *fn = findFunc(
         "function M = f(a)\n  M = zeros(2, 3);\n  M(1,1) = a;\n  M(2,3) = a * 2;\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {{"a", kDoubleScalar}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"a", kDoubleScalar}}, reg).source;
     EXPECT_TRUE(contains(s, "void f(double a, double* __restrict M, "
                             "std::size_t _numkit_M_rows, std::size_t _numkit_M_cols"));  // mutable + void
     EXPECT_TRUE(contains(s, "_numkit_i < (_numkit_M_rows * _numkit_M_cols)"));               // zeros() fill bound
@@ -1005,14 +1005,14 @@ TEST(EmitterFn, OneDSizeOrientation)
     numkit::ASTNodePtr     root;
     const numkit::ASTNode *fn = findFunc(src, root);
     ASSERT_NE(fn, nullptr);
-    const std::string row = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;  // 1 x len
+    const keel::String row = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;  // 1 x len
     EXPECT_TRUE(contains(row, "(static_cast<double>(1) * 100.0) + static_cast<double>(_numkit_x_len)"));
 
     numkit::ASTNodePtr     root2;
     const numkit::ASTNode *fn2 = findFunc(src, root2);
     const InferredType     colv =
         InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::colVector());
-    const std::string col = emitFunction(*fn2, {{"x", colv}}, reg).source;       // len x 1
+    const keel::String col = emitFunction(*fn2, {{"x", colv}}, reg).source;       // len x 1
     EXPECT_TRUE(contains(col, "(static_cast<double>(_numkit_x_len) * 100.0) + static_cast<double>(1)"));
 }
 
@@ -1025,7 +1025,7 @@ TEST(EmitterFn, SizeNoDimRowVector)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function s = f(x)\n  s = size(x);\nend\n", root);
         ASSERT_NE(fn, nullptr);
-        const std::string s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
         EXPECT_TRUE(contains(s, "s[0] = static_cast<double>(1);"));
         EXPECT_TRUE(contains(s, "s[1] = static_cast<double>(_numkit_x_len);"));
     }
@@ -1033,7 +1033,7 @@ TEST(EmitterFn, SizeNoDimRowVector)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function s = f(A)\n  s = size(A);\nend\n", root);
         const InferredType     mat = InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 4));
-        const std::string      s   = emitFunction(*fn, {{"A", mat}}, reg).source;
+        const keel::String      s   = emitFunction(*fn, {{"A", mat}}, reg).source;
         EXPECT_TRUE(contains(s, "s[0] = static_cast<double>(_numkit_A_rows);"));
         EXPECT_TRUE(contains(s, "s[1] = static_cast<double>(_numkit_A_cols);"));
     }
@@ -1042,7 +1042,7 @@ TEST(EmitterFn, SizeNoDimRowVector)
         const numkit::ASTNode *fn = findFunc("function s = f(A)\n  s = size(A);\nend\n", root);
         const InferredType     nd =
             InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::ndShape({2, 3, 4}));
-        const std::string s = emitFunction(*fn, {{"A", nd}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"A", nd}}, reg).source;
         EXPECT_TRUE(contains(s, "s[2] = static_cast<double>(_numkit_A_d2);"));  // 3rd axis
     }
 }
@@ -1059,7 +1059,7 @@ TEST(EmitterFn, SizeTwoOutputRowsCols)
             findFunc("function [r, c] = f(A)\n  [r, c] = size(A);\nend\n", root);
         ASSERT_NE(fn, nullptr);
         const InferredType mat = InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 4));
-        const std::string  s   = emitFunction(*fn, {{"A", mat}}, reg).source;
+        const keel::String  s   = emitFunction(*fn, {{"A", mat}}, reg).source;
         EXPECT_TRUE(contains(s, "r = static_cast<double>(_numkit_A_rows);"));
         EXPECT_TRUE(contains(s, "c = static_cast<double>(_numkit_A_cols);"));
     }
@@ -1069,7 +1069,7 @@ TEST(EmitterFn, SizeTwoOutputRowsCols)
             findFunc("function [r, c] = f(A)\n  [r, c] = size(A);\nend\n", root);
         const InferredType nd =
             InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::ndShape({2, 3, 4}));
-        const std::string s = emitFunction(*fn, {{"A", nd}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"A", nd}}, reg).source;
         EXPECT_TRUE(contains(s, "r = static_cast<double>(_numkit_A_d0);"));
         EXPECT_TRUE(contains(s, "c = static_cast<double>(_numkit_A_d1 * _numkit_A_d2);"));
     }
@@ -1077,7 +1077,7 @@ TEST(EmitterFn, SizeTwoOutputRowsCols)
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc(
             "function y = f(x)\n  [r, c] = size(x);\n  y = r * 100 + c;\nend\n", root);
-        const std::string s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
+        const keel::String s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
         EXPECT_TRUE(contains(s, "r = static_cast<double>(1);"));
         EXPECT_TRUE(contains(s, "c = static_cast<double>(_numkit_x_len);"));
     }
@@ -1100,7 +1100,7 @@ TEST(EmitterFn, NDRuntimeLocal)
     const std::vector<ParamSpec> params = {{"m", InferredType::scalar(ValueType::DOUBLE)},
                                            {"n", InferredType::scalar(ValueType::DOUBLE)},
                                            {"p", InferredType::scalar(ValueType::DOUBLE)}};
-    const std::string s = emitFunction(*fn, params, reg).source;
+    const keel::String s = emitFunction(*fn, params, reg).source;
     EXPECT_TRUE(contains(s, "std::size_t _numkit_A_d0 = 0, _numkit_A_d1 = 0, _numkit_A_d2 = 0;"));        // hoisted vars
     EXPECT_TRUE(contains(s, "_numkit_A_d0 = numkit_rt::dim(m);"));                            // captured (guarded)
     EXPECT_TRUE(contains(s, "A.assign(_numkit_A_d0 * _numkit_A_d1 * _numkit_A_d2, 0.0);"));               // sized to product
@@ -1123,7 +1123,7 @@ TEST(EmitterFn, CompanionDoesNotClashWithUserVar)
     const numkit::ASTNode *fn =
         findFunc("function y = f(x)\n  x_len = 3;\n  y = x(x_len);\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    const std::string s =
+    const keel::String s =
         emitFunction(*fn, {{"x", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}}, reg)
             .source;
     EXPECT_TRUE(contains(s, "std::size_t _numkit_x_len"));  // length companion (prefixed)
@@ -1152,7 +1152,7 @@ TEST(EmitterFn, SingleUnderscoreUserNameAllowed)
     numkit::ASTNodePtr     root;
     const numkit::ASTNode *fn = findFunc("function s = g(x_)\n  s = numel(x_);\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {{"x_", kDoubleRow}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"x_", kDoubleRow}}, reg).source;
     EXPECT_TRUE(contains(s, "const double* x_"));  // verbatim, legal (no "__")
     EXPECT_TRUE(contains(s, "_numkit_x_0_len"));        // companion escapes the trailing '_'
 }
@@ -1198,7 +1198,7 @@ TEST(EmitterFn, LowerableBuiltinsNotBridgedWhenEnabled)
     const numkit::ASTNode *fn = findFunc(kBiquadSrc, root);
     ASSERT_NE(fn, nullptr);
     const BridgeOptions bridge{true, "numkit_codegen_rt.h"};
-    const std::string   s =
+    const keel::String   s =
         emitFunction(*fn,
                      {{"x", kDoubleRow}, {"b0", kDoubleScalar}, {"b1", kDoubleScalar},
                       {"b2", kDoubleScalar}, {"a1", kDoubleScalar}, {"a2", kDoubleScalar}},
@@ -1219,7 +1219,7 @@ TEST(EmitterFn, BiquadFullFunction)
         params.push_back({p, kDoubleScalar});
 
     const EmittedFunction out = emitFunction(*fn, params, reg);
-    const std::string &s = out.source;
+    const keel::String &s = out.source;
 
     // RawBuffer ABI signature: array param -> ptr + len; output -> trailing
     // out-param; scalars unboxed; void return.
@@ -1256,7 +1256,7 @@ TEST(EmitterFn, BiquadPromotedLoop)
     std::vector<ParamSpec> params = {{"x", kDoubleRow}};
     for (const char *p : {"b0", "b1", "b2", "a1", "a2"})
         params.push_back({p, kDoubleScalar});
-    const std::string s = emitFunction(*fn, params, reg).source;
+    const keel::String s = emitFunction(*fn, params, reg).source;
 
     EXPECT_TRUE(contains(s, "for (std::size_t k = 0; k < _numkit_x_len; ++k)"));
     EXPECT_TRUE(contains(s, "xn = x[k];"));
@@ -1281,7 +1281,7 @@ TEST(EmitterFn, NonPromotableLoopFallsBack)
         root);
     ASSERT_NE(fn, nullptr);
 
-    const std::string s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
     EXPECT_TRUE(contains(s, "double k = 0.0;"));                 // hoisted double loop var
     EXPECT_TRUE(contains(s, "for (k = 1.0; k <= n; k += 1.0)"));  // checked counted loop
     EXPECT_TRUE(contains(s, "numkit_rt::index(x, _numkit_x_len, k)"));        // checked read
@@ -1305,7 +1305,7 @@ TEST(EmitterFn, ReassignedBoundNotPromoted)
         root);
     ASSERT_NE(fn, nullptr);
 
-    const std::string s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"x", kDoubleRow}}, reg).source;
     EXPECT_FALSE(contains(s, "for (std::size_t k = 0;"));         // NOT promoted (stale fact)
     EXPECT_TRUE(contains(s, "for (k = 1.0; k <= n; k += 1.0)"));   // checked form, bound n
     EXPECT_TRUE(contains(s, "numkit_rt::index_set(y, _numkit_y_len, k,"));
@@ -1325,7 +1325,7 @@ TEST(EmitterFn, IfElseTyping)
 
     const EmittedFunction out = emitFunction(
         *fn, {{"c", kDoubleScalar}, {"a", kDoubleScalar}, {"b", kDoubleScalar}}, reg);
-    const std::string &s = out.source;
+    const keel::String &s = out.source;
 
     EXPECT_EQ(out.signature, "double pick(double c, double a, double b)");
     EXPECT_TRUE(contains(s, "if (c) {"));
@@ -1361,7 +1361,7 @@ TEST(EmitterFn, BuiltinMathLowering)
         root);
     ASSERT_NE(fn, nullptr);
 
-    const std::string s = emitFunction(*fn, {{"x", kDoubleScalar}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"x", kDoubleScalar}}, reg).source;
     EXPECT_TRUE(contains(s, "std::sin(x)"));
     EXPECT_TRUE(contains(s, "std::cos(x)"));
     EXPECT_TRUE(contains(s, "std::tan(x)"));
@@ -1391,7 +1391,7 @@ TEST(EmitterFn, Matrix2DIndexEmission)
         findFunc("function s = tr(A)\n  s = A(1,1) + A(3,2);\nend\n", root);
     ASSERT_NE(fn, nullptr);
 
-    const std::string s = emitFunction(
+    const keel::String s = emitFunction(
         *fn, {{"A", InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::dims(3, 3))}},
         reg).source;
 
@@ -1417,7 +1417,7 @@ TEST(EmitterFn, MultiOutputEmission)
 
     const EmittedFunction out =
         emitProgram(*ft.find("run"), {{"x", kDoubleScalar}}, ft, reg);
-    const std::string &s = out.source;
+    const keel::String &s = out.source;
 
     // multi-output -> void + reference out-params
     EXPECT_TRUE(contains(s, "void two_1d(double x, double& a, double& b)"));
@@ -1440,7 +1440,7 @@ TEST(EmitterFn, ClassStructEmission)
 
     const auto reg = stdReg();
     const ClassInfo ci = buildClassInfo(*cd, 0, reg);
-    const std::string s = emitClassStruct(ci);
+    const keel::String s = emitClassStruct(ci);
 
     EXPECT_TRUE(contains(s, "struct Point {"));
     EXPECT_TRUE(contains(s, "double x = 0.0;"));
@@ -1470,7 +1470,7 @@ TEST(EmitterFn, ValueClassFieldAccess)
 
     const EmittedFunction out = emitFunction(
         *fn, {{"p", InferredType::object(id)}, {"v", kDoubleScalar}}, reg, &creg);
-    const std::string &s = out.source;
+    const keel::String &s = out.source;
 
     EXPECT_EQ(out.signature, "Point setx(Point p, double v)");  // object in + out, by value
     EXPECT_TRUE(contains(s, "struct Point {"));                 // struct emitted
@@ -1503,7 +1503,7 @@ TEST(EmitterFn, MethodCallEmission)
     ASSERT_GE(id, 0);
     const EmittedFunction out =
         emitProgram(*ft.find("run"), {{"p", InferredType::object(id)}}, ft, reg, &creg);
-    const std::string &s = out.source;
+    const keel::String &s = out.source;
 
     EXPECT_EQ(out.name, "run_1o0");
     EXPECT_TRUE(contains(s, "struct Rect {"));
@@ -1531,7 +1531,7 @@ TEST(EmitterFn, InterproceduralProgram)
     const numkit::ASTNode *f = table.find("f");
     ASSERT_NE(f, nullptr);
     const EmittedFunction out = emitProgram(*f, {{"x", kDoubleScalar}}, table, reg);
-    const std::string    &s   = out.source;
+    const keel::String    &s   = out.source;
 
     EXPECT_EQ(out.name, "f_1d");                              // mangled entry symbol
     EXPECT_TRUE(contains(s, "double f_1d(double x);"));       // forward decls
@@ -1592,7 +1592,7 @@ TEST(EmitterFn, Advanced2DIndexingAndInlineSliceWrite)
         "end\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {}, reg).source;
+    const keel::String s = emitFunction(*fn, {}, reg).source;
     EXPECT_TRUE(contains(s, "numkit_rt::index2_set(A.data(), 3, 4, static_cast<double>(3), (static_cast<double>(4) - 1.0), 42.0);"));
     EXPECT_TRUE(contains(s, "const double _numkit_lit[] = { 10.0, 20.0, 30.0 };"));
     EXPECT_TRUE(contains(s, "const double _numkit_lit[] = { 1.0, 2.0, 3.0, 4.0 };"));
@@ -1618,7 +1618,7 @@ TEST(EmitterFn, FusedTransposeAndMatrixReductions)
         "end\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {}, reg).source;
+    const keel::String s = emitFunction(*fn, {}, reg).source;
     EXPECT_TRUE(contains(s, "C.data()[_numkit_i + _numkit_j * 3] = (A.data()[_numkit_j + _numkit_i * 2] + (2.0 * B.data()[_numkit_j + _numkit_i * 2]));"));
     EXPECT_TRUE(contains(s, "col_s.assign(_numkit_n, 0.0);"));
     EXPECT_TRUE(contains(s, "row_m.data()[_numkit_i] = _numkit_acc / static_cast<double>(_numkit_n);"));
@@ -1642,7 +1642,7 @@ TEST(EmitterFn, ImplicitExpansion2D1D)
         "end\n",
         root);
     ASSERT_NE(fn, nullptr);
-    const std::string s = emitFunction(*fn, {{"m", kDoubleScalar}, {"n", kDoubleScalar}}, reg).source;
+    const keel::String s = emitFunction(*fn, {{"m", kDoubleScalar}, {"n", kDoubleScalar}}, reg).source;
     EXPECT_TRUE(contains(s, "B.data()[_numkit_i + _numkit_j * 2] = (((A.data()[_numkit_i + _numkit_j * 2] - mu.data()[_numkit_j]) + rsum.data()[_numkit_i]) - mx.data()[_numkit_j]);"));
     EXPECT_TRUE(contains(s, "C.data()[_numkit_i + _numkit_j * 3] = (A.data()[_numkit_j + _numkit_i * 2] + (2.0 * 1.0));"));
     EXPECT_TRUE(contains(s, "if ((numkit_rt::dim(m)) != (2) || (numkit_rt::dim(n)) != (3)) throw std::out_of_range(\"numkit: array dimensions must match\");"));
@@ -1719,7 +1719,7 @@ TEST(EmitterFn, MultiOutputFunctionsAndMethodsAllContexts)
     registerClassMethods(reg, classes);
     registerUserFunctions(reg, funcs);
 
-    const std::string code =
+    const keel::String code =
         emitProgram(*funcs.find("main"), {{"x", kDoubleScalar}}, funcs, reg, &classes).source;
     // Callee where output `obj` is also an input parameter uses an `_numkit_out_obj` reference
     // out-param and assigns it in the function epilogue.
@@ -1771,7 +1771,7 @@ TEST(EmitterFn, NonScalarAndNestedStructFields)
     collectFunctions(*root, funcs);
     registerUserFunctions(reg, funcs);
 
-    const std::string code =
+    const keel::String code =
         emitProgram(*funcs.find("main"), {{"x", kDoubleScalar}}, funcs, reg).source;
     // Nested struct scalar field flattened to `_numkit_fld_<var>_meta_gain`
     EXPECT_TRUE(contains(code, "_numkit_fld_cfg_meta_gain"));

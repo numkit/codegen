@@ -55,7 +55,7 @@ namespace {
 // and writes: a typed buffer indexed by 1 or 2 scalar positions. Zero
 // indices, 3+ (N-D), or any non-scalar / non-typed operand -> Runtime.
 IndexForm formFor(const AbstractValue &array,
-                  const std::vector<AbstractValue> &indices)
+                  keel::ArrayRef<AbstractValue> indices)
 {
     if (!isBufferArray(array)) return IndexForm::Runtime;
     for (const auto &idx : indices)
@@ -68,13 +68,13 @@ IndexForm formFor(const AbstractValue &array,
 } // namespace
 
 IndexPlan planIndexRead(const AbstractValue &array,
-                        const std::vector<AbstractValue> &indices)
+                        keel::ArrayRef<AbstractValue> indices)
 {
     return {formFor(array, indices), /*boundsChecked=*/true};
 }
 
 IndexPlan planIndexWrite(const AbstractValue &array,
-                         const std::vector<AbstractValue> &indices,
+                         keel::ArrayRef<AbstractValue> indices,
                          const AbstractValue &rhs)
 {
     const IndexForm f = formFor(array, indices);
