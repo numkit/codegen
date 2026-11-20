@@ -12,10 +12,6 @@
 
 #include <cstdlib>
 
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
-#include <sys/wait.h>
-#endif
-
 namespace numkit::codegen::aot {
 
 namespace {
@@ -55,16 +51,6 @@ bool isValidDefine(keel::StringRef d)
     return true;
 }
 
-int decodeWaitStatus(int st)
-{
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
-    if (st == -1) return -1;
-    if (WIFEXITED(st)) return WEXITSTATUS(st);
-    if (WIFSIGNALED(st)) return 128 + WTERMSIG(st);
-#endif
-    return st;
-}
-
 bool isPosixSharedLibraryPath(keel::StringRef p)
 {
     if (p.empty() || p.back() == '/' || p.back() == '\\') return false;
@@ -79,13 +65,6 @@ bool isPosixSharedLibraryPath(keel::StringRef p)
 bool writeFile(keel::StringRef path, keel::StringRef content)
 {
     return keel::fs_write_text(path, content).is_ok();
-}
-
-keel::String readFile(keel::StringRef path)
-{
-    auto res = keel::fs_read_text(path);
-    if (res.is_err()) return {};
-    return keel::move(res.value());
 }
 
 bool fileExists(keel::StringRef path)
@@ -328,7 +307,6 @@ CompileResult compileImpl(keel::StringRef cppSource, keel::StringRef outPath,
     }
 
     const keel::String src = keel::format("{}.cpp", outPath);
-    const keel::String log = keel::format("{}.log", outPath);
     for (const auto &d : opts.defines) {
         if (!isValidDefine(d)) {
             r.status = CompileStatus::CompileError;
@@ -348,7 +326,7 @@ CompileResult compileImpl(keel::StringRef cppSource, keel::StringRef outPath,
 #ifdef _WIN32
     // A .bat carries the (optional) vcvars call + compile, so the test
     // process needs no developer-prompt environment and we dodge cmd's
-    // nested-quote hazards. Redirect the whole script to the log file.
+    // nested-quote hazards.
     const keel::String bat = keel::format("{}.build.bat", outPath);
     keel::String       b   = keel::String::from("@echo off\r\n");
     if (isMsvc) {
@@ -378,11 +356,7 @@ CompileResult compileImpl(keel::StringRef cppSource, keel::StringRef outPath,
         r.log    = keel::format("aot: failed to write build script {}", bat);
         return r;
     }
-    // `cmd /c` (what std::system uses) strips the first and last quote of
-    // the whole line, which would mangle a command that itself begins and
-    // ends with a quoted path. Wrap the entire command in one extra pair
-    // so the inner quoting survives.
-    cmd = keel::format("\"\"{}\" > \"{}\" 2>&1\"", toNative(bat), toNative(log));
+    cmd = keel::format("\"{}\"", toNative(bat));
 #else
     (void)isMsvc;
     keel::String inc, def, libs;
@@ -404,17 +378,26 @@ CompileResult compileImpl(keel::StringRef cppSource, keel::StringRef outPath,
         }
 #  endif
     }
-    cmd = keel::format("{} -O2 -std=c++20 {}{}{} {} -o {}{} > {} 2>&1",
+    cmd = keel::format("{} -O2 -std=c++20 {}{}{} {} -o {}{}",
                        quoteCompilerCmd(cxx, /*winQuote=*/false),
                        sharedLib ? "-shared -fPIC " : "", inc, def, shellQuotePosix(src),
-                       shellQuotePosix(outPath), libs, shellQuotePosix(log));
+                       shellQuotePosix(outPath), libs);
 #endif
 
-    r.command    = cmd.clone();
-    const int rc = decodeWaitStatus(std::system(cmd.c_str()));
-    r.log        = readFile(log);
-    r.status = (rc == 0 && fileExists(outPath)) ? CompileStatus::Ok
-                                                 : CompileStatus::CompileError;
+    r.command = cmd.clone();
+    keel::ProcessOptions procOpts;
+    procOpts.capture_stdout = true;
+    procOpts.capture_stderr = true;
+    procOpts.merge_stderr = true;
+    auto procRes = keel::process_run_shell(cmd, procOpts);
+    if (procRes.is_err()) {
+        r.log = keel::format("aot: compiler launch failed: {}", keel::error_message(procRes.error()));
+        r.status = CompileStatus::CompileError;
+        return r;
+    }
+    r.log = keel::move(procRes->stdout_text);
+    r.status = (procRes->ok() && fileExists(outPath)) ? CompileStatus::Ok
+                                                      : CompileStatus::CompileError;
     return r;
 }
 

@@ -29,15 +29,12 @@
 
 #include <keel/format.h>
 #include <keel/fs.h>
+#include <keel/process.h>
 #include <keel/string.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -168,45 +165,26 @@ int main(int argc, char **argv)
             if (buildFlag) {
                 if (!outPath.empty()) {
                     exe = outPath.clone();
-#ifdef _WIN32
-                    if (keel::path_extension(exe).empty()) exe.append(".exe");
-#endif
+                    if (keel::path_extension(exe).empty() && !keel::process_exe_extension().empty())
+                        exe.append(keel::process_exe_extension());
                 } else {
-                    exe = keel::String::from(keel::path_stem(file));
-#ifdef _WIN32
-                    exe.append(".exe");
-#endif
+                    exe = keel::format("{}{}", keel::path_stem(file), keel::process_exe_extension());
                 }
             } else {
-                auto tmpRes = keel::fs_temp_dir();
-                const keel::StringRef tmpRoot =
-                    tmpRes.is_ok() ? tmpRes.value().as_ref() : keel::StringRef("/tmp");
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
-                keel::String tmpl = keel::path_join(tmpRoot, "numkit_codegen_run_XXXXXX");
-                if (!::mkdtemp(tmpl.data()))
+                auto tmpRes = keel::fs_create_temp_dir("numkit_codegen_run_");
+                if (tmpRes.is_err())
                     throw std::runtime_error("failed to create temporary run directory");
-                tempRunDir.dir = keel::move(tmpl);
-#else
-                const keel::String base = keel::path_join(tmpRoot, "numkit_codegen_run");
-                if (keel::fs_create_dirs(base).is_err())
-                    throw std::runtime_error("failed to create temporary run directory");
-                tempRunDir.dir = keel::move(base);
-#endif
-                exe = keel::path_join(tempRunDir.dir, "aot");
-#ifdef _WIN32
-                exe.append(".exe");
-#endif
+                tempRunDir.dir = keel::move(*tmpRes);
+                exe = keel::path_join(tempRunDir.dir,
+                                      keel::format("aot{}", keel::process_exe_extension()));
             }
             const auto compileOpts = (usedBridge || opsKernels)
                                          ? cg::aot::defaultBridgeCompileOptions()
                                          : cg::aot::CompileOptions{};
             const auto cr = cg::aot::compileToExecutable(program, exe, compileOpts);
             (void)keel::fs_remove(keel::format("{}.cpp", exe));
-            (void)keel::fs_remove(keel::format("{}.log", exe));
-#ifdef _WIN32
             (void)keel::fs_remove(keel::format("{}.obj", exe));
             (void)keel::fs_remove(keel::format("{}.build.bat", exe));
-#endif
             if (!cr.ok())
                 throw std::runtime_error(
                     keel::format("compilation failed.\n--- compiler log ---\n{}\n--- end log ---",
