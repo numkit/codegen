@@ -200,11 +200,8 @@ CompileOptions defaultBridgeCompileOptions()
 {
     CompileOptions opts;
 
-#ifdef _WIN32
-    keel::String home = sys::envGet("USERPROFILE");
-#else
-    keel::String home = sys::envGet("HOME");
-#endif
+    auto homeRes = keel::fs_home_dir();
+    const keel::StringRef home = (homeRes.is_ok() && !homeRes->empty()) ? homeRes->as_ref() : keel::StringRef{};
     keel::String envPrefix = sys::envGet("NUMKIT_PREFIX");
     const keel::String prefix = envPrefix.empty()
                                     ? (home.empty() ? keel::String::from(".numkit")
