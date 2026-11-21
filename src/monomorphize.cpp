@@ -59,7 +59,7 @@ bool fixpointEligible(keel::ArrayRef<ArgInfo> args)
     return true;
 }
 
-constexpr int kFixpointCap = 8;  // lattice height is tiny; 8 is far above need
+constexpr keel::i32 kFixpointCap = 8;  // lattice height is tiny; 8 is far above need
 
 }  // namespace
 
@@ -149,9 +149,9 @@ InferredType inferFunctionReturn(const ASTNode &funcDef,
 void registerClassConstructors(TransferRegistry &reg, const ClassRegistry &classes)
 {
     for (keel::usize i = 0; i < classes.size(); ++i) {
-        const ClassInfo *ci = classes.byId(keel::as<int>(i));
+        const ClassInfo *ci = classes.byId(keel::as<keel::i32>(i));
         if (!ci) continue;
-        const int id = ci->id;
+        const keel::i32 id = ci->id;
         reg.add(ci->name,
                 [id](keel::ArrayRef<ArgInfo>) { return InferredType::object(id); });
     }
@@ -161,7 +161,7 @@ void registerClassMethods(TransferRegistry &reg, const ClassRegistry &classes)
 {
     auto inProgress = keel::make_arc<keel::HashSet<keel::String>>();
     for (keel::usize i = 0; i < classes.size(); ++i) {
-        const ClassInfo *ci = classes.byId(keel::as<int>(i));
+        const ClassInfo *ci = classes.byId(keel::as<keel::i32>(i));
         if (!ci) continue;
         for (auto [mname, mdef] : ci->methods) {
             const keel::String key = keel::format("{}::{}", ci->name, mname);
@@ -226,7 +226,7 @@ void registerUserFunctions(TransferRegistry &reg, const FunctionTable &table)
                 // over-approximation if it somehow does not.
                 estimates->put(ek.clone(), InferredType::bottom());
                 result = InferredType::dynamic();  // default if not converged
-                for (int iter = 0; iter < kFixpointCap; ++iter) {
+                for (keel::i32 iter = 0; iter < kFixpointCap; ++iter) {
                     const InferredType next = inferFunctionReturn(*fn, args, reg);
                     const InferredType *curEst = estimates->get(ek);
                     if (curEst && next == *curEst) { result = next; break; }

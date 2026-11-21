@@ -139,7 +139,7 @@ struct InferredType {
     // Class identity, meaningful ONLY when dtype == OBJECT (a class
     // instance). -1 for every non-object type, so it never perturbs the
     // numeric path's equality / join. Indexes a ClassRegistry (classinfo.hpp).
-    int       classId = -1;
+    keel::i32       classId = -1;
     // Field layout, meaningful ONLY when dtype == STRUCT (a plain struct value).
     // null for every non-struct type, so it never perturbs the numeric path's
     // equality / join. Shared + immutable (cheap to copy across the lattice). A
@@ -147,7 +147,7 @@ struct InferredType {
     keel::Arc<const StructLayout> structLayout;
 
     InferredType() noexcept = default;
-    InferredType(TypeKind k, ValueType dt, Shape s, int cid,
+    InferredType(TypeKind k, ValueType dt, Shape s, keel::i32 cid,
                  keel::Arc<const StructLayout> sl = {}) noexcept
         : kind(k), dtype(dt), shape(keel::move(s)), classId(cid), structLayout(keel::move(sl))
     {}
@@ -182,7 +182,7 @@ struct InferredType {
     static InferredType scalar(ValueType dt) { return concrete(dt, Shape::scalar()); }
     // A class instance (value or handle decided by the ClassRegistry, not
     // the lattice). A scalar object in v1 (object arrays are a later tier).
-    static InferredType object(int classId)
+    static InferredType object(keel::i32 classId)
     {
         return InferredType(TypeKind::Concrete, ValueType::OBJECT, Shape::scalar(), classId);
     }

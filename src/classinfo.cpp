@@ -23,23 +23,23 @@ const ASTNode *ClassInfo::method(keel::StringRef n) const
     return p ? *p : nullptr;
 }
 
-int ClassRegistry::add(ClassInfo info)
+keel::i32 ClassRegistry::add(ClassInfo info)
 {
-    info.id = keel::as<int>(classes_.size());
+    info.id = keel::as<keel::i32>(classes_.size());
     byName_.put(info.name.clone(), info.id);
     classes_.push_back(keel::move(info));
     return classes_.back().id;
 }
 
-const ClassInfo *ClassRegistry::byId(int id) const
+const ClassInfo *ClassRegistry::byId(keel::i32 id) const
 {
-    if (id < 0 || id >= keel::as<int>(classes_.size())) return nullptr;
+    if (id < 0 || id >= keel::as<keel::i32>(classes_.size())) return nullptr;
     return &classes_[keel::as<keel::usize>(id)];
 }
 
-int ClassRegistry::idOf(keel::StringRef name) const
+keel::i32 ClassRegistry::idOf(keel::StringRef name) const
 {
-    const int *p = byName_.get(name);
+    const keel::i32 *p = byName_.get(name);
     return p ? *p : -1;
 }
 
@@ -72,7 +72,7 @@ keel::String classRefusalReason(const ASTNode &classDef)
     return {};
 }
 
-ClassInfo buildClassInfo(const ASTNode &classDef, int id, const TransferRegistry &reg)
+ClassInfo buildClassInfo(const ASTNode &classDef, keel::i32 id, const TransferRegistry &reg)
 {
     if (const keel::String why = classRefusalReason(classDef); !why.empty())
         throw std::runtime_error(keel::format("class '{}': {}", classDef.strValue, why).c_str());
@@ -110,7 +110,7 @@ keel::usize collectClasses(const ASTNode &root, ClassRegistry &reg,
 {
     keel::usize added = 0;
     if (root.type == NodeType::CLASSDEF_DEF) {
-        reg.add(buildClassInfo(root, keel::as<int>(reg.size()), reg2));
+        reg.add(buildClassInfo(root, keel::as<keel::i32>(reg.size()), reg2));
         ++added;
     }
     for (const auto &c : root.children)

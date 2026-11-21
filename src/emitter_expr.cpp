@@ -79,7 +79,7 @@ keel::String Emitter::emitExpr(const ASTNode &e)
         if (e.strValue.size() != 1)
             unsupported("multi-char string literal in expression position (char array)");
         return "std::uint16_t("
-               + toStr(keel::as<unsigned>(keel::as<unsigned char>(e.strValue[0])))
+               + toStr(keel::as<keel::u32>(keel::as<keel::u8>(e.strValue[0])))
                + ")";
     case NodeType::IDENTIFIER:
         if (isArrayVar(e.strValue)) {
@@ -1062,7 +1062,7 @@ keel::String Emitter::emitMultiCallExpr(keel::StringRef mangled, keel::StringRef
         unsupported("expression-context multi-output call '" + mangled
                     + "' requires a scalar, object, or by-value array first output");
 
-    const int                id       = multiCallCounter_++;
+    const keel::i32                id       = multiCallCounter_++;
     keel::String             callArgs = keel::String::from(argList);
     keel::Array<keel::String> decls;
     const keel::String       out0Tmp  = "_numkit_mc_" + toStr(id) + "_0";

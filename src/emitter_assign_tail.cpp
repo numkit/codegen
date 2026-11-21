@@ -783,14 +783,14 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
             const ArrayInfo  &A = arrayAt(rhs.children[0]->strValue);
             const keel::usize r = A.ndDims.size();
             keel::Array<bool> colon(r, false);
-            int               lastCol = -1, scalarN = 0;
+            keel::i32               lastCol = -1, scalarN = 0;
             bool              allCS = true;
             for (keel::usize k = 0; k < r; ++k) {
                 const ASTNode &s     = *rhs.children[k + 1];
                 const bool     isCol = s.type == NodeType::COLON_EXPR && s.children.empty();
                 colon[k]             = isCol;
                 if (isCol)
-                    lastCol = keel::as<int>(k);
+                    lastCol = keel::as<keel::i32>(k);
                 else if (s.type != NodeType::COLON_EXPR)
                     ++scalarN;
                 else {
@@ -930,7 +930,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 const ArrayInfo    &M   = arrayAt(name);
                 const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
                 if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                    const int  dimv = keel::as<int>(rhs.children[2]->numValue);
+                    const keel::i32  dimv = keel::as<keel::i32>(rhs.children[2]->numValue);
                     const bool descend =
                         rhs.children.size() == 4 && rhs.children[3]->strValue == "descend";
                     const keel::StringRef sd = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
@@ -1841,9 +1841,9 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
             && arrayAt(name).dtype == ValueType::CHAR
             && rhs.type == NodeType::STRING_LITERAL) {
             keel::String codes;
-            for (unsigned char ch : rhs.strValue)
+            for (keel::u8 ch : rhs.strValue)
                 codes += (codes.empty() ? "" : ", ")
-                         + ("std::uint16_t(" + toStr(keel::as<unsigned>(ch)) + ")");
+                         + ("std::uint16_t(" + toStr(keel::as<keel::u32>(ch)) + ")");
             line(cppIdent(name) + ".assign({" + codes + "});");
             types_.set(name, inferExpr(rhs, types_, reg_, classes_));
             return;
@@ -1871,9 +1871,9 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                         line(cppIdent(name) + ".push_back(" + op.dataExpr + "[_numkit_i]);");
                         close();
                     } else if (el->type == NodeType::STRING_LITERAL) {
-                        for (unsigned char ch : el->strValue)  // append a char literal's units
+                        for (keel::u8 ch : el->strValue)  // append a char literal's units
                             line(cppIdent(name) + ".push_back(std::uint16_t("
-                                 + toStr(keel::as<unsigned>(ch)) + "));");
+                                 + toStr(keel::as<keel::u32>(ch)) + "));");
                     } else if (inferExpr(*el, types_, reg_, classes_).type.shape.isScalar()) {
                         line(cppIdent(name) + ".push_back(" + emitExpr(*el) + ");");  // append one scalar
                     } else {

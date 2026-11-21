@@ -992,7 +992,7 @@ static keel::String emitAllStructs(const ClassRegistry *classes)
     keel::String s;
     if (classes)
         for (keel::usize i = 0; i < classes->size(); ++i)
-            s += emitClassStruct(*classes->byId(keel::as<int>(i)));
+            s += emitClassStruct(*classes->byId(keel::as<keel::i32>(i)));
     return s;
 }
 

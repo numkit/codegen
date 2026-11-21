@@ -1,5 +1,6 @@
 // codegen/src/emitter_stmt.cpp — control-flow and statement lowering.
 
+#include <keel/core.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen::detail {
@@ -23,7 +24,7 @@ void Emitter::emitFor(const ASTNode &s)
                                 ConstVal::unknown()};
     TypeEnv cur       = types_;
     bool    converged = false;
-    for (int i = 0; i < kMaxFixpoint; ++i) {
+    for (keel::i32 i = 0; i < kMaxFixpoint; ++i) {
         TypeEnv bodyEnv = cur;
         bodyEnv.set(loopVar, iterVal);
         inferStmt(body, bodyEnv, reg_, nullptr, classes_);
@@ -99,7 +100,7 @@ void Emitter::emitWhile(const ASTNode &s)
 
     TypeEnv cur       = types_;
     bool    converged = false;
-    for (int i = 0; i < kMaxFixpoint; ++i) {
+    for (keel::i32 i = 0; i < kMaxFixpoint; ++i) {
         TypeEnv bodyEnv = cur;
         inferStmt(body, bodyEnv, reg_, nullptr, classes_);
         TypeEnv next = joinEnv(cur, bodyEnv);

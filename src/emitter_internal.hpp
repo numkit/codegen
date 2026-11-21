@@ -25,7 +25,7 @@ keel::String cppArrayElemType(ValueType dtype);
 
 namespace numkit::codegen::detail {
 
-constexpr int kMaxFixpoint = 16;  // matches inference.cpp; lattice is shallow
+constexpr keel::i32 kMaxFixpoint = 16;  // matches inference.cpp; lattice is shallow
 
 // ── String-assembly helpers (keel::String-backed, emitter-internal only) ─────
 inline keel::String strCat2(keel::StringRef a, keel::StringRef b)
@@ -282,7 +282,7 @@ void         syncIntermediateStructLocals(keel::StringRef prefix, const StructLa
                                           TypeEnv &env);
 bool         isBufferArrayType(const InferredType &t);
 bool         isByValueReturnArrayType(const InferredType &t);
-keel::String cppObjectType(int classId, const ClassRegistry *classes);
+keel::String cppObjectType(keel::i32 classId, const ClassRegistry *classes);
 OptFacts     analyzeOptimizations(const ASTNode &body,
                                   const keel::HashMap<keel::String, ArrayInfo> &arrays);
 
@@ -402,7 +402,7 @@ public:
 private:
     void line(keel::StringRef s)
     {
-        for (int i = 0; i < indent_ * 4; ++i) out_.push_back(' ');
+        for (keel::i32 i = 0; i < indent_ * 4; ++i) out_.push_back(' ');
         out_.append(s);
         out_.push_back('\n');
     }
@@ -520,10 +520,10 @@ private:
     }
 
     keel::String                                out_;
-    int                                         indent_           = 1;
-    int                                         switchCounter_    = 0;  // unique switch-selector temp ids
-    int                                         multiCallCounter_ = 0;  // unique multi-output expr temp ids
-    int                                         aliasCounter_     = 0;  // unique call input-alias temp ids
+    keel::i32                                         indent_           = 1;
+    keel::i32                                         switchCounter_    = 0;  // unique switch-selector temp ids
+    keel::i32                                         multiCallCounter_ = 0;  // unique multi-output expr temp ids
+    keel::i32                                         aliasCounter_     = 0;  // unique call input-alias temp ids
     keel::HashMap<keel::String, StrPair>        callAliasInputs_;
     TypeEnv                                     types_;
     const TransferRegistry                     &reg_;

@@ -56,7 +56,7 @@ struct ClassField {
 struct ClassInfo {
     keel::String                                name;
     bool                                        isHandle = false;
-    int                                         id       = -1;
+    keel::i32                                         id       = -1;
     keel::Array<ClassField>                     fields;
     keel::HashMap<keel::String, const ASTNode *> methods;  // name -> FUNCTION_DEF
     const ASTNode                              *def = nullptr;  // the CLASSDEF_DEF
@@ -97,16 +97,16 @@ public:
     ClassRegistry &operator=(ClassRegistry &&) noexcept = default;
     ~ClassRegistry() noexcept = default;
 
-    int              add(ClassInfo info);  // assigns + returns the classId
-    const ClassInfo *byId(int id) const;
+    keel::i32              add(ClassInfo info);  // assigns + returns the classId
+    const ClassInfo *byId(keel::i32 id) const;
     const ClassInfo *byName(keel::StringRef name) const;
-    int              idOf(keel::StringRef name) const;  // -1 if absent
+    keel::i32              idOf(keel::StringRef name) const;  // -1 if absent
     bool             has(keel::StringRef name) const { return idOf(name) >= 0; }
     keel::usize      size() const { return classes_.size(); }
 
 private:
     keel::Array<ClassInfo>              classes_;
-    keel::HashMap<keel::String, int>    byName_;
+    keel::HashMap<keel::String, keel::i32>    byName_;
 };
 
 // Why `classDef` is outside the v1 compilable subset; empty string =
@@ -118,7 +118,7 @@ keel::String classRefusalReason(const ASTNode &classDef);
 // field types are inferred from property defaults under `reg`. Throws
 // std::runtime_error when the class is refused (classRefusalReason) or a
 // property lacks a concrete-typed default.
-ClassInfo buildClassInfo(const ASTNode &classDef, int id, const TransferRegistry &reg);
+ClassInfo buildClassInfo(const ASTNode &classDef, keel::i32 id, const TransferRegistry &reg);
 
 // Collect every CLASSDEF_DEF reachable in `root` into `reg`. Throws on a
 // refused class (loud, per §7a). Returns the number added.

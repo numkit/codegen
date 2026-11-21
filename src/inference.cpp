@@ -246,13 +246,13 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
                     ConstVal::unknown()};
         if (r >= 4) {
             bool allCS   = true;
-            int  lastCol = -1;
-            int  scalarN = 0;
+            keel::i32  lastCol = -1;
+            keel::i32  scalarN = 0;
             for (keel::usize kk = 1; kk <= r; ++kk) {
                 const bool isCol = expr.children[kk]->type == NodeType::COLON_EXPR
                                    && expr.children[kk]->children.empty();
                 if (isCol)
-                    lastCol = keel::as<int>(kk) - 1;
+                    lastCol = keel::as<keel::i32>(kk) - 1;
                 else if (expr.children[kk]->type != NodeType::COLON_EXPR
                          && isScalarValue(argVals[kk - 1]))
                     ++scalarN;
@@ -779,7 +779,7 @@ AbstractValue forIterValue(const InferredType &range)
 // Fixpoint iteration cap. The lattice has tiny height (a variable can
 // only widen Concrete -> Concrete' -> Dynamic), so the monotone sequence
 // converges in a handful of steps; this is a defensive backstop.
-constexpr int kMaxFixpoint = 16;
+constexpr keel::i32 kMaxFixpoint = 16;
 
 // Join `t` into a decl-type recorder at variable `name` (Bottom identity
 // for a not-yet-present variable). No-op when `declOut` is null.
@@ -1078,7 +1078,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
 
         TypeEnv cur       = env;
         bool    converged = false;
-        for (int i = 0; i < kMaxFixpoint; ++i) {
+        for (keel::i32 i = 0; i < kMaxFixpoint; ++i) {
             TypeEnv bodyEnv = cur;
             bodyEnv.set(loopVar, iterVal);
             inferStmt(body, bodyEnv, reg, declOut, classes);
@@ -1117,7 +1117,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
         const ASTNode &body = *stmt.children[1];
         TypeEnv cur       = env;
         bool    converged = false;
-        for (int i = 0; i < kMaxFixpoint; ++i) {
+        for (keel::i32 i = 0; i < kMaxFixpoint; ++i) {
             TypeEnv bodyEnv = cur;
             inferStmt(body, bodyEnv, reg, declOut, classes);
             TypeEnv next = joinEnv(cur, bodyEnv);

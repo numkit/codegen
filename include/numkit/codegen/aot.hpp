@@ -116,11 +116,11 @@ CompileResult compileToSharedLibrary(keel::StringRef cppSource,
 // (0 on success) and the captured output. Native-only — under Emscripten a
 // process spawn is meaningless, so this returns -1 with an explanatory `log`.
 struct RunResult {
-    int          exitCode = -1;
+    keel::i32          exitCode = -1;
     keel::String log;      // captured stdout+stderr
 
     RunResult() noexcept = default;
-    RunResult(int ec, keel::String l = {}) noexcept : exitCode(ec), log(keel::move(l)) {}
+    RunResult(keel::i32 ec, keel::String l = {}) noexcept : exitCode(ec), log(keel::move(l)) {}
     RunResult(const RunResult &o) : exitCode(o.exitCode), log(o.log.clone()) {}
     RunResult &operator=(const RunResult &o)
     {

@@ -701,14 +701,14 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         && arrayAt(rhs.strValue).dtype == ValueType::DOUBLE) {
         const keel::usize r = ai.ndDims.size();
         keel::Array<bool> colon(r, false);
-        int               lastCol = -1, scalarN = 0;
+        keel::i32               lastCol = -1, scalarN = 0;
         bool              allCS = true;
         for (keel::usize k = 0; k < r; ++k) {
             const ASTNode &s     = *lhsCall.children[k + 1];
             const bool     isCol = s.type == NodeType::COLON_EXPR && s.children.empty();
             colon[k]             = isCol;
             if (isCol)
-                lastCol = keel::as<int>(k);
+                lastCol = keel::as<keel::i32>(k);
             else if (s.type != NodeType::COLON_EXPR
                      && inferExpr(s, types_, reg_, classes_).type.shape.isScalar())
                 ++scalarN;

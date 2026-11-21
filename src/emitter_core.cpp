@@ -357,7 +357,7 @@ bool isByValueReturnArrayType(const InferredType &t)
 
 // The C++ variable type for an object: a value class is the plain struct
 // (value semantics); a handle class is numkit_rt::handle<T> (shared reference).
-keel::String cppObjectType(int classId, const ClassRegistry *classes)
+keel::String cppObjectType(keel::i32 classId, const ClassRegistry *classes)
 {
     const ClassInfo *ci = classes ? classes->byId(classId) : nullptr;
     if (!ci) unsupported("object type with no class registry / unknown classId");
@@ -473,9 +473,9 @@ bool collectCleanIndexUses(const ASTNode &node, keel::StringRef k,
     return true;
 }
 
-int countIdentUses(const ASTNode &node, keel::StringRef name)
+keel::i32 countIdentUses(const ASTNode &node, keel::StringRef name)
 {
-    int n = (node.type == NodeType::IDENTIFIER && node.strValue == name) ? 1 : 0;
+    keel::i32 n = (node.type == NodeType::IDENTIFIER && node.strValue == name) ? 1 : 0;
     for (const auto &c : node.children) if (c) n += countIdentUses(*c, name);
     for (const auto &br : node.branches) {
         if (br.cond) n += countIdentUses(*br.cond, name);
@@ -650,7 +650,7 @@ keel::String cEscape(keel::StringRef s, bool &ok)
     ok = true;
     keel::String out;
     for (char ch : s) {
-        const unsigned char c = keel::as<unsigned char>(ch);
+        const keel::u8 c = keel::as<keel::u8>(ch);
         if (c < 32 || c > 126) { ok = false; return {}; }  // non-printable -> refuse
         if (c == '\\' || c == '"') out += '\\';
         out += keel::as<char>(c);
