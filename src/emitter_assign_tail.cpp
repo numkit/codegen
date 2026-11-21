@@ -126,9 +126,9 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
             && rhs.children[0]->strValue == "cat"
             && rhs.children[1]->type == NodeType::NUMBER_LITERAL
             && rhs.children[1]->numValue == 3.0) {
-            const std::size_t nOps = rhs.children.size() - 2;
+            const keel::usize nOps = rhs.children.size() - 2;
             bool              allOk = true;
-            for (std::size_t i = 0; i < nOps && allOk; ++i) {
+            for (keel::usize i = 0; i < nOps && allOk; ++i) {
                 const ASTNode &c = *rhs.children[2 + i];
                 if (!(c.type == NodeType::IDENTIFIER && isArrayVar(c.strValue) && c.strValue != name)) {
                     allOk = false;
@@ -149,7 +149,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 line("const std::size_t _numkit_ac = " + dimExpr(A0, 1) + ";");
                 line("const std::size_t _numkit_pg = _numkit_ar * _numkit_ac;");  // one-page element count
                 keel::String totalPages;
-                for (std::size_t i = 0; i < nOps; ++i) {
+                for (keel::usize i = 0; i < nOps; ++i) {
                     const ArrayInfo  &op = arrayAt(rhs.children[2 + i]->strValue);
                     if (i > 0)
                         line("if (" + dimExpr(op, 0) + " != _numkit_ar || " + dimExpr(op, 1)
@@ -165,7 +165,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 line(M.ndDims[2] + " = " + totalPages + ";");
                 line(cppIdent(name) + ".assign(_numkit_pg * (" + totalPages + "), 0.0);");
                 line("std::size_t _numkit_off = 0;");
-                for (std::size_t i = 0; i < nOps; ++i) {
+                for (keel::usize i = 0; i < nOps; ++i) {
                     const ArrayInfo &op = arrayAt(rhs.children[2 + i]->strValue);
                     line("{");
                     ++indent_;
@@ -195,9 +195,9 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
             && rhs.children[0]->strValue == "cat"
             && rhs.children[1]->type == NodeType::NUMBER_LITERAL
             && rhs.children[1]->numValue == 4.0) {
-            const std::size_t nOps = rhs.children.size() - 2;
+            const keel::usize nOps = rhs.children.size() - 2;
             bool              allOk = true;
-            for (std::size_t i = 0; i < nOps && allOk; ++i) {
+            for (keel::usize i = 0; i < nOps && allOk; ++i) {
                 const ASTNode &c = *rhs.children[2 + i];
                 if (!(c.type == NodeType::IDENTIFIER && isArrayVar(c.strValue) && c.strValue != name)) {
                     allOk = false;
@@ -219,7 +219,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 line("const std::size_t _numkit_d2 = " + dimExpr(A0, 2) + ";");
                 line("const std::size_t _numkit_sl = _numkit_d0 * _numkit_d1 * _numkit_d2;");  // one-slab elems
                 keel::String totalSlabs;
-                for (std::size_t i = 0; i < nOps; ++i) {
+                for (keel::usize i = 0; i < nOps; ++i) {
                     const ArrayInfo &op = arrayAt(rhs.children[2 + i]->strValue);
                     if (i > 0)
                         line("if (" + dimExpr(op, 0) + " != _numkit_d0 || " + dimExpr(op, 1)
@@ -237,7 +237,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 line(M.ndDims[3] + " = " + totalSlabs + ";");
                 line(cppIdent(name) + ".assign(_numkit_sl * (" + totalSlabs + "), 0.0);");
                 line("std::size_t _numkit_off = 0;");
-                for (std::size_t i = 0; i < nOps; ++i) {
+                for (keel::usize i = 0; i < nOps; ++i) {
                     const ArrayInfo &op = arrayAt(rhs.children[2 + i]->strValue);
                     line("{");
                     ++indent_;
@@ -475,10 +475,10 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
             && arrayAt(rhs.children[0]->strValue).dtype == ValueType::DOUBLE
             && rhs.children.size() == arrayAt(rhs.children[0]->strValue).ndDims.size() + 1) {
             const ArrayInfo  &A = arrayAt(rhs.children[0]->strValue);
-            const std::size_t r = A.ndDims.size();
+            const keel::usize r = A.ndDims.size();
             bool              ok = rhs.children[r]->type == NodeType::COLON_EXPR
                       && rhs.children[r]->children.size() == 2;
-            for (std::size_t i = 1; i < r && ok; ++i)
+            for (keel::usize i = 1; i < r && ok; ++i)
                 if (!(rhs.children[i]->type == NodeType::COLON_EXPR
                       && rhs.children[i]->children.empty()))
                     ok = false;
@@ -495,7 +495,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                     line("{");
                     ++indent_;
                     keel::String slabExpr;
-                    for (std::size_t i = 0; i + 1 < r; ++i) {  // leading r-1 dims form one slab
+                    for (keel::usize i = 0; i + 1 < r; ++i) {  // leading r-1 dims form one slab
                         line("const std::size_t _numkit_d" + toStr(i) + " = " + dimExpr(A, i)
                              + ";");
                         slabExpr += (i ? " * " : "") + ("_numkit_d" + toStr(i));
@@ -510,7 +510,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                     line("    throw std::out_of_range(\"numkit: range out of bounds\");");
                     line("const std::size_t _numkit_nb = _numkit_k2_0 - _numkit_k1_0 + 1;");
                     line("const std::size_t _numkit_off = _numkit_k1_0 * _numkit_slab;");
-                    for (std::size_t i = 0; i + 1 < r; ++i)
+                    for (keel::usize i = 0; i + 1 < r; ++i)
                         line(B.ndDims[i] + " = _numkit_d" + toStr(i) + ";");
                     line(B.ndDims[r - 1] + " = _numkit_nb;");
                     line(cppIdent(name) + ".assign(" + A.dataExpr + " + _numkit_off, " + A.dataExpr
@@ -780,11 +780,11 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
             && arrayAt(rhs.children[0]->strValue).ndDims.size() == rhs.children.size() - 1
             && arrayAt(rhs.children[0]->strValue).dtype == ValueType::DOUBLE) {
             const ArrayInfo  &A = arrayAt(rhs.children[0]->strValue);
-            const std::size_t r = A.ndDims.size();
+            const keel::usize r = A.ndDims.size();
             keel::Array<bool> colon(r, false);
             int               lastCol = -1, scalarN = 0;
             bool              allCS = true;
-            for (std::size_t k = 0; k < r; ++k) {
+            for (keel::usize k = 0; k < r; ++k) {
                 const ASTNode &s     = *rhs.children[k + 1];
                 const bool     isCol = s.type == NodeType::COLON_EXPR && s.children.empty();
                 colon[k]             = isCol;
@@ -801,24 +801,24 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             bool scalarsOk = allCS && lastCol >= 0 && scalarN > 0 && res.type.isConcrete()
                              && !res.type.shape.isScalar();
-            for (std::size_t k = 0; k < r && scalarsOk; ++k)
+            for (keel::usize k = 0; k < r && scalarsOk; ++k)
                 if (!colon[k]
                     && !inferExpr(*rhs.children[k + 1], types_, reg_, classes_).type.shape.isScalar())
                     scalarsOk = false;
-            const std::size_t keptRank =
-                lastCol >= 0 ? (static_cast<std::size_t>(lastCol) + 1 < 2
+            const keel::usize keptRank =
+                lastCol >= 0 ? (static_cast<keel::usize>(lastCol) + 1 < 2
                                     ? 2u
-                                    : static_cast<std::size_t>(lastCol) + 1)
+                                    : static_cast<keel::usize>(lastCol) + 1)
                              : 0;
             if (scalarsOk && B.ndDims.size() == keptRank) {
                 line("{");
                 ++indent_;
                 line("const std::size_t _numkit_As0 = 1;");  // A column-major strides
-                for (std::size_t k = 1; k < r; ++k)
+                for (keel::usize k = 1; k < r; ++k)
                     line("const std::size_t _numkit_As" + toStr(k) + " = _numkit_As"
                          + toStr(k - 1) + " * (" + dimExpr(A, k - 1) + ");");
                 line("std::size_t _numkit_base = 0;");  // fixed offset from the scalar subscripts
-                for (std::size_t k = 0; k < r; ++k) {
+                for (keel::usize k = 0; k < r; ++k) {
                     if (colon[k]) continue;
                     endStack_.push_back(dimExpr(A, k));
                     const keel::String sk = emitExpr(*rhs.children[k + 1]);
@@ -827,21 +827,21 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                          + dimExpr(A, k) + ", \"numkit: slice index out of bounds\");");
                     line("  _numkit_base += _numkit_s * _numkit_As" + toStr(k) + "; }");
                 }
-                for (std::size_t kk = 0; kk < keptRank; ++kk)  // output (kept) dims
+                for (keel::usize kk = 0; kk < keptRank; ++kk)  // output (kept) dims
                     line("const std::size_t _numkit_Bd" + toStr(kk) + " = "
                          + (colon[kk] ? dimExpr(A, kk) : keel::String("1")) + ";");
                 line("const std::size_t _numkit_Bs0 = 1;");  // output strides
-                for (std::size_t kk = 1; kk < keptRank; ++kk)
+                for (keel::usize kk = 1; kk < keptRank; ++kk)
                     line("const std::size_t _numkit_Bs" + toStr(kk) + " = _numkit_Bs"
                          + toStr(kk - 1) + " * _numkit_Bd" + toStr(kk - 1) + ";");
                 keel::String numel = keel::String::from("_numkit_Bd0");
-                for (std::size_t kk = 1; kk < keptRank; ++kk) numel += " * _numkit_Bd" + toStr(kk);
-                for (std::size_t kk = 0; kk < keptRank; ++kk)
+                for (keel::usize kk = 1; kk < keptRank; ++kk) numel += " * _numkit_Bd" + toStr(kk);
+                for (keel::usize kk = 0; kk < keptRank; ++kk)
                     line(B.ndDims[kk] + " = _numkit_Bd" + toStr(kk) + ";");
                 line(cppIdent(name) + ".assign((" + numel + "), 0.0);");
                 open("for (std::size_t _numkit_o = 0; _numkit_o < (" + numel + "); ++_numkit_o)");
                 line("std::size_t _numkit_af = _numkit_base;");
-                for (std::size_t kk = 0; kk < keptRank; ++kk)
+                for (keel::usize kk = 0; kk < keptRank; ++kk)
                     if (colon[kk])
                         line("_numkit_af += ((_numkit_o / _numkit_Bs" + toStr(kk) + ") % _numkit_Bd"
                              + toStr(kk) + ") * _numkit_As" + toStr(kk) + ";");
@@ -1355,9 +1355,9 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                     || res.type.dtype == ValueType::CHAR)) {
                 const ArrayInfo    &ai     = arrayAt(name);
                 const keel::String &callee = rhs.children[0]->strValue;
-                const std::size_t nargs  = rhs.children.size() - 1;
+                const keel::usize nargs  = rhs.children.size() - 1;
                 keel::String       boxed;
-                for (std::size_t i = 1; i < rhs.children.size(); ++i) {
+                for (keel::usize i = 1; i < rhs.children.size(); ++i) {
                     const ASTNode &arg = *rhs.children[i];
                     if (i > 1) boxed += ", ";
                     if (arg.type == NodeType::IDENTIFIER && isArrayVar(arg.strValue)) {
@@ -1486,7 +1486,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                         bound = "(" + prod + ")";
                         for (const keel::String &an : sortedSrc) {
                             const ArrayInfo &sa = arrayAt(an);
-                            for (std::size_t k = 0; k < ref.ndDims.size(); ++k) {
+                            for (keel::usize k = 0; k < ref.ndDims.size(); ++k) {
                                 if (sa.ndDims[k] == ref.ndDims[k]) continue;
                                 guard += (guard.empty() ? "" : " || ")
                                          + (sa.ndDims[k] + " != " + ref.ndDims[k]);
@@ -1512,7 +1512,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                     // or 1-D dst has no companions -> this is a no-op for them.)
                     if (ai.isLocal && ai.ndRuntimeLocal) {
                         const ArrayInfo &ref = arrayAt(sortedSrc[0]);
-                        for (std::size_t k = 0; k < ai.ndDims.size(); ++k)
+                        for (keel::usize k = 0; k < ai.ndDims.size(); ++k)
                             line(ai.ndDims[k] + " = " + ref.ndDims[k] + ";");
                     }
                     // Opt-in ops-kernel tier: a SINGLE binary op over exactly
@@ -1777,7 +1777,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 keel::String numel;  // flat element count (1-D len / 2-D rows*cols / N-D prod)
                 if (bx.isND) {
                     numel = bx.ndDims[0].clone();
-                    for (std::size_t i = 1; i < bx.ndDims.size(); ++i) numel += " * " + bx.ndDims[i];
+                    for (keel::usize i = 1; i < bx.ndDims.size(); ++i) numel += " * " + bx.ndDims[i];
                 } else if (bx.is2D) {
                     numel = bx.rowsVar + " * " + bx.colsVar;
                 } else {
@@ -1916,7 +1916,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 line(M.ndDims[0] + " = _numkit_n;");
                 line(M.ndDims[1] + " = " + k + ";");
                 line(cppIdent(name) + ".assign(_numkit_n * " + k + ", 0.0);");
-                for (std::size_t j = 0; j < rhs.children[0]->children.size(); ++j) {
+                for (keel::usize j = 0; j < rhs.children[0]->children.size(); ++j) {
                     const ArrayInfo &cj = arrayAt(rhs.children[0]->children[j]->strValue);
                     open("for (std::size_t _numkit_i = 0; _numkit_i < _numkit_n; ++_numkit_i)");
                     line(cppIdent(name) + "[_numkit_i + " + toStr(j) + " * _numkit_n] = "
@@ -1968,7 +1968,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 ++indent_;
                 line(M.ndDims[0] + " = " + rows + ";");
                 line(M.ndDims[1] + " = (" + totalCols + ");");
-                for (std::size_t e = 1; e < rhs.children[0]->children.size(); ++e) {
+                for (keel::usize e = 1; e < rhs.children[0]->children.size(); ++e) {
                     const ArrayInfo &op = arrayAt(rhs.children[0]->children[e]->strValue);
                     line("if (" + dimExpr(op, 0) + " != " + rows
                          + ") throw std::out_of_range(\"numkit: horzcat row dimensions must "
@@ -2050,7 +2050,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 line(M.ndDims[0] + " = " + k + ";");                   // rows = k
                 line(M.ndDims[1] + " = _numkit_n;");
                 line(cppIdent(name) + ".assign(" + k + " * _numkit_n, 0.0);");
-                for (std::size_t i = 0; i < rhs.children.size(); ++i) {
+                for (keel::usize i = 0; i < rhs.children.size(); ++i) {
                     const ArrayInfo &ri = arrayAt(rhs.children[i]->children[0]->strValue);
                     open("for (std::size_t _numkit_j = 0; _numkit_j < _numkit_n; ++_numkit_j)");
                     line(cppIdent(name) + "[" + toStr(i) + " + _numkit_j * " + k + "] = "
@@ -2106,7 +2106,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 line("const std::size_t _numkit_nc = " + cols + ";");          // shared cols
                 line(M.ndDims[0] + " = _numkit_tr;");
                 line(M.ndDims[1] + " = _numkit_nc;");
-                for (std::size_t e = 1; e < rhs.children.size(); ++e) {
+                for (keel::usize e = 1; e < rhs.children.size(); ++e) {
                     const ArrayInfo &op = arrayAt(rhs.children[e]->children[0]->strValue);
                     line("if (" + dimExpr(op, 1) + " != _numkit_nc) throw std::out_of_range(\""
                          "numkit: vertcat column dimensions must agree\");");
@@ -2219,8 +2219,8 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                 || (arrayAt(name).isND && arrayAt(name).ndDims.size() == 2))
             && rhs.type == NodeType::MATRIX_LITERAL && rhs.children.size() > 1
             && rhs.children[0] && rhs.children[0]->children.size() > 1) {
-            const std::size_t R      = rhs.children.size();
-            const std::size_t C      = rhs.children[0]->children.size();
+            const keel::usize R      = rhs.children.size();
+            const keel::usize C      = rhs.children[0]->children.size();
             bool              gridOk = true;
             for (const auto &rowN : rhs.children) {
                 if (!rowN || rowN->children.size() != C) { gridOk = false; break; }
@@ -2242,8 +2242,8 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                     line(M.ndDims[1] + " = " + toStr(C) + ";");
                 }
                 line(cppIdent(name) + ".assign(" + toStr(R * C) + ", " + zeroLiteral(M.dtype) + ");");
-                for (std::size_t c = 0; c < C; ++c) {
-                    for (std::size_t r = 0; r < R; ++r) {
+                for (keel::usize c = 0; c < C; ++c) {
+                    for (keel::usize r = 0; r < R; ++r) {
                         line(cppIdent(name) + "[" + toStr(c * R + r) + "] = "
                              + emitExpr(*rhs.children[r]->children[c]) + ";");
                     }
@@ -2286,7 +2286,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                     keel::String numel;
                     if (A.isND) {
                         numel = A.ndDims[0].clone();
-                        for (std::size_t i = 1; i < A.ndDims.size(); ++i)
+                        for (keel::usize i = 1; i < A.ndDims.size(); ++i)
                             numel += " * " + A.ndDims[i];
                     } else if (A.is2D) {
                         numel = A.rowsVar + " * " + A.colsVar;
@@ -2296,7 +2296,7 @@ void Emitter::emitAssignIdentifierTail(const ASTNode &lhs, const ASTNode &rhs,
                     line("{");
                     ++indent_;
                     if (B.isND && B.ndRuntimeLocal)
-                        for (std::size_t k = 0; k < B.ndDims.size(); ++k)
+                        for (keel::usize k = 0; k < B.ndDims.size(); ++k)
                             line(B.ndDims[k] + " = " + dimExpr(A, k) + ";");
                     line(cppIdent(name) + ".assign(" + A.dataExpr + ", " + A.dataExpr + " + (" + numel
                          + "));");

@@ -30,7 +30,7 @@ InferredType sizeTransfer(keel::ArrayRef<ArgInfo> args)
     if (args.size() == 2) return InferredType::scalar(ValueType::DOUBLE);  // size(A, dim)
     if (args.size() != 1) return InferredType::dynamic();
     const Shape &sh = args[0].type.shape;
-    std::size_t  rank = 0;
+    keel::usize  rank = 0;
     switch (sh.kind) {
     case ShapeKind::Scalar:
     case ShapeKind::RowVector:
@@ -307,7 +307,7 @@ InferredType rot90Transfer(keel::ArrayRef<ArgInfo> args)
     // rot90(A, k) with a non-negative LITERAL k: k%4 == 0/2 keeps the shape, 1/3 swaps it. A
     // non-literal / negative k -> Dynamic (bridged).
     if (!args[1].constant.isKnown() || args[1].constant.value < 0) return InferredType::dynamic();
-    const std::size_t r = static_cast<std::size_t>(args[1].constant.value) % 4;
+    const keel::usize r = static_cast<keel::usize>(args[1].constant.value) % 4;
     return (r == 0 || r == 2) ? same() : swapped();
 }
 
@@ -336,7 +336,7 @@ InferredType kronTransfer(keel::ArrayRef<ArgInfo> args)
 InferredType catTransfer(keel::ArrayRef<ArgInfo> args)
 {
     if (args.size() < 3) return InferredType::dynamic();  // dim + >=2 arrays
-    std::size_t dim = 0;
+    keel::usize dim = 0;
     if (!args[0].constant.asDim(dim) || dim < 1 || dim > 4) return InferredType::dynamic();
     auto isMat = [](const Shape &s) {
         return (s.kind == ShapeKind::KnownDims && s.rows > 1 && s.cols > 1)
@@ -359,7 +359,7 @@ InferredType catTransfer(keel::ArrayRef<ArgInfo> args)
     // (bridged): the [A B C]/[A;B;C] bracket forms already cover those.
     if (args.size() > 3) {
         if (dim != 3 && dim != 4) return InferredType::dynamic();
-        for (std::size_t i = 1; i < args.size(); ++i) {
+        for (keel::usize i = 1; i < args.size(); ++i) {
             const bool shapeOk = dim == 3 ? okDim3(args[i].type.shape) : okDim4(args[i].type.shape);
             if (!(args[i].type.isConcrete() && args[i].type.dtype == ValueType::DOUBLE && shapeOk))
                 return InferredType::dynamic();
@@ -390,7 +390,7 @@ InferredType permuteTransfer(keel::ArrayRef<ArgInfo> args)
     if (args.size() != 2 || !args[0].type.isConcrete() || !args[1].type.isConcrete())
         return InferredType::dynamic();
     if (args[0].type.dtype != ValueType::DOUBLE) return InferredType::dynamic();
-    std::size_t rank = 0;
+    keel::usize rank = 0;
     if (args[0].type.shape.kind == ShapeKind::NDims) rank = args[0].type.shape.nd.size();
     else if (args[0].type.shape.kind == ShapeKind::KnownDims) rank = 2;
     else return InferredType::dynamic();  // scalar / vector -> permute is ~no-op, bridge
@@ -450,7 +450,7 @@ InferredType sumProdMeanTransfer(keel::ArrayRef<ArgInfo> args)
         default: return InferredType::dynamic();
         }
     }
-    std::size_t dim = 0;
+    keel::usize dim = 0;
     if (args.size() == 2 && is2D && args[1].constant.asDim(dim) && (dim == 1 || dim == 2))
         return InferredType::concrete(args[0].type.dtype,
                                       dim == 1 ? Shape::rowVector() : Shape::colVector());
@@ -510,7 +510,7 @@ InferredType maxMinTransfer(keel::ArrayRef<ArgInfo> args)
         const bool   is2D  = (s.kind == ShapeKind::KnownDims && s.rows > 1 && s.cols > 1)
                           || (s.kind == ShapeKind::NDims && s.nd.size() == 2);
         const bool   isND3 = s.kind == ShapeKind::NDims && s.nd.size() == 3;
-        std::size_t  dim = 0;
+        keel::usize  dim = 0;
         if (is2D && args[2].constant.asDim(dim) && (dim == 1 || dim == 2))
             return InferredType::concrete(args[0].type.dtype,
                                           dim == 1 ? Shape::rowVector() : Shape::colVector());
@@ -551,7 +551,7 @@ InferredType anyAllTransfer(keel::ArrayRef<ArgInfo> args)
         }
     }
     // any(A, dim) / all(A, dim): a 2-D matrix + a literal dim 1|2 -> a LOGICAL 1-D vector.
-    std::size_t dim = 0;
+    keel::usize dim = 0;
     if (args.size() == 2 && is2D && args[1].constant.asDim(dim) && (dim == 1 || dim == 2))
         return InferredType::concrete(ValueType::LOGICAL,
                                       dim == 1 ? Shape::rowVector() : Shape::colVector());
@@ -612,7 +612,7 @@ InferredType diffTransfer(keel::ArrayRef<ArgInfo> args)
         }
     }
     const bool   isND3 = s.kind == ShapeKind::NDims && s.nd.size() == 3;
-    std::size_t  order = 0, dim = 0;
+    keel::usize  order = 0, dim = 0;
     if (args.size() == 3 && args[1].constant.asDim(order) && order == 1
         && args[2].constant.asDim(dim)) {
         if (is2D && (dim == 1 || dim == 2))
@@ -672,7 +672,7 @@ InferredType sortTransfer(keel::ArrayRef<ArgInfo> args)
     if (args.size() == 2 && args[1].type.dtype == ValueType::CHAR) return args[0].type;
     const bool  isND3 = args[0].type.shape.kind == ShapeKind::NDims
                      && args[0].type.shape.nd.size() == 3;
-    std::size_t dim   = 0;
+    keel::usize dim   = 0;
     const bool  okDim = isND3 && args[1].constant.asDim(dim) && (dim == 1 || dim == 2 || dim == 3);
     if (args.size() == 2 && okDim) return args[0].type;  // sort(A, dim)
     if (args.size() == 3 && okDim && args[2].type.dtype == ValueType::CHAR)

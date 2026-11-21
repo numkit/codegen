@@ -131,7 +131,7 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
 {
     if (!base.type.isConcrete() || base.type.shape.kind == ShapeKind::Unknown)
         return AbstractValue::dynamic();
-    const std::size_t nsub = expr.children.size() - 1;
+    const keel::usize nsub = expr.children.size() - 1;
     // Bare colon `A(:)` -> column vector; 1-D colon slice `x(a:b)` / `x(a:s:b)` -> Vector1D.
     if (nsub == 1 && expr.children[1]->type == NodeType::COLON_EXPR) {
         if (expr.children[1]->children.empty())
@@ -182,9 +182,9 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
     }
     if (base.type.shape.kind == ShapeKind::NDims && base.type.shape.nd.size() >= 3
         && nsub == base.type.shape.nd.size()) {
-        const std::size_t r = base.type.shape.nd.size();
+        const keel::usize r = base.type.shape.nd.size();
         bool              pageSlice = true;
-        for (std::size_t i = 1; i < r; ++i)
+        for (keel::usize i = 1; i < r; ++i)
             if (expr.children[i]->type != NodeType::COLON_EXPR
                 || !expr.children[i]->children.empty()) {
                 pageSlice = false;
@@ -248,7 +248,7 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
             bool allCS   = true;
             int  lastCol = -1;
             int  scalarN = 0;
-            for (std::size_t kk = 1; kk <= r; ++kk) {
+            for (keel::usize kk = 1; kk <= r; ++kk) {
                 const bool isCol = expr.children[kk]->type == NodeType::COLON_EXPR
                                    && expr.children[kk]->children.empty();
                 if (isCol)
@@ -262,10 +262,10 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
                 }
             }
             if (allCS && lastCol >= 0 && scalarN > 0) {
-                const std::size_t keptRank =
-                    static_cast<std::size_t>(lastCol) + 1 < 2
+                const keel::usize keptRank =
+                    static_cast<keel::usize>(lastCol) + 1 < 2
                         ? 2u
-                        : static_cast<std::size_t>(lastCol) + 1;
+                        : static_cast<keel::usize>(lastCol) + 1;
                 keel::Array<keel::usize> d(keptRank, keel::usize{0});
                 for (keel::usize kk = 0; kk < keptRank; ++kk)
                     d[kk] = (expr.children[kk + 1]->type == NodeType::COLON_EXPR
@@ -571,7 +571,7 @@ AbstractValue inferExpr(const ASTNode &expr, const TypeEnv &env,
             // Rectangular grid of SCALARS [a b ...; c d ...] -> an R x C 2-D matrix
             // with compile-time KnownDims(R, C).
             if (expr.children[0] && expr.children[0]->children.size() > 1) {
-                const std::size_t C   = expr.children[0]->children.size();
+                const keel::usize C   = expr.children[0]->children.size();
                 ValueType         gdt = ValueType::EMPTY;
                 bool              gok = true;
                 for (const auto &rowN : expr.children) {
@@ -951,7 +951,7 @@ void inferStmt(const ASTNode &stmt, TypeEnv &env, const TransferRegistry &reg,
                 const AbstractValue cur = env.get(base);
                 if (cur.type.isConcrete() && rhs.type.isConcrete()
                     && cur.type.dtype == rhs.type.dtype) {
-                    const std::size_t nidx   = lhs.children.size() - 1;
+                    const keel::usize nidx   = lhs.children.size() - 1;
                     const bool        keep2D = nidx == 2
                                         && cur.type.shape.kind == ShapeKind::KnownDims;
                     const bool keepND =

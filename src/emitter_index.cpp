@@ -22,8 +22,8 @@ keel::String Emitter::emitIndexRead(keel::StringRef base, const ASTNode &call)
             unsupported("N-D index arity for '" + base + "' (expected "
                         + toStr(ai.ndDims.size()) + " subscripts)");
         keel::String dims, subs;
-        for (std::size_t k = 0; k < ai.ndDims.size(); ++k) dims += (k ? ", " : "") + ai.ndDims[k];
-        for (std::size_t i = 1; i < call.children.size(); ++i) {
+        for (keel::usize k = 0; k < ai.ndDims.size(); ++k) dims += (k ? ", " : "") + ai.ndDims[k];
+        for (keel::usize i = 1; i < call.children.size(); ++i) {
             endStack_.push_back(ai.ndDims[i - 1].clone());
             subs += (i > 1 ? ", " : "") + emitExpr(*call.children[i]);
             endStack_.pop_back();
@@ -32,7 +32,7 @@ keel::String Emitter::emitIndexRead(keel::StringRef base, const ASTNode &call)
     }
 
     keel::Array<AbstractValue> idx;
-    for (std::size_t i = 1; i < call.children.size(); ++i)
+    for (keel::usize i = 1; i < call.children.size(); ++i)
         idx.push_back(inferExpr(*call.children[i], types_, reg_, classes_));
 
     const IndexPlan plan = planIndexRead(arrayValue(base), idx);
@@ -98,7 +98,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         const auto arrayNumel = [](const ArrayInfo &x) -> keel::String {
             if (x.isND) {
                 keel::String s = x.ndDims[0].clone();
-                for (std::size_t i = 1; i < x.ndDims.size(); ++i) s += " * " + x.ndDims[i];
+                for (keel::usize i = 1; i < x.ndDims.size(); ++i) s += " * " + x.ndDims[i];
                 return s;
             }
             if (x.is2D) return x.rowsVar + " * " + x.colsVar;
@@ -196,8 +196,8 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         }
         return false;
     };
-    auto extractScalarGridLiteral = [&](const ASTNode &lit, std::size_t &rowsOut,
-                                        std::size_t &colsOut,
+    auto extractScalarGridLiteral = [&](const ASTNode &lit, keel::usize &rowsOut,
+                                        keel::usize &colsOut,
                                         keel::Array<const ASTNode *> &colMajorOut) -> bool {
         colMajorOut.clear();
         rowsOut = 0;
@@ -205,8 +205,8 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         if (lit.type != NodeType::MATRIX_LITERAL || lit.children.empty() || !lit.children[0]
             || lit.children[0]->children.empty())
             return false;
-        const std::size_t R = lit.children.size();
-        const std::size_t C = lit.children[0]->children.size();
+        const keel::usize R = lit.children.size();
+        const keel::usize C = lit.children[0]->children.size();
         for (const auto &rowN : lit.children) {
             if (!rowN || rowN->children.size() != C) return false;
             for (const auto &el : rowN->children) {
@@ -218,14 +218,14 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         rowsOut = R;
         colsOut = C;
         colMajorOut.reserve(R * C);
-        for (std::size_t c = 0; c < C; ++c)
-            for (std::size_t r = 0; r < R; ++r)
+        for (keel::usize c = 0; c < C; ++c)
+            for (keel::usize r = 0; r < R; ++r)
                 colMajorOut.push_back(lit.children[r]->children[c].get());
         return true;
     };
     keel::Array<const ASTNode *> rhsVecLit;
     const bool                   hasRhsVecLit = extractScalarVecLiteral(rhs, rhsVecLit);
-    std::size_t                  rhsGridRows = 0, rhsGridCols = 0;
+    keel::usize                  rhsGridRows = 0, rhsGridCols = 0;
     keel::Array<const ASTNode *> rhsGridLit;
     const bool                   hasRhsGridLit =
         extractScalarGridLiteral(rhs, rhsGridRows, rhsGridCols, rhsGridLit);
@@ -260,7 +260,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         keel::String colData, colLen;
         if (hasRhsVecLit) {
             keel::String elems;
-            for (std::size_t k = 0; k < rhsVecLit.size(); ++k)
+            for (keel::usize k = 0; k < rhsVecLit.size(); ++k)
                 elems += (k ? ", " : "") + emitExpr(*rhsVecLit[k]);
             line("const double _numkit_lit[] = { " + elems + " };");
             colData.assign("_numkit_lit");
@@ -311,7 +311,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         keel::String rowData, rowLen;
         if (hasRhsVecLit) {
             keel::String elems;
-            for (std::size_t k = 0; k < rhsVecLit.size(); ++k)
+            for (keel::usize k = 0; k < rhsVecLit.size(); ++k)
                 elems += (k ? ", " : "") + emitExpr(*rhsVecLit[k]);
             line("const double _numkit_lit[] = { " + elems + " };");
             rowData.assign("_numkit_lit");
@@ -466,7 +466,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         keel::String bData, bNumel;
         if (hasRhsGridLit) {
             keel::String elems;
-            for (std::size_t k = 0; k < rhsGridLit.size(); ++k)
+            for (keel::usize k = 0; k < rhsGridLit.size(); ++k)
                 elems += (k ? ", " : "") + emitExpr(*rhsGridLit[k]);
             line("const double _numkit_lit[] = { " + elems + " };");
             bData.assign("_numkit_lit");
@@ -523,7 +523,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         keel::String bData, bNumel;
         if (hasRhsGridLit) {
             keel::String elems;
-            for (std::size_t k = 0; k < rhsGridLit.size(); ++k)
+            for (keel::usize k = 0; k < rhsGridLit.size(); ++k)
                 elems += (k ? ", " : "") + emitExpr(*rhsGridLit[k]);
             line("const double _numkit_lit[] = { " + elems + " };");
             bData.assign("_numkit_lit");
@@ -587,7 +587,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         keel::String bData, bNumel;
         if (hasRhsGridLit) {
             keel::String elems;
-            for (std::size_t k = 0; k < rhsGridLit.size(); ++k)
+            for (keel::usize k = 0; k < rhsGridLit.size(); ++k)
                 elems += (k ? ", " : "") + emitExpr(*rhsGridLit[k]);
             line("const double _numkit_lit[] = { " + elems + " };");
             bData.assign("_numkit_lit");
@@ -640,10 +640,10 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         && arrayAt(rhs.strValue).isND
         && arrayAt(rhs.strValue).ndDims.size() == ai.ndDims.size()
         && arrayAt(rhs.strValue).dtype == ValueType::DOUBLE) {
-        const std::size_t r = ai.ndDims.size();
+        const keel::usize r = ai.ndDims.size();
         bool              ok = lhsCall.children[r]->type == NodeType::COLON_EXPR
                   && lhsCall.children[r]->children.size() == 2;
-        for (std::size_t i = 1; i < r && ok; ++i)
+        for (keel::usize i = 1; i < r && ok; ++i)
             if (!(lhsCall.children[i]->type == NodeType::COLON_EXPR
                   && lhsCall.children[i]->children.empty()))
                 ok = false;
@@ -660,11 +660,11 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
             line("{");
             ++indent_;
             keel::String slabExpr, bNumel;
-            for (std::size_t i = 0; i + 1 < r; ++i) {
+            for (keel::usize i = 0; i + 1 < r; ++i) {
                 line("const std::size_t _numkit_d" + toStr(i) + " = " + dimExpr(ai, i) + ";");
                 slabExpr += (i ? " * " : "") + ("_numkit_d" + toStr(i));
             }
-            for (std::size_t i = 0; i < r; ++i) bNumel += (i ? " * " : "") + dimExpr(B, i);
+            for (keel::usize i = 0; i < r; ++i) bNumel += (i ? " * " : "") + dimExpr(B, i);
             line("const std::size_t _numkit_slab = " + slabExpr + ";");
             line("const std::size_t _numkit_k1_0 = numkit_rt::check_idx1(" + k1 + ", " + lastDim
                  + ", \"numkit: range out of bounds\");");
@@ -698,11 +698,11 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         && lhsCall.children.size() - 1 == ai.ndDims.size()
         && rhs.type == NodeType::IDENTIFIER && isArrayVar(rhs.strValue) && rhs.strValue != base
         && arrayAt(rhs.strValue).dtype == ValueType::DOUBLE) {
-        const std::size_t r = ai.ndDims.size();
+        const keel::usize r = ai.ndDims.size();
         keel::Array<bool> colon(r, false);
         int               lastCol = -1, scalarN = 0;
         bool              allCS = true;
-        for (std::size_t k = 0; k < r; ++k) {
+        for (keel::usize k = 0; k < r; ++k) {
             const ASTNode &s     = *lhsCall.children[k + 1];
             const bool     isCol = s.type == NodeType::COLON_EXPR && s.children.empty();
             colon[k]             = isCol;
@@ -719,18 +719,18 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         if (allCS && lastCol >= 0 && scalarN > 0) {
             if (!ai.isLocal && !ai.isOutput)
                 unsupported("slice write to a read-only array parameter '" + base + "'");
-            const std::size_t keptRank = static_cast<std::size_t>(lastCol) + 1 < 2
+            const keel::usize keptRank = static_cast<keel::usize>(lastCol) + 1 < 2
                                              ? 2u
-                                             : static_cast<std::size_t>(lastCol) + 1;
+                                             : static_cast<keel::usize>(lastCol) + 1;
             const ArrayInfo  &R        = arrayAt(rhs.strValue);  // value source
             line("{");
             ++indent_;
             line("const std::size_t _numkit_As0 = 1;");  // A column-major strides
-            for (std::size_t k = 1; k < r; ++k)
+            for (keel::usize k = 1; k < r; ++k)
                 line("const std::size_t _numkit_As" + toStr(k) + " = _numkit_As"
                      + toStr(k - 1) + " * (" + dimExpr(ai, k - 1) + ");");
             line("std::size_t _numkit_base = 0;");  // fixed offset from the scalar subscripts
-            for (std::size_t k = 0; k < r; ++k) {
+            for (keel::usize k = 0; k < r; ++k) {
                 if (colon[k]) continue;
                 endStack_.push_back(dimExpr(ai, k));
                 const keel::String sk = emitExpr(*lhsCall.children[k + 1]);
@@ -739,19 +739,19 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
                      + ", \"numkit: slice index out of bounds\");");
                 line("  _numkit_base += _numkit_s * _numkit_As" + toStr(k) + "; }");
             }
-            for (std::size_t kk = 0; kk < keptRank; ++kk)  // kept (output) dims
+            for (keel::usize kk = 0; kk < keptRank; ++kk)  // kept (output) dims
                 line("const std::size_t _numkit_Bd" + toStr(kk) + " = "
                      + (colon[kk] ? dimExpr(ai, kk) : keel::String("1")) + ";");
             line("const std::size_t _numkit_Bs0 = 1;");  // kept-region strides
-            for (std::size_t kk = 1; kk < keptRank; ++kk)
+            for (keel::usize kk = 1; kk < keptRank; ++kk)
                 line("const std::size_t _numkit_Bs" + toStr(kk) + " = _numkit_Bs"
                      + toStr(kk - 1) + " * _numkit_Bd" + toStr(kk - 1) + ";");
             keel::String numel = keel::String::from("_numkit_Bd0");
-            for (std::size_t kk = 1; kk < keptRank; ++kk) numel += " * _numkit_Bd" + toStr(kk);
+            for (keel::usize kk = 1; kk < keptRank; ++kk) numel += " * _numkit_Bd" + toStr(kk);
             keel::String rNumel;  // rhs element count
             if (R.isND) {
                 rNumel = R.ndDims[0].clone();
-                for (std::size_t i = 1; i < R.ndDims.size(); ++i) rNumel += " * " + R.ndDims[i];
+                for (keel::usize i = 1; i < R.ndDims.size(); ++i) rNumel += " * " + R.ndDims[i];
             } else if (R.is2D) {
                 rNumel = dimExpr(R, 0) + " * " + dimExpr(R, 1);
             } else {
@@ -761,7 +761,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
             line("    throw std::out_of_range(\"numkit: slice assignment size mismatch\");");
             open("for (std::size_t _numkit_o = 0; _numkit_o < (" + numel + "); ++_numkit_o)");
             line("std::size_t _numkit_af = _numkit_base;");
-            for (std::size_t kk = 0; kk < keptRank; ++kk)
+            for (keel::usize kk = 0; kk < keptRank; ++kk)
                 if (colon[kk])
                     line("_numkit_af += ((_numkit_o / _numkit_Bs" + toStr(kk) + ") % _numkit_Bd"
                          + toStr(kk) + ") * _numkit_As" + toStr(kk) + ";");
@@ -793,13 +793,13 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         if (lhsCall.children.size() - 1 != ai.ndDims.size())
             unsupported("N-D index arity for '" + base + "' (expected "
                         + toStr(ai.ndDims.size()) + " subscripts)");
-        for (std::size_t i = 1; i < lhsCall.children.size(); ++i)
+        for (keel::usize i = 1; i < lhsCall.children.size(); ++i)
             if (lhsCall.children[i]->type == NodeType::COLON_EXPR)
                 unsupported("N-D slice write (a colon subscript) for '" + base
                             + "' -- scalar subscripts only (v1)");
         keel::String dims, subs;
-        for (std::size_t k = 0; k < ai.ndDims.size(); ++k) dims += (k ? ", " : "") + ai.ndDims[k];
-        for (std::size_t i = 1; i < lhsCall.children.size(); ++i) {
+        for (keel::usize k = 0; k < ai.ndDims.size(); ++k) dims += (k ? ", " : "") + ai.ndDims[k];
+        for (keel::usize i = 1; i < lhsCall.children.size(); ++i) {
             endStack_.push_back(ai.ndDims[i - 1].clone());
             subs += (i > 1 ? ", " : "") + emitExpr(*lhsCall.children[i]);
             endStack_.pop_back();
@@ -865,7 +865,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
             keel::String numel;  // flat element count (1-D length / 2-D rows*cols / N-D product)
             if (ai.isND) {
                 numel = ai.ndDims[0].clone();
-                for (std::size_t i = 1; i < ai.ndDims.size(); ++i) numel += " * " + ai.ndDims[i];
+                for (keel::usize i = 1; i < ai.ndDims.size(); ++i) numel += " * " + ai.ndDims[i];
             } else if (ai.is2D) {
                 numel = ai.rowsVar + " * " + ai.colsVar;
             } else {
@@ -984,7 +984,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
     }
 
     keel::Array<AbstractValue> idx;
-    for (std::size_t i = 1; i < lhsCall.children.size(); ++i)
+    for (keel::usize i = 1; i < lhsCall.children.size(); ++i)
         idx.push_back(inferExpr(*lhsCall.children[i], types_, reg_, classes_));
     const AbstractValue rhsAV = inferExpr(rhs, types_, reg_, classes_);
 
