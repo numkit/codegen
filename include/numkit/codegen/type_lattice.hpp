@@ -294,10 +294,10 @@ enum class ConstKind : keel::u8 {
 
 struct ConstVal {
     ConstKind kind  = ConstKind::Unknown;
-    double    value = 0.0;  // meaningful only when kind == KnownReal
+    keel::f64    value = 0.0;  // meaningful only when kind == KnownReal
 
     static ConstVal unknown()       { return {ConstKind::Unknown, 0.0}; }
-    static ConstVal known(double v) { return {ConstKind::KnownReal, v}; }
+    static ConstVal known(keel::f64 v) { return {ConstKind::KnownReal, v}; }
 
     ConstVal clone() const noexcept { return *this; }
 

@@ -36,7 +36,7 @@ keel::String cppArrayElemType(ValueType dtype)
     return dtype == ValueType::LOGICAL ? keel::String::from("std::uint8_t") : cppScalarType(dtype);
 }
 
-keel::String formatDoubleLiteral(double v)
+keel::String formatDoubleLiteral(keel::f64 v)
 {
     if (std::isnan(v)) return keel::String::from("std::numeric_limits<double>::quiet_NaN()");
     if (std::isinf(v))

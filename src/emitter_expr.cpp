@@ -653,9 +653,9 @@ keel::String Emitter::emitBuiltinCall(keel::StringRef name, const ASTNode &call)
         const keel::String arrVar = resolveArrayVar(*call.children[1]);
         if (!arrVar.empty()) {
             const ArrayInfo &ai  = arrayAt(arrVar);
-            const double     kd  = call.children[2]->numValue;
+            const keel::f64     kd  = call.children[2]->numValue;
             const auto       k   = keel::as<keel::usize>(kd);
-            const bool       kok = kd >= 1.0 && keel::as<double>(k) == kd;
+            const bool       kok = kd >= 1.0 && keel::as<keel::f64>(k) == kd;
             if (kok && (ai.isND || ai.is2D || ai.orient != VecOrient::Unknown))
                 return "static_cast<double>(" + dimExpr(ai, k - 1) + ")";
         }

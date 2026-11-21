@@ -215,7 +215,7 @@ bool ConstVal::asDim(keel::usize &out) const
     if (kind != ConstKind::KnownReal) return false;
     // A valid dimension is a non-negative integer (finite) value.
     if (!std::isfinite(value) || value < 0.0) return false;
-    const double r = std::floor(value);
+    const keel::f64 r = std::floor(value);
     if (r != value) return false;  // non-integral
     out = keel::as<keel::usize>(r);
     return true;

@@ -2854,7 +2854,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 for (const auto &el : pn.children[0]->children) {
                     if (!el || el->type != NodeType::NUMBER_LITERAL
                         || el->numValue != std::floor(el->numValue) || el->numValue < 1.0
-                        || el->numValue > keel::as<double>(r)) {
+                        || el->numValue > keel::as<keel::f64>(r)) {
                         permOk = false;
                         break;
                     }

@@ -46,7 +46,7 @@ keel::String cppScalarType(ValueType dtype);
 
 // A round-trip C++ double literal for `v` (shortest form; integers get a
 // trailing .0; Inf/NaN map to std::numeric_limits forms).
-keel::String formatDoubleLiteral(double v);
+keel::String formatDoubleLiteral(keel::f64 v);
 
 // Emit a C++ expression string for an unboxed-scalar AST expression
 // (NUMBER/IMAG/BOOL literal, IDENTIFIER, scalar BINARY_OP / UNARY_OP).

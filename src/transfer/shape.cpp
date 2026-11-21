@@ -766,7 +766,7 @@ InferredType circshiftTransfer(keel::ArrayRef<ArgInfo> args)
         return InferredType::dynamic();
     if (args.size() == 3) {
         if (!args[2].constant.isKnown()) return InferredType::dynamic();
-        const double d     = args[2].constant.value;
+        const keel::f64 d     = args[2].constant.value;
         const bool   isND3 = args[0].type.shape.kind == ShapeKind::NDims
                           && args[0].type.shape.nd.size() == 3;
         if (!(d == 1.0 || d == 2.0 || (d == 3.0 && isND3)))

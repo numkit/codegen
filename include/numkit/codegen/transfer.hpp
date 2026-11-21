@@ -58,7 +58,7 @@ struct ArgInfo {
     }
     // Convenience: a scalar of dtype `dt` with a known constant value `v`
     // (the common literal-argument case, e.g. the `64` in linspace).
-    static ArgInfo scalarConst(ValueType dt, double v)
+    static ArgInfo scalarConst(ValueType dt, keel::f64 v)
     {
         return ArgInfo(InferredType::scalar(dt), ConstVal::known(v));
     }
