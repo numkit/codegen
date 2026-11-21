@@ -1,5 +1,6 @@
 // codegen/src/emitter_index.cpp — array index read & write lowering.
 
+#include <keel/core.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen::detail {
@@ -707,7 +708,7 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
             const bool     isCol = s.type == NodeType::COLON_EXPR && s.children.empty();
             colon[k]             = isCol;
             if (isCol)
-                lastCol = static_cast<int>(k);
+                lastCol = keel::as<int>(k);
             else if (s.type != NodeType::COLON_EXPR
                      && inferExpr(s, types_, reg_, classes_).type.shape.isScalar())
                 ++scalarN;
@@ -719,9 +720,9 @@ void Emitter::emitIndexWrite(const ASTNode &lhsCall, const ASTNode &rhs)
         if (allCS && lastCol >= 0 && scalarN > 0) {
             if (!ai.isLocal && !ai.isOutput)
                 unsupported("slice write to a read-only array parameter '" + base + "'");
-            const keel::usize keptRank = static_cast<keel::usize>(lastCol) + 1 < 2
+            const keel::usize keptRank = keel::as<keel::usize>(lastCol) + 1 < 2
                                              ? 2u
-                                             : static_cast<keel::usize>(lastCol) + 1;
+                                             : keel::as<keel::usize>(lastCol) + 1;
             const ArrayInfo  &R        = arrayAt(rhs.strValue);  // value source
             line("{");
             ++indent_;

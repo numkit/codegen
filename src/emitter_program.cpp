@@ -1,5 +1,6 @@
 // codegen/src/emitter_program.cpp — runtime preludes and top-level function/program/plugin emission.
 
+#include <keel/core.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen {
@@ -991,7 +992,7 @@ static keel::String emitAllStructs(const ClassRegistry *classes)
     keel::String s;
     if (classes)
         for (keel::usize i = 0; i < classes->size(); ++i)
-            s += emitClassStruct(*classes->byId(static_cast<int>(i)));
+            s += emitClassStruct(*classes->byId(keel::as<int>(i)));
     return s;
 }
 

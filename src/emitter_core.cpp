@@ -1,5 +1,6 @@
 // codegen/src/emitter_core.cpp — scalar/type helpers, OptFacts, mangling, prepasses.
 
+#include <keel/core.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen {
@@ -44,7 +45,7 @@ keel::String formatDoubleLiteral(double v)
 
     char buf[32];
     auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
-    keel::String s = keel::String::from(keel::StringRef(buf, static_cast<keel::usize>(ptr - buf)));
+    keel::String s = keel::String::from(keel::StringRef(buf, keel::as<keel::usize>(ptr - buf)));
     // Ensure it reads as a double in C++ (e.g. "2" -> "2.0", not an int).
     if (s.find('.') == keel::kInvalidIndex && s.find('e') == keel::kInvalidIndex &&
         s.find('E') == keel::kInvalidIndex)
@@ -649,10 +650,10 @@ keel::String cEscape(keel::StringRef s, bool &ok)
     ok = true;
     keel::String out;
     for (char ch : s) {
-        const unsigned char c = static_cast<unsigned char>(ch);
+        const unsigned char c = keel::as<unsigned char>(ch);
         if (c < 32 || c > 126) { ok = false; return {}; }  // non-printable -> refuse
         if (c == '\\' || c == '"') out += '\\';
-        out += static_cast<char>(c);
+        out += keel::as<char>(c);
     }
     return out;
 }

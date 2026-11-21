@@ -1,5 +1,6 @@
 // codegen/src/emitter_assign.cpp — statement assignment lowering (part 1 & non-ident LHS).
 
+#include <keel/core.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen::detail {
@@ -483,7 +484,7 @@ void Emitter::emitAssign(const ASTNode &s)
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             const keel::String   k =  // non-negative literal offset (0 = main diagonal)
                 rhs.children.size() == 3
-                    ? toStr(static_cast<long>(rhs.children[2]->numValue))
+                    ? toStr(keel::as<long>(rhs.children[2]->numValue))
                     : keel::String("0");
             const keel::String N = "(" + v.lenVar + " + " + k + ")";  // N = n + k
             line("{");
@@ -2038,7 +2039,7 @@ void Emitter::emitAssign(const ASTNode &s)
             && arrayAt(rhs.children[1]->strValue).ndDims.size() == 3
             && (arrayAt(rhs.children[1]->strValue).dtype == ValueType::DOUBLE
                 || arrayAt(rhs.children[1]->strValue).dtype == ValueType::LOGICAL)) {
-            const int dimv = static_cast<int>(rhs.children[2]->numValue);
+            const int dimv = keel::as<int>(rhs.children[2]->numValue);
             // the dst rank must match the dim: dim 3 -> rank 2, dim 1|2 -> rank 3.
             if ((dimv == 3) == (arrayAt(name).ndDims.size() == 2)) {
                 const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
@@ -2164,7 +2165,7 @@ void Emitter::emitAssign(const ASTNode &s)
             && rhs.children[3]->type == NodeType::NUMBER_LITERAL
             && (rhs.children[3]->numValue == 1.0 || rhs.children[3]->numValue == 2.0
                 || rhs.children[3]->numValue == 3.0)) {
-            const int dimv = static_cast<int>(rhs.children[3]->numValue);
+            const int dimv = keel::as<int>(rhs.children[3]->numValue);
             // the dst rank must match the dim: dim 3 -> rank 2, dim 1|2 -> rank 3.
             if ((dimv == 3) == (arrayAt(name).ndDims.size() == 2)) {
                 const ArrayInfo    &A   = arrayAt(rhs.children[1]->strValue);
@@ -2277,7 +2278,7 @@ void Emitter::emitAssign(const ASTNode &s)
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 const keel::String &fn   = rhs.children[0]->strValue;
                 const int          dim  = rhs.children.size() == 3
-                                              ? static_cast<int>(rhs.children[2]->numValue)
+                                              ? keel::as<int>(rhs.children[2]->numValue)
                                               : 1;
                 const keel::StringRef init = fn == "prod" ? "1.0" : "0.0";
                 const keel::StringRef op   = fn == "prod" ? "*=" : "+=";
@@ -2568,7 +2569,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 const bool            isProd = rhs.children[0]->strValue == "cumprod";
                 const keel::StringRef seed   = isProd ? "1.0" : "0.0";
                 const keel::StringRef op     = isProd ? "*=" : "+=";
-                const int             dimv   = static_cast<int>(rhs.children[2]->numValue);
+                const int             dimv   = keel::as<int>(rhs.children[2]->numValue);
                 // scan-dim element stride sd and length ld in terms of m,n,p
                 const keel::StringRef sd = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
                 const keel::StringRef ld = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
@@ -2722,7 +2723,7 @@ void Emitter::emitAssign(const ASTNode &s)
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
                 const keel::StringRef cmp  = rhs.children[0]->strValue == "cummax" ? ">" : "<";
-                const int             dimv = static_cast<int>(rhs.children[2]->numValue);
+                const int             dimv = keel::as<int>(rhs.children[2]->numValue);
                 const keel::StringRef sd   = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
                 const keel::StringRef ld   = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
                 line("{");
@@ -2853,11 +2854,11 @@ void Emitter::emitAssign(const ASTNode &s)
                 for (const auto &el : pn.children[0]->children) {
                     if (!el || el->type != NodeType::NUMBER_LITERAL
                         || el->numValue != std::floor(el->numValue) || el->numValue < 1.0
-                        || el->numValue > static_cast<double>(r)) {
+                        || el->numValue > keel::as<double>(r)) {
                         permOk = false;
                         break;
                     }
-                    const keel::usize v = static_cast<keel::usize>(el->numValue);  // 1-based
+                    const keel::usize v = keel::as<keel::usize>(el->numValue);  // 1-based
                     if (seen[v - 1]) {
                         permOk = false;  // a repeated axis -> not a permutation
                         break;
@@ -2927,7 +2928,7 @@ void Emitter::emitAssign(const ASTNode &s)
             if (res.type.isConcrete() && !res.type.shape.isScalar()
                 && inferExpr(*rhs.children[2], types_, reg_, classes_).type.shape.isScalar()) {
                 const long dimv =
-                    rhs.children.size() == 4 ? static_cast<long>(rhs.children[3]->numValue) : 1;
+                    rhs.children.size() == 4 ? keel::as<long>(rhs.children[3]->numValue) : 1;
                 const keel::String ct = cppScalarType(B.dtype);
                 const keel::String m = dimExpr(A, 0), n = dimExpr(A, 1);
                 const keel::String k = emitExpr(*rhs.children[2]);
@@ -2984,7 +2985,7 @@ void Emitter::emitAssign(const ASTNode &s)
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()
                 && inferExpr(*rhs.children[2], types_, reg_, classes_).type.shape.isScalar()) {
-                const int             dimv = static_cast<int>(rhs.children[3]->numValue);
+                const int             dimv = keel::as<int>(rhs.children[3]->numValue);
                 const keel::StringRef sd   = dimv == 1 ? "1" : (dimv == 2 ? "_numkit_m" : "_numkit_m * _numkit_n");
                 const keel::StringRef ld   = dimv == 1 ? "_numkit_m" : (dimv == 2 ? "_numkit_n" : "_numkit_p");
                 const keel::String k  = emitExpr(*rhs.children[2]);
@@ -3185,7 +3186,7 @@ void Emitter::emitAssign(const ASTNode &s)
             const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const int d = flip3 ? static_cast<int>(rhs.children[2]->numValue)
+                const int d = flip3 ? keel::as<int>(rhs.children[2]->numValue)
                                     : (lr2 ? 2 : 1);  // fliplr -> dim 2, flipud -> dim 1
                 line("{");
                 ++indent_;
@@ -3236,7 +3237,7 @@ void Emitter::emitAssign(const ASTNode &s)
             const ArrayInfo    &M   = arrayAt(name);
             const AbstractValue res = inferExpr(rhs, types_, reg_, classes_);
             if (res.type.isConcrete() && !res.type.shape.isScalar()) {
-                const int  k    = static_cast<int>(rhs.children[2]->numValue) % 4;
+                const int  k    = keel::as<int>(rhs.children[2]->numValue) % 4;
                 const bool swap = (k == 1 || k == 3);  // result dims swap for 90/270
                 line("{");
                 ++indent_;

@@ -149,7 +149,7 @@ InferredType inferFunctionReturn(const ASTNode &funcDef,
 void registerClassConstructors(TransferRegistry &reg, const ClassRegistry &classes)
 {
     for (keel::usize i = 0; i < classes.size(); ++i) {
-        const ClassInfo *ci = classes.byId(static_cast<int>(i));
+        const ClassInfo *ci = classes.byId(keel::as<int>(i));
         if (!ci) continue;
         const int id = ci->id;
         reg.add(ci->name,
@@ -161,7 +161,7 @@ void registerClassMethods(TransferRegistry &reg, const ClassRegistry &classes)
 {
     auto inProgress = keel::make_arc<keel::HashSet<keel::String>>();
     for (keel::usize i = 0; i < classes.size(); ++i) {
-        const ClassInfo *ci = classes.byId(static_cast<int>(i));
+        const ClassInfo *ci = classes.byId(keel::as<int>(i));
         if (!ci) continue;
         for (auto [mname, mdef] : ci->methods) {
             const keel::String key = keel::format("{}::{}", ci->name, mname);

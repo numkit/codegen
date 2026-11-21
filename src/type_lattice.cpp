@@ -217,7 +217,7 @@ bool ConstVal::asDim(keel::usize &out) const
     if (!std::isfinite(value) || value < 0.0) return false;
     const double r = std::floor(value);
     if (r != value) return false;  // non-integral
-    out = static_cast<keel::usize>(r);
+    out = keel::as<keel::usize>(r);
     return true;
 }
 

@@ -252,7 +252,7 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
                 const bool isCol = expr.children[kk]->type == NodeType::COLON_EXPR
                                    && expr.children[kk]->children.empty();
                 if (isCol)
-                    lastCol = static_cast<int>(kk) - 1;
+                    lastCol = keel::as<int>(kk) - 1;
                 else if (expr.children[kk]->type != NodeType::COLON_EXPR
                          && isScalarValue(argVals[kk - 1]))
                     ++scalarN;
@@ -263,9 +263,9 @@ AbstractValue indexCallResult(const AbstractValue &base, const ASTNode &expr,
             }
             if (allCS && lastCol >= 0 && scalarN > 0) {
                 const keel::usize keptRank =
-                    static_cast<keel::usize>(lastCol) + 1 < 2
+                    keel::as<keel::usize>(lastCol) + 1 < 2
                         ? 2u
-                        : static_cast<keel::usize>(lastCol) + 1;
+                        : keel::as<keel::usize>(lastCol) + 1;
                 keel::Array<keel::usize> d(keptRank, keel::usize{0});
                 for (keel::usize kk = 0; kk < keptRank; ++kk)
                     d[kk] = (expr.children[kk + 1]->type == NodeType::COLON_EXPR

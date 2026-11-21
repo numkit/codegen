@@ -1,5 +1,6 @@
 // codegen/src/emitter_expr.cpp — expression, dynamic, builtin/user/method calls, elementwise.
 
+#include <keel/core.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen::detail {
@@ -78,7 +79,7 @@ keel::String Emitter::emitExpr(const ASTNode &e)
         if (e.strValue.size() != 1)
             unsupported("multi-char string literal in expression position (char array)");
         return "std::uint16_t("
-               + toStr(static_cast<unsigned>(static_cast<unsigned char>(e.strValue[0])))
+               + toStr(keel::as<unsigned>(keel::as<unsigned char>(e.strValue[0])))
                + ")";
     case NodeType::IDENTIFIER:
         if (isArrayVar(e.strValue)) {
@@ -653,8 +654,8 @@ keel::String Emitter::emitBuiltinCall(keel::StringRef name, const ASTNode &call)
         if (!arrVar.empty()) {
             const ArrayInfo &ai  = arrayAt(arrVar);
             const double     kd  = call.children[2]->numValue;
-            const auto       k   = static_cast<keel::usize>(kd);
-            const bool       kok = kd >= 1.0 && static_cast<double>(k) == kd;
+            const auto       k   = keel::as<keel::usize>(kd);
+            const bool       kok = kd >= 1.0 && keel::as<double>(k) == kd;
             if (kok && (ai.isND || ai.is2D || ai.orient != VecOrient::Unknown))
                 return "static_cast<double>(" + dimExpr(ai, k - 1) + ")";
         }
@@ -689,7 +690,7 @@ keel::String Emitter::emitBuiltinCall(keel::StringRef name, const ASTNode &call)
         auto dimArg = [&](const ASTNode &n) -> keel::String {
             if (n.type == NodeType::NUMBER_LITERAL && n.numValue >= 0.0
                 && std::floor(n.numValue) == n.numValue)
-                return toStr(static_cast<keel::usize>(n.numValue));
+                return toStr(keel::as<keel::usize>(n.numValue));
             return "numkit_rt::dim(" + emitExpr(n) + ")";
         };
         const keel::String    rExpr = dimArg(*call.children[1]);

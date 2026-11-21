@@ -41,7 +41,7 @@ bool isValidDefine(keel::StringRef d)
 {
     if (d.empty()) return false;
     for (char ch : d) {
-        const unsigned char c = static_cast<unsigned char>(ch);
+        const unsigned char c = keel::as<unsigned char>(ch);
         if (c < 0x20 || c == 0x7f) return false;
 #ifdef _WIN32
         if (c == '"' || c == '&' || c == '|' || c == '<' || c == '>' || c == '^' || c == '%')

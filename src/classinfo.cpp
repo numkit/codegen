@@ -25,7 +25,7 @@ const ASTNode *ClassInfo::method(keel::StringRef n) const
 
 int ClassRegistry::add(ClassInfo info)
 {
-    info.id = static_cast<int>(classes_.size());
+    info.id = keel::as<int>(classes_.size());
     byName_.put(info.name.clone(), info.id);
     classes_.push_back(keel::move(info));
     return classes_.back().id;
@@ -33,8 +33,8 @@ int ClassRegistry::add(ClassInfo info)
 
 const ClassInfo *ClassRegistry::byId(int id) const
 {
-    if (id < 0 || id >= static_cast<int>(classes_.size())) return nullptr;
-    return &classes_[static_cast<keel::usize>(id)];
+    if (id < 0 || id >= keel::as<int>(classes_.size())) return nullptr;
+    return &classes_[keel::as<keel::usize>(id)];
 }
 
 int ClassRegistry::idOf(keel::StringRef name) const
@@ -110,7 +110,7 @@ keel::usize collectClasses(const ASTNode &root, ClassRegistry &reg,
 {
     keel::usize added = 0;
     if (root.type == NodeType::CLASSDEF_DEF) {
-        reg.add(buildClassInfo(root, static_cast<int>(reg.size()), reg2));
+        reg.add(buildClassInfo(root, keel::as<int>(reg.size()), reg2));
         ++added;
     }
     for (const auto &c : root.children)

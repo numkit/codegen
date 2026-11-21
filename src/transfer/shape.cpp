@@ -8,6 +8,7 @@
 // scalar -- registering it precisely needs rank tracking, so for now it
 // is intentionally left unregistered (-> Dynamic, the sound fallback).
 
+#include <keel/core.h>
 #include <numkit/codegen/transfer.hpp>
 
 namespace numkit::codegen {
@@ -307,7 +308,7 @@ InferredType rot90Transfer(keel::ArrayRef<ArgInfo> args)
     // rot90(A, k) with a non-negative LITERAL k: k%4 == 0/2 keeps the shape, 1/3 swaps it. A
     // non-literal / negative k -> Dynamic (bridged).
     if (!args[1].constant.isKnown() || args[1].constant.value < 0) return InferredType::dynamic();
-    const keel::usize r = static_cast<keel::usize>(args[1].constant.value) % 4;
+    const keel::usize r = keel::as<keel::usize>(args[1].constant.value) % 4;
     return (r == 0 || r == 2) ? same() : swapped();
 }
 
