@@ -15,7 +15,6 @@
 #include <keel/string.h>
 
 #include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <stdexcept>
 

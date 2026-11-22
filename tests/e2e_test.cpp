@@ -13,6 +13,7 @@
 // keeps the baseline green.
 
 #include <numkit/codegen/aot.hpp>
+#include <keel/math.h>
 #include <numkit/codegen/emitter.hpp>
 #include <numkit/codegen/transfer.hpp>
 
@@ -188,7 +189,7 @@ TEST(CodegenE2E, BiquadMatchesRuntimeFilter)
         const double b0 = 0.0675, b1 = 0.1349, b2 = 0.0675, a1 = -1.1430, a2 = 0.4128;
         double       x1 = 0, x2 = 0, y1 = 0, y2 = 0;
         for (std::size_t i = 0; i < N; ++i) {
-            const double xn = std::sin(0.01 * double(i + 1));
+            const double xn = keel::sin(0.01 * double(i + 1));
             const double yn = b0 * xn + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
             EXPECT_NEAR(got[i], yn, 1e-12) << "DF-I recurrence mismatch at i=" << i;
             x2 = x1; x1 = xn;
@@ -255,7 +256,7 @@ TEST(CodegenE2E, CheckedIndexPathRunsCorrectly)
     }
     ASSERT_EQ(got.size(), N);
     for (std::size_t i = 0; i < N; ++i)
-        EXPECT_NEAR(got[i], std::sin(0.01 * double(i + 1)) + double(i + 1), 1e-12)
+        EXPECT_NEAR(got[i], keel::sin(0.01 * double(i + 1)) + double(i + 1), 1e-12)
             << "checked-path mismatch at i=" << i;
 }
 
@@ -315,7 +316,7 @@ TEST(CodegenE2E, ReassignedBoundComputesCorrectly)
     }
     ASSERT_EQ(got.size(), 3u);
     for (std::size_t i = 0; i < 3; ++i)
-        EXPECT_NEAR(got[i], std::sin(0.01 * double(i + 1)), 1e-12) << "at i=" << i;
+        EXPECT_NEAR(got[i], keel::sin(0.01 * double(i + 1)), 1e-12) << "at i=" << i;
 }
 
 // Control flow run end-to-end (previously only string-tested): an if/else
@@ -3555,7 +3556,7 @@ TEST(CodegenE2E, GammalnScalarNative)
 
     const std::vector<double> got = compileRunReadDoubles(program, exe, outTxt);
     ASSERT_EQ(got.size(), 1u);
-    EXPECT_NEAR(got[0], std::lgamma(5.0) + std::lgamma(3.0) * 10.0, 1e-9);  // independent
+    EXPECT_NEAR(got[0], keel::lgamma(5.0) + keel::lgamma(3.0) * 10.0, 1e-9);  // independent
     numkit::StandardEngine engine;
     const double interp = engine.eval(std::string("a=5; b=3;\n") + body + "r", true).toScalar();
     EXPECT_DOUBLE_EQ(got[0], interp);  // bit-exact vs interpreter
@@ -6399,7 +6400,7 @@ TEST(CodegenE2E, ElementwiseArrayMathRunsCorrectly)
     const std::vector<double> got = compileRunReadDoubles(program, exe, outTxt);  // no rt link
     ASSERT_EQ(got.size(), N);
     for (std::size_t i = 0; i < N; ++i)
-        EXPECT_NEAR(got[i], std::sin(0.3 * double(i + 1)), 1e-12) << "at i=" << i;
+        EXPECT_NEAR(got[i], keel::sin(0.3 * double(i + 1)), 1e-12) << "at i=" << i;
 }
 
 // CX1: complex scalar accessors end-to-end (real/imag/angle/conj/abs), SELF-

@@ -1,6 +1,7 @@
 // codegen/src/emitter_expr.cpp — expression, dynamic, builtin/user/method calls, elementwise.
 
 #include <keel/core.h>
+#include <keel/math.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen::detail {
@@ -689,7 +690,7 @@ keel::String Emitter::emitBuiltinCall(keel::StringRef name, const ASTNode &call)
         && (nargs == 1 || nargs == 2) && (name == "zeros" || name == "ones")) {
         auto dimArg = [&](const ASTNode &n) -> keel::String {
             if (n.type == NodeType::NUMBER_LITERAL && n.numValue >= 0.0
-                && std::floor(n.numValue) == n.numValue)
+                && keel::floor(n.numValue) == n.numValue)
                 return toStr(keel::as<keel::usize>(n.numValue));
             return "numkit_rt::dim(" + emitExpr(n) + ")";
         };

@@ -5,8 +5,8 @@
 #include <numkit/codegen/type_lattice.hpp>
 
 #include <keel/format.h>
+#include <keel/math.h>
 
-#include <cmath>
 
 namespace numkit::codegen {
 
@@ -214,8 +214,8 @@ bool ConstVal::asDim(keel::usize &out) const
 {
     if (kind != ConstKind::KnownReal) return false;
     // A valid dimension is a non-negative integer (finite) value.
-    if (!std::isfinite(value) || value < 0.0) return false;
-    const keel::f64 r = std::floor(value);
+    if (!keel::is_finite(value) || value < 0.0) return false;
+    const keel::f64 r = keel::floor(value);
     if (r != value) return false;  // non-integral
     out = keel::as<keel::usize>(r);
     return true;
@@ -227,7 +227,7 @@ bool ConstVal::operator==(const ConstVal &o) const
     if (kind != ConstKind::KnownReal) return true;  // both Unknown
     // Bit-exact compare so NaN-vs-NaN and +0/-0 are handled consistently
     // with the rest of the lattice (Known(NaN) only equals Known(NaN)).
-    if (std::isnan(value) && std::isnan(o.value)) return true;
+    if (keel::is_nan(value) && keel::is_nan(o.value)) return true;
     return value == o.value;
 }
 

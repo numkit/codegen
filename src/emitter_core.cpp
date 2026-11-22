@@ -1,6 +1,7 @@
 // codegen/src/emitter_core.cpp — scalar/type helpers, OptFacts, mangling, prepasses.
 
 #include <keel/core.h>
+#include <keel/math.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen {
@@ -38,8 +39,8 @@ keel::String cppArrayElemType(ValueType dtype)
 
 keel::String formatDoubleLiteral(keel::f64 v)
 {
-    if (std::isnan(v)) return keel::String::from("std::numeric_limits<double>::quiet_NaN()");
-    if (std::isinf(v))
+    if (keel::is_nan(v)) return keel::String::from("std::numeric_limits<double>::quiet_NaN()");
+    if (keel::is_inf(v))
         return keel::String::from(v < 0 ? "-std::numeric_limits<double>::infinity()"
                                         : "std::numeric_limits<double>::infinity()");
 

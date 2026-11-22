@@ -1,6 +1,7 @@
 // codegen/src/emitter_assign.cpp — statement assignment lowering (part 1 & non-ident LHS).
 
 #include <keel/core.h>
+#include <keel/math.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen::detail {
@@ -472,7 +473,7 @@ void Emitter::emitAssign(const ASTNode &s)
             && arrayAt(name).ndDims.size() == 2 && rhs.type == NodeType::CALL
             && (rhs.children.size() == 2
                 || (rhs.children.size() == 3 && rhs.children[2]->type == NodeType::NUMBER_LITERAL
-                    && rhs.children[2]->numValue == std::floor(rhs.children[2]->numValue)
+                    && rhs.children[2]->numValue == keel::floor(rhs.children[2]->numValue)
                     && rhs.children[2]->numValue >= 0.0))
             && rhs.children[0]->type == NodeType::IDENTIFIER && rhs.children[0]->strValue == "diag"
             && rhs.children[1]->type == NodeType::IDENTIFIER && isArrayVar(rhs.children[1]->strValue)
@@ -2853,7 +2854,7 @@ void Emitter::emitAssign(const ASTNode &s)
                 keel::Array<bool> seen(r, false);
                 for (const auto &el : pn.children[0]->children) {
                     if (!el || el->type != NodeType::NUMBER_LITERAL
-                        || el->numValue != std::floor(el->numValue) || el->numValue < 1.0
+                        || el->numValue != keel::floor(el->numValue) || el->numValue < 1.0
                         || el->numValue > keel::as<keel::f64>(r)) {
                         permOk = false;
                         break;

@@ -21,9 +21,9 @@
 //     back to Dynamic — sound, because sqrt of a possibly-negative real
 //     is complex in MATLAB and must not be mistyped as real.
 
+#include <keel/math.h>
 #include <numkit/codegen/transfer.hpp>
 
-#include <cmath>
 
 namespace numkit::codegen {
 
@@ -189,7 +189,7 @@ InferredType mtimesTransfer(keel::ArrayRef<ArgInfo> args)
 // real^real stays real.
 bool isIntegerConst(const ConstVal &c)
 {
-    return c.isKnown() && std::isfinite(c.value) && std::floor(c.value) == c.value;
+    return c.isKnown() && keel::is_finite(c.value) && keel::floor(c.value) == c.value;
 }
 
 // a .^ b — power is NOT closed over the reals: (-2)^0.5 is complex. So
