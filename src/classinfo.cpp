@@ -5,8 +5,8 @@
 #include <numkit/codegen/inference.hpp>
 
 #include <keel/format.h>
+#include <keel/exception.h>
 
-#include <stdexcept>
 
 namespace numkit::codegen {
 
@@ -75,7 +75,7 @@ keel::String classRefusalReason(const ASTNode &classDef)
 ClassInfo buildClassInfo(const ASTNode &classDef, keel::i32 id, const TransferRegistry &reg)
 {
     if (const keel::String why = classRefusalReason(classDef); !why.empty())
-        throw std::runtime_error(keel::format("class '{}': {}", classDef.strValue, why).c_str());
+        throw keel::Exception(keel::format("class '{}': {}", classDef.strValue, why).c_str());
 
     ClassInfo ci;
     ci.name = classDef.strValue.clone();
@@ -88,13 +88,13 @@ ClassInfo buildClassInfo(const ASTNode &classDef, keel::i32 id, const TransferRe
         if (!c) continue;
         if (c->type == NodeType::CLASSDEF_PROPERTY) {
             if (c->children.empty() || !c->children[0])
-                throw std::runtime_error(
+                throw keel::Exception(
                     keel::format("class '{}': property '{}' needs a concrete-typed default (v1)",
                                  ci.name, c->strValue).c_str());
             TypeEnv            empty;
             const InferredType ft = inferExpr(*c->children[0], empty, reg).type;
             if (!ft.isConcrete())
-                throw std::runtime_error(
+                throw keel::Exception(
                     keel::format("class '{}': property '{}' default is not concretely typed ({})",
                                  ci.name, c->strValue, ft.str()).c_str());
             ci.fields.push_back(ClassField(c->strValue, ft, c->children[0].get()));

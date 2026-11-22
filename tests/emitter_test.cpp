@@ -6,6 +6,7 @@
 // the AOT harness, brick 4.)
 
 #include <numkit/codegen/emitter.hpp>
+#include <keel/exception.h>
 
 #include <numkit/core/lexer.hpp>
 #include <numkit/core/parser.hpp>
@@ -79,7 +80,7 @@ TEST(Emitter, ScalarType)
     EXPECT_EQ(cppScalarType(ValueType::COMPLEX), "std::complex<double>");
     EXPECT_EQ(cppScalarType(ValueType::LOGICAL), "bool");
     EXPECT_EQ(cppScalarType(ValueType::INT32), "std::int32_t");
-    EXPECT_THROW(cppScalarType(ValueType::CELL), std::runtime_error);
+    EXPECT_THROW(cppScalarType(ValueType::CELL), keel::Exception);
 }
 
 TEST(Emitter, DoubleLiteralFormat)
@@ -138,7 +139,7 @@ TEST(Emitter, ImaginaryLiteral)
 // something wrong — the boundary is explicit.
 TEST(Emitter, UnsupportedThrows)
 {
-    EXPECT_THROW(emit("foo(x)"), std::runtime_error);
+    EXPECT_THROW(emit("foo(x)"), keel::Exception);
 }
 
 // ── 3b: declaration-type prepass ──────────────────────────────────────
@@ -211,7 +212,7 @@ TEST(EmitterFn, ComplexErfRefusedWithoutBridge)
     const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = erf(x);\nend\n", root);
     ASSERT_NE(fn, nullptr);
     EXPECT_THROW(emitFunction(*fn, {{"x", InferredType::scalar(ValueType::COMPLEX)}}, reg),
-                 std::runtime_error);
+                 keel::Exception);
 }
 
 // CX1: complex scalar accessors. real/imag/angle -> real (std::real/imag/arg);
@@ -317,7 +318,7 @@ TEST(EmitterFn, VectorTranspose)
         const numkit::ASTNode *fn = findFunc("function y = f(A)\n  y = A';\nend\n", root);
         const InferredType     nd =
             InferredType::concrete(ValueType::DOUBLE, numkit::codegen::Shape::ndShape({2, 2, 2}));
-        EXPECT_THROW(emitFunction(*fn, {{"A", nd}}, reg), std::runtime_error);
+        EXPECT_THROW(emitFunction(*fn, {{"A", nd}}, reg), keel::Exception);
     }
 }
 
@@ -614,7 +615,7 @@ TEST(EmitterFn, DynamicScalarTier)
         EXPECT_TRUE(contains(s, "y = 10.0;"));  // typed branch -> typed (double) output
     }
     {  // no bridge: no runtime to hold a Dynamic value -> explicit refusal
-        EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), std::runtime_error);
+        EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), keel::Exception);
     }
 }
 
@@ -829,7 +830,7 @@ TEST(EmitterFn, ElementwiseND)
     {  // mixed rank (3-D + 1-D vector) refused — no implicit broadcast
         numkit::ASTNodePtr     root;
         const numkit::ASTNode *fn = findFunc("function B = f(A, v)\n  B = A + v;\nend\n", root);
-        EXPECT_THROW(emitFunction(*fn, {{"A", nd}, {"v", kDoubleRow}}, reg), std::runtime_error);
+        EXPECT_THROW(emitFunction(*fn, {{"A", nd}, {"v", kDoubleRow}}, reg), keel::Exception);
     }
 }
 
@@ -841,7 +842,7 @@ TEST(EmitterFn, MatrixMtimesNotElementwise)
     numkit::ASTNodePtr     root;
     const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = x * x;\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleRow}}, reg), std::runtime_error);
+    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleRow}}, reg), keel::Exception);
 }
 
 // `*` / `/` with a scalar operand are elementwise SCALING (s*X == s.*X,
@@ -935,7 +936,7 @@ TEST(EmitterFn, NDParamWriteRefused)
                               {{"A", InferredType::concrete(ValueType::DOUBLE,
                                                             numkit::codegen::Shape::ndShape({2, 2, 2}))}},
                               reg),
-                 std::runtime_error);
+                 keel::Exception);
 }
 
 // N-D shape queries: size(A,k) (literal k) / ndims(A) / numel(A) on an N-D
@@ -1141,7 +1142,7 @@ TEST(EmitterFn, DoubleUnderscoreUserNameRefused)
     const numkit::ASTNode *fn =
         findFunc("function y = f(x)\n  a__b = x * 2;\n  y = a__b + 1;\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), std::runtime_error);
+    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), keel::Exception);
 }
 
 // A single or trailing underscore is NOT reserved — `x_` emits verbatim and its
@@ -1185,7 +1186,7 @@ TEST(EmitterFn, UnlowerableCallThrowsWhenBridgingDisabled)
     numkit::ASTNodePtr     root;
     const numkit::ASTNode *fn = findFunc("function y = f(x)\n  y = gamma(x);\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), std::runtime_error);
+    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), keel::Exception);
 }
 
 // Bridging is a FALLBACK, not a hijack: a builtin the emitter CAN lower
@@ -1379,7 +1380,7 @@ TEST(EmitterFn, TypedButUnloweredBuiltinThrows)
     numkit::ASTNodePtr root;
     const numkit::ASTNode *fn = findFunc("function y = g(x)\n  y = gamma(x);\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), std::runtime_error);
+    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), keel::Exception);
 }
 
 // ── 2-D matrix indexing emission ──────────────────────────────────────
@@ -1574,7 +1575,7 @@ TEST(EmitterFn, DynamicOutputRefused)
     const numkit::ASTNode *fn =
         findFunc("function y = h(x)\n  y = eval(x);\nend\n", root);
     ASSERT_NE(fn, nullptr);
-    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), std::runtime_error);
+    EXPECT_THROW(emitFunction(*fn, {{"x", kDoubleScalar}}, reg), keel::Exception);
 }
 
 TEST(EmitterFn, Advanced2DIndexingAndInlineSliceWrite)
@@ -1661,7 +1662,7 @@ TEST(EmitterFn, ImplicitExpansion2D1D)
                      {{"A", InferredType::concrete(ValueType::DOUBLE, Shape::dims(3, 3))},
                       {"v", InferredType::concrete(ValueType::DOUBLE, Shape::unknown())}},
                      reg),
-        std::runtime_error);
+        keel::Exception);
 }
 
 TEST(EmitterFn, MultiOutputFunctionsAndMethodsAllContexts)

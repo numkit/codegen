@@ -1,6 +1,7 @@
 // codegen/src/emitter_stmt.cpp — control-flow and statement lowering.
 
 #include <keel/core.h>
+#include <keel/exception.h>
 #include "emitter_internal.hpp"
 
 namespace numkit::codegen::detail {
@@ -469,7 +470,7 @@ void Emitter::emitStmt(const ASTNode &s)
                 try {
                     line(emitExpr(e) + ";");
                     return;
-                } catch (const std::runtime_error &) {
+                } catch (const keel::Exception &) {
                     if (bridge_ && !e.children.empty()
                         && e.children[0]->type == NodeType::IDENTIFIER) {
                         const keel::String &fn = e.children[0]->strValue;

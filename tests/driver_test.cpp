@@ -5,6 +5,7 @@
 // (Compilation of the emitted TU is covered by the e2e tests.)
 
 #include <numkit/codegen/driver.hpp>
+#include <keel/exception.h>
 
 #include <gtest/gtest.h>
 
@@ -34,8 +35,8 @@ TEST(Driver, ParseTypeSpecEmptyIsNullary)
 
 TEST(Driver, ParseTypeSpecBadTypeThrows)
 {
-    EXPECT_THROW(driver::parseTypeSpec("notatype"), std::runtime_error);
-    EXPECT_THROW(driver::parseTypeSpec("double, "), std::runtime_error);  // empty token
+    EXPECT_THROW(driver::parseTypeSpec("notatype"), keel::Exception);
+    EXPECT_THROW(driver::parseTypeSpec("double, "), keel::Exception);  // empty token
 }
 
 TEST(Driver, TranspileSoleScalarFunction)
@@ -60,7 +61,7 @@ TEST(Driver, ArityMismatchThrows)
 {
     EXPECT_THROW(driver::transpileSource("function y = f(a)\n  y = a;\nend\n", "",
                                          driver::parseTypeSpec("double, double")),
-                 std::runtime_error);
+                 keel::Exception);
 }
 
 TEST(Driver, MultiFunctionRequiresExplicitEntry)
@@ -68,7 +69,7 @@ TEST(Driver, MultiFunctionRequiresExplicitEntry)
     const char *src = "function y = f(a)\n  y = a;\nend\n"
                       "function z = g(a)\n  z = a;\nend\n";
     EXPECT_THROW(driver::transpileSource(src, "", driver::parseTypeSpec("double")),
-                 std::runtime_error);
+                 keel::Exception);
     // ...but naming one works.
     const EmittedFunction em = driver::transpileSource(src, "g", driver::parseTypeSpec("double"));
     EXPECT_NE(em.source.find("g_1d"), std::string::npos);
@@ -78,7 +79,7 @@ TEST(Driver, UnknownEntryThrows)
 {
     EXPECT_THROW(driver::transpileSource("function y = f(a)\n  y = a;\nend\n", "nope",
                                          driver::parseTypeSpec("double")),
-                 std::runtime_error);
+                 keel::Exception);
 }
 
 TEST(Driver, BridgeOptionEmitsBridgedCall)
@@ -107,7 +108,7 @@ TEST(Driver, TranspileToPluginRefusesArrayOutput)
     // array OUTPUT isn't tierable yet -> emitScalarPlugin refuses.
     EXPECT_THROW(driver::transpileToPlugin("function y = f(v)\n  y = v * 2;\nend\n", "",
                                            driver::parseTypeSpec("double[]"), "f", "numkit_plugin.h"),
-                 std::runtime_error);
+                 keel::Exception);
 }
 
 TEST(Driver, TranspileTopLevelScriptWithDispAndFprintf)

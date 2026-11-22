@@ -13,6 +13,7 @@
 // keeps the baseline green.
 
 #include <numkit/codegen/aot.hpp>
+#include <keel/exception.h>
 #include <keel/math.h>
 #include <numkit/codegen/emitter.hpp>
 #include <numkit/codegen/transfer.hpp>
@@ -5212,7 +5213,7 @@ TEST(CodegenE2E, CellCommaListRefusedUnderBridge)
     EXPECT_THROW(
         emitProgram(*ft.find("f"), {{"x", InferredType::scalar(ValueType::DOUBLE)}}, ft, reg,
                     nullptr, bridge),
-        std::runtime_error);
+        keel::Exception);
 }
 
 // G5c soundness guard: a closure capturing a SCALAR local now compiles (see
@@ -5243,7 +5244,7 @@ TEST(CodegenE2E, ClosureCapturingArrayLocalRefusedUnderBridge)
     EXPECT_THROW(
         emitProgram(*ft.find("f"), {{"x", InferredType::scalar(ValueType::DOUBLE)}}, ft, reg,
                     nullptr, bridge),
-        std::runtime_error);
+        keel::Exception);
 }
 
 // Interproc array RETURN, complex 1-D variant: a callee returning a complex 1-D
@@ -7803,7 +7804,7 @@ TEST(CodegenE2E, TryCatchBoundVarRefused)
     bridge.enabled = true;
     EXPECT_THROW(
         emitFunction(*fn, {{"n", InferredType::scalar(ValueType::DOUBLE)}}, reg, nullptr, bridge),
-        std::runtime_error);
+        keel::Exception);
 }
 
 // DYNAMIC CALL ARGUMENT (DESIGN.md §10 C1, A3): a Dynamic value passed AS an

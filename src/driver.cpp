@@ -11,9 +11,9 @@
 #include <numkit/core/parser.hpp>
 
 #include <keel/format.h>
+#include <keel/exception.h>
 #include <keel/smart_ptr.h>
 #include <keel/utf8.h>
-#include <stdexcept>
 
 namespace numkit::codegen::driver {
 
@@ -41,7 +41,7 @@ ValueType dtypeFromString(keel::StringRef name)
     if (name == "uint16")  return ValueType::UINT16;
     if (name == "uint32")  return ValueType::UINT32;
     if (name == "uint64")  return ValueType::UINT64;
-    throw std::runtime_error(keel::format("numkit build: unknown argument type '{}'", name).c_str());
+    throw keel::Exception(keel::format("numkit build: unknown argument type '{}'", name).c_str());
 }
 
 } // namespace
@@ -59,7 +59,7 @@ keel::Array<InferredType> parseTypeSpec(keel::StringRef spec)
                                                          ? keel::kInvalidIndex
                                                          : comma - pos));
         if (tok.empty())
-            throw std::runtime_error("numkit build: empty argument type in spec");
+            throw keel::Exception("numkit build: empty argument type in spec");
 
         bool isArray = false;
         if (tok.size() >= 2 && tok.substr(tok.size() - 2) == "[]") {
@@ -90,7 +90,7 @@ auto withPrepared(keel::StringRef source, keel::StringRef entry,
     Lexer  lex(source);
     Parser parser(lex.tokenize());
     auto   root = parser.parse();
-    if (!root) throw std::runtime_error("numkit build: failed to parse source");
+    if (!root) throw keel::Exception("numkit build: failed to parse source");
 
     TransferRegistry reg;
     registerStandardTransfers(reg);
@@ -125,7 +125,7 @@ auto withPrepared(keel::StringRef source, keel::StringRef entry,
     if (!entry.empty()) {
         fn = table.find(entry);
         if (!fn)
-            throw std::runtime_error(
+            throw keel::Exception(
                 keel::format("numkit build: no function named '{}'", entry).c_str());
     } else if (!syntheticScriptFn.children.empty()) {
         fn = &syntheticScriptFn;
@@ -136,13 +136,13 @@ auto withPrepared(keel::StringRef source, keel::StringRef entry,
             break;
         }
     } else {
-        throw std::runtime_error(
+        throw keel::Exception(
             keel::format("numkit build: source has {} functions — specify the entry with --entry",
                          table.size()).c_str());
     }
 
     if (paramTypes.size() != fn->paramNames.size())
-        throw std::runtime_error(
+        throw keel::Exception(
             keel::format("numkit build: entry '{}' takes {} argument(s) but the type spec has {}",
                          fn->strValue, fn->paramNames.size(), paramTypes.size()).c_str());
 
@@ -217,7 +217,7 @@ keel::String buildHarnessMain(const EmittedFunction &em)
                             "    std::printf(\"%.17g%+.17gi\\n\", _r.real(), _r.imag());\n",
                             em.name);
     } else {
-        throw std::runtime_error(
+        throw keel::Exception(
             keel::format("numkit build: cannot build a run harness for return type '{}' "
                          "(v1 supports only scalar / complex / void returns). Use `coder` / "
                          "`-o` to get the C++ and write your own main().",

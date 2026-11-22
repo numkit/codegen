@@ -20,6 +20,7 @@
 //      `aot::runExecutable`, and `-D` define validation in `aot::compile*`.
 
 #include <numkit/codegen/aot.hpp>
+#include <keel/exception.h>
 #include <numkit/codegen/classinfo.hpp>
 #include <numkit/codegen/emitter.hpp>
 #include <numkit/codegen/inference.hpp>
@@ -551,7 +552,7 @@ TEST(Wave5CodegenSafety, RankUnknownMatrixBranchMergeRefusesWithoutBridgeAndRuns
     const std::vector<ParamSpec> params = {{"flag", InferredType::scalar(ValueType::DOUBLE)}};
 
     // Without bridge: MUST refuse cleanly instead of mis-typing A as a 1-D vector buffer!
-    EXPECT_THROW(emitFunction(*fn, params, reg, nullptr, BridgeOptions{}), std::runtime_error);
+    EXPECT_THROW(emitFunction(*fn, params, reg, nullptr, BridgeOptions{}), keel::Exception);
 
     if (!aot::available())
         GTEST_SKIP() << "no external compiler configured for bridged execution";
@@ -628,7 +629,7 @@ TEST(Wave5CodegenSafety, UnconvergedLoopFixpointWidensToDynamicInsteadOfMiscompi
     const std::vector<ParamSpec> params = {{"seed", InferredType::scalar(ValueType::DOUBLE)}};
 
     // 2. Standalone emitFunction MUST refuse cleanly rather than miscompiling y = 1.0!
-    EXPECT_THROW(emitFunction(*fn, params, reg, nullptr, BridgeOptions{}), std::runtime_error);
+    EXPECT_THROW(emitFunction(*fn, params, reg, nullptr, BridgeOptions{}), keel::Exception);
 
     if (!aot::available())
         GTEST_SKIP() << "no external compiler configured for bridged execution";

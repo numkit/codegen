@@ -1,6 +1,7 @@
 // codegen/src/emitter_core.cpp — scalar/type helpers, OptFacts, mangling, prepasses.
 
 #include <keel/core.h>
+#include <keel/exception.h>
 #include <keel/math.h>
 #include "emitter_internal.hpp"
 
@@ -24,7 +25,7 @@ keel::String cppScalarType(ValueType dtype)
     case ValueType::UINT64:  return keel::String::from("std::uint64_t");
     case ValueType::CHAR:    return keel::String::from("std::uint16_t");  // MATLAB char is a UTF-16 code unit
     default:
-        throw std::runtime_error("cppScalarType: no scalar C++ mapping for this dtype");
+        throw keel::Exception("cppScalarType: no scalar C++ mapping for this dtype");
     }
 }
 
@@ -127,7 +128,7 @@ const char *cppScalarBinOp(keel::StringRef op)
 [[noreturn]] void unsupported(keel::StringRef what)
 {
     const keel::String msg = "codegen emitter: unsupported — " + what;
-    throw std::runtime_error(msg.c_str());
+    throw keel::Exception(msg.c_str());
 }
 
 // Operator joiners shared by emitScalarExpr (free) and Emitter::emitExpr.

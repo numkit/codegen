@@ -1,5 +1,6 @@
 // codegen/src/emitter_assign.cpp — statement assignment lowering (part 1 & non-ident LHS).
 
+#include <exception>
 #include <keel/core.h>
 #include <keel/math.h>
 #include "emitter_internal.hpp"

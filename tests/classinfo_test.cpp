@@ -6,6 +6,7 @@
 // properties, missing default) are loud — never silently miscompiled.
 
 #include <numkit/codegen/classinfo.hpp>
+#include <keel/exception.h>
 #include <numkit/codegen/inference.hpp>
 #include <numkit/codegen/transfer.hpp>
 #include <numkit/codegen/type_lattice.hpp>
@@ -129,7 +130,7 @@ TEST(ClassInfoTest, RefuseInheritance)
         findClass("classdef Dog < Animal\n  properties\n    a = 0\n  end\nend\n", root);
     ASSERT_NE(cd, nullptr);
     EXPECT_FALSE(classRefusalReason(*cd).empty());
-    EXPECT_THROW(buildClassInfo(*cd, 0, reg), std::runtime_error);
+    EXPECT_THROW(buildClassInfo(*cd, 0, reg), keel::Exception);
 }
 
 TEST(ClassInfoTest, RefuseAccessor)
@@ -143,7 +144,7 @@ TEST(ClassInfoTest, RefuseAccessor)
         root);
     ASSERT_NE(cd, nullptr);
     EXPECT_FALSE(classRefusalReason(*cd).empty());
-    EXPECT_THROW(buildClassInfo(*cd, 0, reg), std::runtime_error);
+    EXPECT_THROW(buildClassInfo(*cd, 0, reg), keel::Exception);
 }
 
 TEST(ClassInfoTest, RefusePropertyWithoutDefault)
@@ -154,7 +155,7 @@ TEST(ClassInfoTest, RefusePropertyWithoutDefault)
     const numkit::ASTNode *cd =
         findClass("classdef Q\n  properties\n    x\n  end\nend\n", root);
     ASSERT_NE(cd, nullptr);
-    EXPECT_THROW(buildClassInfo(*cd, 0, reg), std::runtime_error);  // no concrete default
+    EXPECT_THROW(buildClassInfo(*cd, 0, reg), keel::Exception);  // no concrete default
 }
 
 // ── field-access inference (brick 5b): obj.field types to the field's type

@@ -16,6 +16,7 @@
 #include <keel/ref.h>
 #include <keel/string.h>
 #include <numkit/core/standard_engine.hpp>
+#include <numkit/value/error.hpp>
 #include <numkit/core/engine.hpp>
 #include <numkit/value/value.hpp>
 #include <numkit/value/value_type.hpp>
@@ -25,7 +26,6 @@
 #include <cstdio>
 #include <exception>
 #include <limits>
-#include <stdexcept>
 
 namespace {
 
@@ -258,12 +258,12 @@ numkit_val numkit_call(const char *name, const numkit_val *args, size_t nargs,
 {
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
-        if (nargs != 0 && !args) throw std::runtime_error("numkit_call: null args");
+        if (nargs != 0 && !args) throw numkit::Error("numkit_call: null args");
         keel::Array<Value> a;
         a.reserve(nargs);
         for (size_t i = 0; i < nargs; ++i) {
             const Value *av = unwrap(args[i]);  // a null handle is UB to deref
-            if (!av) throw std::runtime_error("numkit_call: null argument handle");
+            if (!av) throw numkit::Error("numkit_call: null argument handle");
             a.push_back(*av);
         }
 
@@ -288,10 +288,10 @@ numkit_val numkit_binop(const char *op, numkit_val a, numkit_val b, numkit_error
 {
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
-        if (!op) throw std::runtime_error("numkit_binop: null op");
+        if (!op) throw numkit::Error("numkit_binop: null op");
         const Value *av = unwrap(a);
         const Value *bv = unwrap(b);
-        if (!av || !bv) throw std::runtime_error("numkit_binop: null operand handle");
+        if (!av || !bv) throw numkit::Error("numkit_binop: null operand handle");
         return make(engine().applyBinaryOp(op, *av, *bv));
     } catch (const std::exception &e) {
         setError(err, e.what());
@@ -306,9 +306,9 @@ numkit_val numkit_unop(const char *op, numkit_val a, numkit_error *err)
 {
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
-        if (!op) throw std::runtime_error("numkit_unop: null op");
+        if (!op) throw numkit::Error("numkit_unop: null op");
         const Value *av = unwrap(a);
-        if (!av) throw std::runtime_error("numkit_unop: null operand handle");
+        if (!av) throw numkit::Error("numkit_unop: null operand handle");
         return make(engine().applyUnaryOp(op, *av));
     } catch (const std::exception &e) {
         setError(err, e.what());
@@ -324,7 +324,7 @@ int numkit_truth(numkit_val v, numkit_error *err)
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
         const Value *val = unwrap(v);
-        if (!val) throw std::runtime_error("numkit_truth: null handle");
+        if (!val) throw numkit::Error("numkit_truth: null handle");
         return val->toBool() ? 1 : 0;
     } catch (const std::exception &e) {
         setError(err, e.what());
@@ -340,12 +340,12 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
         const Value *av = unwrap(a);
-        if (!av) throw std::runtime_error("numkit_index: null handle");
+        if (!av) throw numkit::Error("numkit_index: null handle");
         keel::Array<Value> args;
         args.reserve(nsubs);
         for (size_t i = 0; i < nsubs; ++i) {
             const Value *sv = subs ? unwrap(subs[i]) : nullptr;
-            if (!sv) throw std::runtime_error("numkit_index: null subscript handle");
+            if (!sv) throw numkit::Error("numkit_index: null subscript handle");
             args.push_back(*sv);
         }
         const keel::ArrayRef<Value> argSpan = args.as_ref();
@@ -364,7 +364,7 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
             if (engine().tryObjectSubsref(self, argSpan, 1, out, nullptr))
                 return make(std::move(out));
             if (nsubs != 1)
-                throw std::runtime_error("numkit_index: multi-subscript object indexing not supported (v1)");
+                throw numkit::Error("numkit_index: multi-subscript object indexing not supported (v1)");
             const keel::Array<keel::usize> ids = Value::resolveIndices(args[0], av->objectCount());
             return make(av->objectSubArray(ids, nullptr));
         }
@@ -383,7 +383,7 @@ numkit_val numkit_index(numkit_val a, const numkit_val *subs, size_t nsubs, numk
         // else refuse — never miscompile.
         const auto &dd = av->dims();
         if (static_cast<int>(nsubs) != dd.ndim())
-            throw std::runtime_error(
+            throw numkit::Error(
                 "numkit_index: multi-subscript count must match array rank (v1)");
         keel::Array<keel::Array<keel::usize>> lists(nsubs);
         keel::Array<const keel::usize *>      ptrs(nsubs);
@@ -408,15 +408,15 @@ numkit_val numkit_cell_get(numkit_val c, double idx1, numkit_error *err)
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
         const Value *cv = unwrap(c);
-        if (!cv) throw std::runtime_error("numkit_cell_get: null handle");
+        if (!cv) throw numkit::Error("numkit_cell_get: null handle");
         if (!cv->isCell())
-            throw std::runtime_error("Cell indexing {}-operator requires a cell array");
+            throw numkit::Error("Cell indexing {}-operator requires a cell array");
         // checkedScalarIndex is the interpreter's own 1-based->0-based + integer
         // check (execCellIndex uses it); add an explicit upper bound (cellAt does
         // not) so an out-of-range index is a clean error, never UB.
         const size_t i0 = Value::checkedScalarIndex(idx1);
         if (i0 >= cv->numel())
-            throw std::runtime_error("cell content index out of range");
+            throw numkit::Error("cell content index out of range");
         return make(cv->cellAt(i0));  // content extraction (a copy of the element)
     } catch (const std::exception &e) {
         setError(err, e.what());
@@ -432,9 +432,9 @@ numkit_val numkit_cell_get_2d(numkit_val c, double i1, double j1, numkit_error *
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
         const Value *cv = unwrap(c);
-        if (!cv) throw std::runtime_error("numkit_cell_get_2d: null handle");
+        if (!cv) throw numkit::Error("numkit_cell_get_2d: null handle");
         if (!cv->isCell())
-            throw std::runtime_error("Cell indexing {}-operator requires a cell array");
+            throw numkit::Error("Cell indexing {}-operator requires a cell array");
         // Mirror execCellIndex nidx==2: checkedScalarIndex per subscript, then
         // sub2indChecked (the bounds-checked column-major (r,c)->linear map).
         const size_t r  = Value::checkedScalarIndex(i1);
@@ -455,12 +455,12 @@ void numkit_cell_set(numkit_val c, double idx1, numkit_val v, numkit_error *err)
     try {
         Value       *cv = unwrap(c);
         const Value *vv = unwrap(v);
-        if (!cv || !vv) throw std::runtime_error("numkit_cell_set: null handle");
+        if (!cv || !vv) throw numkit::Error("numkit_cell_set: null handle");
         // Mirror the interpreter's resolveCellSlot: coerce an empty/unset slot to
         // a cell, then grow to fit the (0-based) subscript and write the content.
         if (cv->isEmpty()) *cv = Value::cell(0, 0);
         if (!cv->isCell())
-            throw std::runtime_error("Cell contents indexing on a non-cell value");
+            throw numkit::Error("Cell contents indexing on a non-cell value");
         const size_t coords[1] = {Value::checkedScalarIndex(idx1)};  // 1-based -> 0-based + int chk
         const size_t linear    = cv->growCellTo(coords, 1, nullptr);
         cv->cellAt(linear)     = *vv;  // deep-copy the content in
@@ -477,10 +477,10 @@ void numkit_cell_set_2d(numkit_val c, double i1, double j1, numkit_val v, numkit
     try {
         Value       *cv = unwrap(c);
         const Value *vv = unwrap(v);
-        if (!cv || !vv) throw std::runtime_error("numkit_cell_set_2d: null handle");
+        if (!cv || !vv) throw numkit::Error("numkit_cell_set_2d: null handle");
         if (cv->isEmpty()) *cv = Value::cell(0, 0);
         if (!cv->isCell())
-            throw std::runtime_error("Cell contents indexing on a non-cell value");
+            throw numkit::Error("Cell contents indexing on a non-cell value");
         // Mirror resolveCellSlot nidx==2: grow to fit the 0-based (row, col).
         const size_t coords[2] = {Value::checkedScalarIndex(i1), Value::checkedScalarIndex(j1)};
         const size_t linear    = cv->growCellTo(coords, 2, nullptr);
@@ -496,7 +496,7 @@ numkit_val numkit_make_handle(const char *name, numkit_error *err)
 {
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
-        if (!name) throw std::runtime_error("numkit_make_handle: null name");
+        if (!name) throw numkit::Error("numkit_make_handle: null name");
         // Build @name exactly as the interpreter does (it owns func-handle
         // semantics). An unknown name still yields a handle that errors on CALL,
         // matching MATLAB -- no need to pre-validate existence here.
@@ -515,7 +515,7 @@ numkit_val numkit_make_closure_captured(const char *src, const char **names, con
 {
     if (err) { err->code = 0; err->message[0] = '\0'; }
     try {
-        if (!src) throw std::runtime_error("numkit_make_closure_captured: null source");
+        if (!src) throw numkit::Error("numkit_make_closure_captured: null source");
         // Inject the captures into the workspace, eval `src` (the anon fn snapshots
         // the workspace -> captures them BY VALUE, the normal @(...)-in-script path,
         // well-tested on both backends), then `clear` them so the persistent
@@ -526,7 +526,7 @@ numkit_val numkit_make_closure_captured(const char *src, const char **names, con
         for (size_t i = 0; i < n; ++i) {
             const Value *v = vals ? unwrap(vals[i]) : nullptr;
             if (!names || !names[i] || !v)
-                throw std::runtime_error("numkit_make_closure_captured: null name/value");
+                throw numkit::Error("numkit_make_closure_captured: null name/value");
             engine().setVariable(names[i], *v);
             clearCmd.push_back(' ');
             clearCmd.append(names[i]);
@@ -661,7 +661,7 @@ int numkit_register_fn(const char *name, numkit_fn fn)
                     const char *msg = err.message[0] ? err.message : "plugin error";
                     destroy(r);
                     for (numkit_val h : extra) destroy(h);
-                    throw std::runtime_error(msg);
+                    throw numkit::Error(msg);
                 }
 
                 if (!outs.empty()) outs[0] = r ? *unwrap(r) : Value();

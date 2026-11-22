@@ -16,7 +16,6 @@
 
 #include <charconv>
 #include <cstddef>
-#include <stdexcept>
 
 namespace numkit::codegen {
 keel::String cppArrayElemType(ValueType dtype);

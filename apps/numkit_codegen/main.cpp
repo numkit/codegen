@@ -28,13 +28,13 @@
 #include <numkit/sys/toolchain.hpp>
 
 #include <keel/format.h>
+#include <keel/exception.h>
 #include <keel/fs.h>
 #include <keel/process.h>
 #include <keel/string.h>
 
 #include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
 
 namespace {
 
@@ -119,7 +119,7 @@ int main(int argc, char **argv)
             opsOpts.enabled = opsKernels;
             try {
                 emittedFn = cg::driver::transpileSource(source, entry, paramTypes, bridgeOpts, opsOpts);
-            } catch (const std::runtime_error &) {
+            } catch (const keel::Exception &) {
                 if ((buildFlag || runFlag) && !bridge) {
                     bridgeOpts.enabled = true;
                     usedBridge         = true;
@@ -140,13 +140,13 @@ int main(int argc, char **argv)
                 numkit::sys::envSet("NUMKIT_USE_ZIG", "1");
             }
             if (!cg::aot::available())
-                throw std::runtime_error(
+                throw keel::Exception(
                     "no C++ compiler configured — set NUMKIT_CXX or rebuild with a "
                     "build-time compiler (see DESIGN.md §8)");
             if (!pluginExport.empty())
-                throw std::runtime_error("--build/--run is incompatible with --plugin");
+                throw keel::Exception("--build/--run is incompatible with --plugin");
             if (!paramTypes.empty())
-                throw std::runtime_error(
+                throw keel::Exception(
                     "--build/--run: v1 supports only a nullary entry (no --args). For "
                     "functions with args, emit the C++ with -o and write your "
                     "own main() harness.");
@@ -173,7 +173,7 @@ int main(int argc, char **argv)
             } else {
                 auto tmpRes = keel::fs_create_temp_dir("numkit_codegen_run_");
                 if (tmpRes.is_err())
-                    throw std::runtime_error("failed to create temporary run directory");
+                    throw keel::Exception("failed to create temporary run directory");
                 tempRunDir.dir = keel::move(*tmpRes);
                 exe = keel::path_join(tempRunDir.dir,
                                       keel::format("aot{}", keel::process_exe_extension()));
@@ -186,7 +186,7 @@ int main(int argc, char **argv)
             (void)keel::fs_remove(keel::format("{}.obj", exe));
             (void)keel::fs_remove(keel::format("{}.build.bat", exe));
             if (!cr.ok())
-                throw std::runtime_error(
+                throw keel::Exception(
                     keel::format("compilation failed.\n--- compiler log ---\n{}\n--- end log ---",
                                  cr.log).c_str());
             keel::eprintln("numkit-codegen: compiled -> {}", exe);

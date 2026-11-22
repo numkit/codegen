@@ -11,6 +11,7 @@
 // when no external compiler is configured (toolchain-less CI stays green).
 
 #include <numkit/codegen/aot.hpp>
+#include <keel/exception.h>
 #include <numkit/codegen/driver.hpp>
 #include <numkit/codegen/emitter.hpp>
 #include <numkit/codegen/monomorphize.hpp>
@@ -200,7 +201,7 @@ TEST(CodegenTiered, RefusesArrayOutputFunction)
         {"v", InferredType::concrete(ValueType::DOUBLE, Shape::rowVector())}};
     const std::string abiHeader = std::string(NUMKIT_BRIDGE_DIR) + "/numkit_plugin.h";
     EXPECT_THROW(emitScalarPlugin(*fn, params, reg, "numkit_tiered_vec", abiHeader),
-                 std::runtime_error);
+                 keel::Exception);
 }
 
 // The DRIVER's plugin path end-to-end (what `numkit_codegen --plugin` drives):
