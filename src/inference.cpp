@@ -6,10 +6,10 @@
 #include <numkit/codegen/monomorphize.hpp>  // FunctionTable (user-fn lookup for `c = f(x)`)
 
 #include <keel/array.h>
+#include <keel/algo.h>
 #include <keel/format.h>
 #include <keel/smart_ptr.h>
 
-#include <algorithm>
 
 namespace numkit::codegen {
 
@@ -330,7 +330,7 @@ bool extractStructFieldChain(const ASTNode &fa, keel::String &rootVar,
         n = n->children[0].get();
     }
     if (n->type != NodeType::IDENTIFIER || path.empty()) return false;
-    std::reverse(path.begin(), path.end());
+    keel::reverse(path.begin(), path.end());
     rootVar = n->strValue.clone();
     return true;
 }
