@@ -531,7 +531,7 @@ void Emitter::emitMultiAssign(const ASTNode &s)
         for (keel::usize k = 1; k < nout; ++k) {  // outputs 1.. = the extras
             const keel::String &tk = s.returnNames[k];
             if (tk.empty() || tk == "~") continue;  // discarded (released at block close)
-            line(cppIdent(tk) + " = keel::move(_numkit_mo[" + toStr(k - 1) + "]);");
+            line(cppIdent(tk) + " = std::move(_numkit_mo[" + toStr(k - 1) + "]);");
             types_.set(tk, {InferredType::dynamic(), ConstVal::unknown()});
         }
         close();
