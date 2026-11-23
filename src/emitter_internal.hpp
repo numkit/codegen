@@ -10,12 +10,10 @@
 #include <keel/format.h>
 #include <keel/hash_map.h>
 #include <keel/hash_set.h>
+#include <keel/number.h>
 #include <keel/ref.h>
 #include <keel/smart_ptr.h>
 #include <keel/string.h>
-
-#include <charconv>
-#include <cstddef>
 
 namespace numkit::codegen {
 keel::String cppArrayElemType(ValueType dtype);

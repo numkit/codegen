@@ -46,8 +46,8 @@ keel::String formatDoubleLiteral(keel::f64 v)
                                         : "std::numeric_limits<double>::infinity()");
 
     char buf[32];
-    auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
-    keel::String s = keel::String::from(keel::StringRef(buf, keel::as<keel::usize>(ptr - buf)));
+    const keel::usize len = keel::format_f64(buf, sizeof(buf), v);
+    keel::String s = keel::String::from(keel::StringRef(buf, len));
     // Ensure it reads as a double in C++ (e.g. "2" -> "2.0", not an int).
     if (s.find('.') == keel::kInvalidIndex && s.find('e') == keel::kInvalidIndex &&
         s.find('E') == keel::kInvalidIndex)
