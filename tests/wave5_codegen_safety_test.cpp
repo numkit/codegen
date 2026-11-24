@@ -587,13 +587,22 @@ int main() {
 }
 )CPP";
 
-    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_rank_unknown_bridged"));
+    const keel::String tmpDir = wave5TmpDir();
+    const std::string exe = keel::to_std_string(keel::path_join(tmpDir, "wave5_rank_unknown_bridged"));
     aot::CompileOptions opts;
     opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
     opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
     opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto cr = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
+#ifdef _WIN32
+    {
+        const keel::Error copyErr =
+            keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(tmpDir, "numkit_codegen_rt.dll"));
+        ASSERT_TRUE(copyErr.is_ok()) << "copy numkit_codegen_rt.dll: "
+                                     << keel::to_std_string_view(keel::error_message(copyErr));
+    }
+#endif
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 
@@ -654,13 +663,22 @@ int main() {
 }
 )CPP";
 
-    const std::string exe = keel::to_std_string(keel::path_join(wave5TmpDir(), "wave5_loop_widen"));
+    const keel::String tmpDir = wave5TmpDir();
+    const std::string exe = keel::to_std_string(keel::path_join(tmpDir, "wave5_loop_widen"));
     aot::CompileOptions opts;
     opts.includeDirs.push_back(keel::String::from(NUMKIT_BRIDGE_DIR));
     opts.defines.push_back(keel::String::from("NUMKIT_RT_USE_DLL"));
     opts.linkLibs.push_back(keel::String::from(NUMKIT_RT_IMPORT_LIB));
     const auto cr = aot::compileToExecutable(program, exe, opts);
     ASSERT_EQ(cr.status, aot::CompileStatus::Ok) << cr.log.c_str() << "\n" << program;
+#ifdef _WIN32
+    {
+        const keel::Error copyErr =
+            keel::fs_copy_file(NUMKIT_RT_SHARED_DLL, keel::path_join(tmpDir, "numkit_codegen_rt.dll"));
+        ASSERT_TRUE(copyErr.is_ok()) << "copy numkit_codegen_rt.dll: "
+                                     << keel::to_std_string_view(keel::error_message(copyErr));
+    }
+#endif
     EXPECT_EQ(aot::runExecutable(exe).exitCode, 0);
 }
 

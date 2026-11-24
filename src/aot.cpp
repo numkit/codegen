@@ -40,6 +40,17 @@ keel::String shellQuotePosix(keel::StringRef s)
 bool isValidDefine(keel::StringRef d)
 {
     if (d.empty()) return false;
+    const keel::usize eq = d.find('=');
+    const keel::StringRef name = (eq == keel::kInvalidIndex) ? d : d.substr(0, eq);
+    if (name.empty()) return false;
+    const char first = name[0];
+    if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || first == '_'))
+        return false;
+    for (char ch : name) {
+        if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
+              || (ch >= '0' && ch <= '9') || ch == '_'))
+            return false;
+    }
     for (char ch : d) {
         const keel::u8 c = keel::as<keel::u8>(ch);
         if (c < 0x20 || c == 0x7f) return false;
@@ -293,6 +304,24 @@ CompileOptions defaultBridgeCompileOptions()
 
 namespace {
 
+keel::String resolvePlatformExePath(keel::StringRef path)
+{
+#ifdef _WIN32
+    if (path.size() >= 4) {
+        keel::StringRef tail = path.substr(path.size() - 4);
+        if (tail[0] == '.'
+            && (tail[1] == 'e' || tail[1] == 'E')
+            && (tail[2] == 'x' || tail[2] == 'X')
+            && (tail[3] == 'e' || tail[3] == 'E')) {
+            return keel::String::from(path);
+        }
+    }
+    return keel::format("{}.exe", path);
+#else
+    return keel::String::from(path);
+#endif
+}
+
 // Shared compile core for the executable and shared-library forms; the
 // only difference is the output kind (an extra /LD for MSVC, -shared
 // -fPIC otherwise).
@@ -396,8 +425,11 @@ CompileResult compileImpl(keel::StringRef cppSource, keel::StringRef outPath,
         return r;
     }
     r.log = keel::move(procRes->stdout_text);
-    r.status = (procRes->ok() && fileExists(outPath)) ? CompileStatus::Ok
-                                                      : CompileStatus::CompileError;
+    const keel::String producedPath = sharedLib ? keel::String::from(outPath)
+                                                : resolvePlatformExePath(outPath);
+    r.status = (procRes->ok() && (fileExists(outPath) || fileExists(producedPath)))
+                   ? CompileStatus::Ok
+                   : CompileStatus::CompileError;
     return r;
 }
 
@@ -425,11 +457,14 @@ RunResult runExecutable(keel::StringRef exePath)
                                "or the native `nk` CLI for compile-and-run.");
     return r;
 #else
-    if (exePath.empty() || !fileExists(exePath)) {
+    keel::String resolvedExe = keel::String::from(exePath);
+    if (!fileExists(resolvedExe))
+        resolvedExe = resolvePlatformExePath(exePath);
+    if (resolvedExe.empty() || !fileExists(resolvedExe)) {
         r.log = keel::format("aot: executable not found: {}", exePath);
         return r;
     }
-    const keel::StringRef argv[] = {exePath};
+    const keel::StringRef argv[] = {resolvedExe.as_ref()};
     keel::ProcessOptions opts;
     opts.capture_stdout = true;
     opts.capture_stderr = true;
