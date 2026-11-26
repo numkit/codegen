@@ -10,8 +10,6 @@
 #include <keel/hash_set.h>
 #include <keel/process.h>
 
-#include <cstdlib>
-
 namespace numkit::codegen::aot {
 
 namespace {
@@ -62,6 +60,7 @@ bool isValidDefine(keel::StringRef d)
     return true;
 }
 
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 bool isPosixSharedLibraryPath(keel::StringRef p)
 {
     if (p.empty() || p.back() == '/' || p.back() == '\\') return false;
@@ -72,6 +71,7 @@ bool isPosixSharedLibraryPath(keel::StringRef p)
     if (fn.ends_with(".dylib")) return true;
     return false;
 }
+#endif
 
 bool writeFile(keel::StringRef path, keel::StringRef content)
 {
